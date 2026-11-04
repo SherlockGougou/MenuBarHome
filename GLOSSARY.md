@@ -22,6 +22,10 @@ _Avoid_: Data mapping（数据映射）、Parsing（解析）
 驱动 `HomeStore` 的底层数据源配置，支持局域网 `Home Assistant`（`HAWebSocketProvider`）与免网关的 `米家云端直连`（`MiCloudProvider`）；当 macOS 客户端同时配置并登录两端时自动并行连接并合并设备，仅配置一端时单源运行，演示模式由 `DemoHomeProvider` 提供。Windows 采用互斥数据源选择，HA 通过原生 `ha_snapshot`、`ha_execute` 与 `HomeAssistantClient` 接入，不进行双源合并。
 _Avoid_: Server type（服务器类型）、Mode（模式）
 
+**LocalNetworkEndpoint（局域网端点）**：
+流量不离开本机或家庭网络的服务地址：回环地址、私有网段、Tailscale 网段、`.local`/`.lan`/`.home.arpa`/`.internal` 后缀，以及不带点的单段主机名。凭据（HA token、AI key）只发往 https 地址或局域网端点；Home Assistant 的其余明文 http 地址须由用户逐个同意明文传输后才能使用。
+_Avoid_: Intranet（内网）、Trusted host（可信主机）
+
 **DeviceDeduplication（跨源设备去重合并）**：
 当 Home Assistant 与米家云端同时生效时，按硬件标识（`xiaomi_home` 的 `<server>_<did>`、裸 `did`、MAC 地址）及同房间唯一同款/同名规则识别同一台物理设备，并按「在线状态优先 → 可控能力评分优先 → 同分 Home Assistant 优先」选出单一胜出数据源驱动该 `SmartDevice` 卡片的纯函数合并过程。
 _Avoid_: Cloud sync（云同步）、Entity bridge（实体桥接）
@@ -41,6 +45,10 @@ _Avoid_: Schema（模式）、Profile（配置表）
 **RoomArea（房间区域）**：
 物理空间的归属划分（如客厅、书房、卧室、次卧、厨房），以 Home Assistant 的区域注册表或米家家庭房间列表为准并经过名称归一化。
 _Avoid_: Zone（防区）、Group（分组）
+
+**CoverDevice（开合类设备）**：
+由电机开合或升降、带位置状态的设备，按风险分为四个子类型：窗帘类（窗帘、百叶、遮阳帘）、开窗器、车库门与大门、晾衣架。窗帘类开合都直接执行；开窗器打开须确认；车库门与大门开、关都须确认；判断不出子类型时按开窗器对待。
+_Avoid_: Window（作总称时）、Curtain（作总称时）
 
 **HomeOption（米家家庭）**：
 小米账号下的独立家庭空间（由 `homeroom/gethome` 的 `homelist` 返回，含家庭 ID、名称与去重设备数），支持在面板顶部切换查看单个家庭或合并查看全部家庭。
@@ -76,12 +84,16 @@ _Avoid_: IntentDeviceCategory（意图设备大类）、Persistent filter（持�
 自然语言指令经本地规则解析（`LocalIntentParser`）或远端大模型回退（`ModelIntentResolver`）后生成的结构化设备操作列表（`[DeviceIntent]`）与简短反馈文案，经能力校验后由 `HomeStore` 并发下发并支持多设备一键撤销。
 _Avoid_: Prompt output（模型输出）、Action script（动作脚本）
 
+**BareCategoryCommand（裸类别指令）**：
+只说了设备类别和动作、没有指明房间、设备名或「全部」等范围的指令（如「关灯」「打开空调」）。关闭时只针对开着的同类设备：0 台如实回复，1 台直接执行，多台时取面板正在显示的房间，否则给出候选；打开时取面板正在显示的房间，否则按当前时段习惯给出候选。快捷指令、URL 这类无界面入口遇到歧义时只回复、不执行。
+_Avoid_: Ambiguous command（模糊指令）、Whole-home command（全屋指令）
+
 **ScheduledCommand（定时指令）**：
 带有绝对触发时刻 `fireDate` 与已解析 `IntentPlan` 的延时控制任务，持久化在本地 `UserDefaults`（`assistant_scheduled_commands_v1`）。应用重启时未到期项按剩余时间继续倒计时；退出期间已过期项转入 `missedScheduledCommands` 待确认队列并保留在磁盘，必须由用户点击「立即执行」或「忽略」后才执行或移除，绝不在后台静默触发过期硬件动作。
 _Avoid_: Background job（后台任务）、Cron（计划任务）
 
 **ActiveDevice（活跃开启设备）**：
-当前在线且处于工作状态的受控设备（开着的灯、正在制冷/制热的空调或电暖器、运行中的风扇、通电开启的插座、清扫中的扫地机、播放中的音箱、监控中的摄像机）。顶部「全关」只作用于其中参与全关的 AllOffTarget；插座、扫地机、摄像机等常年通电或看护设备默认不计入全关目标（冰箱、待机电视、纯传感器整体不算活跃设备）。
+当前在线且处于工作状态的受控设备（开着的灯、正在制冷/制热的空调或电暖器、运行中的风扇、通电开启的插座、清扫中的扫地机、播放中的音箱、监控中的摄像机）。顶部「全关」只作用于其中参与全关的 AllOffTarget；插座、扫地机、摄像机等常年通电或看护设备默认不计入全关目标（冰箱、待机电视、纯传感器和处于打开位置的 CoverDevice 都不算活跃设备）。
 _Avoid_: Online device（在线设备）
 
 **CompactTile（双列紧凑磁贴）**：
