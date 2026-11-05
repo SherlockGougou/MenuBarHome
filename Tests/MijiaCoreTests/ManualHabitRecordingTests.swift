@@ -26,9 +26,7 @@ struct ManualHabitRecordingTests {
     private func makeStore() async throws -> (HomeStore, MockHomeProvider) {
         let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: [Self.ceiling, Self.ac], scenes: Self.scenes))
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.manualhabit.\(UUID().uuidString)")
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         return (store, mock)
     }
 
@@ -242,9 +240,7 @@ struct ManualHabitRecordingTests {
         )
         let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: [Self.ceiling, offlineLamp], scenes: Self.scenes))
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.partialhabit.\(UUID().uuidString)")
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
 
         let plan = IntentPlan(
             intents: [

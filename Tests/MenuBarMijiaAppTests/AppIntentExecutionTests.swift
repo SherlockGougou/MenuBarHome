@@ -20,7 +20,7 @@ struct AppIntentExecutionTests {
         let store = HomeStore(provider: provider, defaultsSuiteName: suite)
         var returned = false
         let waiting = Task {
-            try await store.waitForInitialSnapshot()
+            try await store.waitForTestSnapshot()
             returned = true
         }
         await Task.yield()

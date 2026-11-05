@@ -45,9 +45,7 @@ struct AssistantScheduleTests {
     private func makeStore() async throws -> (HomeStore, MockHomeProvider) {
         let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: [Self.ceiling], scenes: []))
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.schedule.\(UUID().uuidString)")
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         store.assistantSleep = { _ in try await Task.sleep(for: .milliseconds(80)) }
         return (store, mock)
     }
@@ -103,9 +101,7 @@ struct AssistantScheduleTests {
 
         let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: [Self.ceiling], scenes: []))
         let store = HomeStore(provider: mock, defaultsSuiteName: suiteName)
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         #expect(store.scheduledCommands.map(\.id) == [futureEntry.id])
         #expect(store.missedScheduledCommands.isEmpty)
         #expect(await mock.executedCommands.isEmpty)
@@ -151,9 +147,7 @@ struct AssistantScheduleTests {
 
         // A second restart before user action must keep the missed timer until confirmed or dismissed.
         let restartedStore = HomeStore(provider: mock, defaultsSuiteName: suiteName)
-        for _ in 0..<50 where restartedStore.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await restartedStore.waitForTestSnapshot()
         #expect(restartedStore.missedScheduledCommands.map(\.id) == [expiredEntry.id])
 
         _ = await restartedStore.runMissedScheduledCommand(id: expiredEntry.id)
@@ -219,9 +213,7 @@ struct AssistantUndoTests {
     func voiceUndo() async throws {
         let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: [AssistantScheduleTests.ceiling], scenes: []))
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.undo.\(UUID().uuidString)")
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         _ = await store.runAssistantCommand("关闭书房吸顶灯")
         #expect(store.devices.first?.isActiveOn == false)
 

@@ -43,9 +43,7 @@ struct AutomationExecutionTests {
             scenes: Self.scenes
         ))
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.automation.exec.\(UUID().uuidString)")
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         store.hideDevice(Self.hiddenLight.id)
         return (store, mock)
     }

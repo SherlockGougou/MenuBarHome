@@ -504,9 +504,7 @@ struct EnergyHistoryTests {
         let plug = testPlug("plug_tv", "电视插座", kwh: 4)
         let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: [plug], scenes: []))
         let store = HomeStore(provider: mock, defaultsSuiteName: suite)
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
 
         // First snapshot only sets a baseline: subscribing alone must never invent consumption.
         #expect(store.energyHistory.recordingStartedAt != nil)

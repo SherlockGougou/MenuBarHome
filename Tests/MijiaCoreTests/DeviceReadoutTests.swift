@@ -24,7 +24,7 @@ struct DeviceReadoutTests {
         let mock = MockHomeProvider(snapshot: snapshot)
         let suite = "test.readout.\(UUID().uuidString)"
         let store = HomeStore(provider: mock, defaultsSuiteName: suite)
-        try await store.waitForInitialSnapshot(timeout: .seconds(15))
+        try await store.waitForTestSnapshot()
         return (store, mock)
     }
 
@@ -123,7 +123,7 @@ struct DeviceReadoutTests {
         ))
         let suite = "test.readout.power.\(UUID().uuidString)"
         let store = HomeStore(provider: provider, defaultsSuiteName: suite)
-        try await store.waitForInitialSnapshot(timeout: .seconds(15))
+        try await store.waitForTestSnapshot()
         await provider.holdNextExecute()
         let toggle = store.togglePrimary(store.devices[0])
         for _ in 0..<1500 where await provider.executeStarted == 0 {
@@ -152,7 +152,7 @@ struct DeviceReadoutTests {
         let suite = "test.readout.echo.\(UUID().uuidString)"
         let store = HomeStore(provider: provider, defaultsSuiteName: suite)
         store.holdReadBackEcho = true
-        try await store.waitForInitialSnapshot(timeout: .seconds(15))
+        try await store.waitForTestSnapshot()
         let first = store.togglePrimary(store.devices[0])
         for _ in 0..<1500 where !store.isHoldingReadBackEcho {
             try await Task.sleep(for: .milliseconds(10))
@@ -183,7 +183,7 @@ struct DeviceReadoutTests {
         let suite = "test.readout.echo-second.\(UUID().uuidString)"
         let store = HomeStore(provider: provider, defaultsSuiteName: suite)
         store.holdReadBackEcho = true
-        try await store.waitForInitialSnapshot(timeout: .seconds(15))
+        try await store.waitForTestSnapshot()
         let first = store.togglePrimary(store.devices[0])
         for _ in 0..<1500 where !store.isHoldingReadBackEcho {
             try await Task.sleep(for: .milliseconds(10))
@@ -223,7 +223,7 @@ struct DeviceReadoutTests {
             devices: [tv]
         ))
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.readout.lg.\(UUID().uuidString)")
-        try await store.waitForInitialSnapshot(timeout: .seconds(15))
+        try await store.waitForTestSnapshot()
         let toggle = store.togglePrimary(store.devices[0])
         #expect(await toggle?.value == true)
         #expect(await mock.readBackCalls == 0)
@@ -240,7 +240,7 @@ struct DeviceReadoutTests {
         let suite = "test.readout.echo-lock.\(UUID().uuidString)"
         let store = HomeStore(provider: provider, defaultsSuiteName: suite)
         store.holdReadBackEcho = true
-        try await store.waitForInitialSnapshot(timeout: .seconds(15))
+        try await store.waitForTestSnapshot()
         _ = store.lockOptimistic("lamp", duration: .seconds(5))
         let toggle = store.togglePrimary(store.devices[0])
         for _ in 0..<1500 where !store.isHoldingReadBackEcho {
@@ -266,7 +266,7 @@ struct DeviceReadoutTests {
         ))
         let suite = "test.readout.fallback-lock.\(UUID().uuidString)"
         let store = HomeStore(provider: provider, defaultsSuiteName: suite)
-        try await store.waitForInitialSnapshot(timeout: .seconds(15))
+        try await store.waitForTestSnapshot()
         await provider.holdNextExecute()
         let toggle = store.togglePrimary(store.devices[0])
         for _ in 0..<1500 where await provider.executeStarted == 0 {

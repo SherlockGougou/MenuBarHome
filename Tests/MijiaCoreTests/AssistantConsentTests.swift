@@ -65,9 +65,7 @@ struct AssistantConsentTests {
         AssistantConfig(baseURL: baseURL, model: "deepseek-chat", apiKey: "sk-deepseek").save(to: defaults)
         let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: AssistantTests.devices, scenes: AssistantTests.scenes))
         let store = HomeStore(provider: mock, defaultsSuiteName: suite)
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         let log = CallLog()
         store.assistantTransportOverride = { request in
             await log.record()

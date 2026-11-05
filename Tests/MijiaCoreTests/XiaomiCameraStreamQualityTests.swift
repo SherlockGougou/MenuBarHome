@@ -53,16 +53,12 @@ struct XiaomiCameraStreamQualityTests {
         defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
         let mock = MockHomeProvider(snapshot: DemoHomeProvider.defaultHome())
         let store = HomeStore(provider: mock, defaultsSuiteName: suite)
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         let camera = try #require(store.devices.first(where: { if case .camera = $0.kind { return true }; return false }))
         #expect(store.cameraStreamQuality(for: camera.id) == .hd)
         store.setCameraStreamQuality(.max, for: camera.id)
         let reloaded = HomeStore(provider: mock, defaultsSuiteName: suite)
-        for _ in 0..<50 where reloaded.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await reloaded.waitForTestSnapshot()
         #expect(reloaded.cameraStreamQuality(for: camera.id) == .max)
         _ = try await reloaded.resolveCameraStream(for: camera.id)
         #expect(await mock.requestedCameraQualities == [.max])

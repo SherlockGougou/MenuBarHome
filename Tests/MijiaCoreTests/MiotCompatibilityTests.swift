@@ -179,9 +179,7 @@ struct MiotCompatibilityTests {
         let suite = "test.window.\(UUID().uuidString)"
         let store = HomeStore(provider: mock, defaultsSuiteName: suite)
         defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         var prompts = 0
         store.manualControlConfirmationHandler = { _ in
             prompts += 1

@@ -20,9 +20,7 @@ struct AssistantErrorMessageTests {
     func storeShowsPlainMessage() async throws {
         let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: [AssistantScheduleTests.ceiling], scenes: []))
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.err.\(UUID().uuidString)")
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         store.assistantResolverOverride = ModelIntentResolver(
             config: AssistantConfig(baseURL: "https://example.invalid/v1", model: "m", apiKey: "k"),
             transport: { _ in throw URLError(.timedOut) }

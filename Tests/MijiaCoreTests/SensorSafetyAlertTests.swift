@@ -293,9 +293,7 @@ struct SensorSafetyAlertTests {
         defer { UserDefaults.standard.removePersistentDomain(forName: name) }
         let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: [door(false)]))
         let store = HomeStore(provider: mock, defaultsSuiteName: name)
-        for _ in 0..<100 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         store.setSensorAlertEnabled(.contact, true)
         store.sensorAlertsOnlyWhenAway = true
         #expect(store.evaluateSafetyAlerts(now: start).isEmpty)

@@ -34,9 +34,7 @@ struct MenuBarPanelControllerTests {
         let suite = "test.panel.controller.\(UUID().uuidString)"
         let mock = MockHomeProvider(snapshot: DemoHomeProvider.defaultHome())
         let store = HomeStore(provider: mock, defaultsSuiteName: suite)
-        for _ in 0..<200 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         #expect(!store.devices.isEmpty, "MockHomeProvider should deliver a snapshot right away")
         return (store, suite)
     }
@@ -1831,9 +1829,7 @@ struct MenuBarPanelControllerTests {
         let suite = "MenuBarPanelTests-camera-\(UUID().uuidString)"
         defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
         let store = HomeStore(provider: MockHomeProvider(snapshot: DemoHomeProvider.defaultHome()), defaultsSuiteName: suite)
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         let camera = try #require(store.devices.first(where: {
             if case .camera = $0.kind { return true }
             return false
@@ -1858,9 +1854,7 @@ struct MenuBarPanelControllerTests {
         defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
         let mock = MockHomeProvider(snapshot: DemoHomeProvider.defaultHome())
         let store = HomeStore(provider: mock, defaultsSuiteName: suite)
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         let camera = try #require(store.devices.first(where: {
             if case .camera = $0.kind { return true }
             return false
@@ -1987,7 +1981,7 @@ struct MenuBarPanelControllerTests {
             provider: MockHomeProvider(snapshot: DemoHomeProvider.defaultHome(includeCamera: false)),
             defaultsSuiteName: suite
         )
-        for _ in 0..<200 where store.devices.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        try await store.waitForTestSnapshot()
         let light = try #require(store.devices.first { dev in
             if case .light = dev.kind { return true }
             return false

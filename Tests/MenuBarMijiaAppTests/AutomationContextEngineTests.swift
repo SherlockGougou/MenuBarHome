@@ -60,9 +60,7 @@ struct AutomationContextEngineTests {
             provider: mock,
             defaultsSuiteName: "test.automation.context.\(UUID().uuidString)"
         )
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         return (store, mock)
     }
 

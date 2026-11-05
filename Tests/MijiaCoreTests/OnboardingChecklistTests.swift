@@ -88,9 +88,7 @@ struct OnboardingChecklistTests {
             provider: MockHomeProvider(snapshot: snapshot),
             defaultsSuiteName: "test.onboarding.alloff.\(UUID().uuidString)"
         )
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
 
         store.turnAllOff()
         #expect(store.onboardingMilestones.contains(.turnedAllOff))
@@ -188,9 +186,7 @@ struct OnboardingChecklistTests {
             provider: MockHomeProvider(snapshot: snapshot),
             defaultsSuiteName: "test.onboarding.undo-source.\(UUID().uuidString)"
         )
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
 
         store.executeQuickAction(.lightsOff)
         #expect(store.undoBanner != nil)

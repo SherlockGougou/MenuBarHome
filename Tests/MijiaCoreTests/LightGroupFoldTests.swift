@@ -47,7 +47,7 @@ struct LightGroupFoldTests {
     ) async throws -> (HomeStore, MockHomeProvider) {
         let mock = MockHomeProvider(snapshot: home)
         let store = HomeStore(provider: mock, defaultsSuiteName: suite)
-        try await store.waitForInitialSnapshot()
+        try await store.waitForTestSnapshot()
         return (store, mock)
     }
 

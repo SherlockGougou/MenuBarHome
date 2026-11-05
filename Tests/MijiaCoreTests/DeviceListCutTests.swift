@@ -38,7 +38,7 @@ struct DeviceListCutTests {
         )
         let suite = "test.listcut.\(UUID().uuidString)"
         let store = HomeStore(provider: MockHomeProvider(snapshot: snapshot), defaultsSuiteName: suite)
-        try await store.waitForInitialSnapshot()
+        try await store.waitForTestSnapshot()
         store.hideOfflineDevices = true
         store.hideDevice(hidden.id)
         return (store, suite)

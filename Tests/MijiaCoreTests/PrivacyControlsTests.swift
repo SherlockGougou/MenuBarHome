@@ -29,9 +29,7 @@ struct PrivacyControlsTests {
     func learningSwitch() async throws {
         let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: [Self.ceiling], scenes: []))
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.privacy.\(UUID().uuidString)")
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         #expect(store.isHabitLearningEnabled)
         #expect(store.habitSharing == .off)
         _ = await store.runAssistantCommand("关闭书房吸顶灯")

@@ -102,9 +102,7 @@ struct MijiaCoreTests {
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.toggle.undo.\(UUID().uuidString)")
 
         // Allow initial stream event to arrive
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         #expect(store.devices.count == 1)
         #expect(store.activeDeviceCount == 0)
 
@@ -215,9 +213,7 @@ struct MijiaCoreTests {
 
         let mock = MockHomeProvider(snapshot: snapshot)
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.slice1.\(UUID().uuidString)")
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
 
         // Execute QuickAction.lightsOff -> turns off light, keeps coffee plug on
         store.executeQuickAction(.lightsOff)
@@ -275,9 +271,7 @@ struct MijiaCoreTests {
 
         let mock = MockHomeProvider(snapshot: snapshot)
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.slice2.\(UUID().uuidString)")
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
 
         store.selectQuickIndex(1)
         for _ in 0..<50 where store.devices.first(where: { $0.id == "dev_1" })?.isActiveOn != false {
@@ -329,9 +323,7 @@ struct MijiaCoreTests {
         let suiteName = "test.slice3.\(UUID().uuidString)"
         let mock = MockHomeProvider(snapshot: SynthesizedHome(rooms: [RoomArea(id: "r1", name: "客厅")], devices: devs))
         let store = HomeStore(provider: mock, defaultsSuiteName: suiteName)
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
 
         #expect(store.favoriteDevices.map(\.id) == ["dev_1", "dev_2", "dev_3"])
 
@@ -390,9 +382,7 @@ struct MijiaCoreTests {
         let suiteName = "test.slice4.\(UUID().uuidString)"
         let mock = MockHomeProvider(snapshot: snapshot)
         let store = HomeStore(provider: mock, defaultsSuiteName: suiteName)
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
 
         // 1. Dynamic menu bar target: temp+humidity and total power
         store.menuBarTargetId = "temp_hum:dev_sensor_study"
@@ -451,9 +441,7 @@ struct MijiaCoreTests {
         )
         let mock = MockHomeProvider(snapshot: snapshot)
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.aliases.\(UUID().uuidString)")
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
 
         store.applyDeviceAliases(["dev_split_2": "餐边柜射灯"])
         #expect(store.devices.first?.name == "餐边柜射灯")
@@ -539,9 +527,7 @@ struct MijiaCoreTests {
         // Verify HomeStore controls, live view callback, and custom stream URL resolution
         let mock = MockHomeProvider(snapshot: home)
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.camera.\(UUID().uuidString)")
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
 
         var openedCameraId: String?
         store.onOpenCameraLiveView = { openedCameraId = $0.id }
@@ -623,9 +609,7 @@ struct MijiaCoreTests {
 
         let mock = MockHomeProvider(snapshot: home)
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.airp.\(UUID().uuidString)")
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         store.setFanPercentage("dev_airp_1", percent: 80)
         if let updated = store.devices.first(where: { $0.id == "dev_airp_1" }),
            case .fan(let updatedSpec) = updated.kind {
@@ -735,9 +719,7 @@ struct MijiaCoreTests {
 
         let mock = MockHomeProvider(snapshot: home)
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.issue103.\(UUID().uuidString)")
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
 
         let optionIds = store.availableMenuBarOptions.map(\.id)
         #expect(optionIds.contains("temp:dev_airp_study"))

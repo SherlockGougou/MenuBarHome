@@ -18,7 +18,7 @@ struct UndoScopeTests {
         ))
         let suite = "test.undo.scope.\(UUID().uuidString)"
         let store = HomeStore(provider: provider, defaultsSuiteName: suite)
-        try await store.waitForInitialSnapshot(timeout: .seconds(15))
+        try await store.waitForTestSnapshot()
         #expect(store.devices.count == 2)
         return (store, provider, suite)
     }
@@ -198,7 +198,7 @@ struct UndoScopeTests {
         #expect(store.assistantState == .thinking)
         store.switchBackend(.demo)
         #expect(store.assistantState == .idle)
-        try await store.waitForInitialSnapshot()
+        try await store.waitForTestSnapshot()
         let newPlan = try #require(await store.runAssistantCommand("关闭所有灯"))
         let newState = store.assistantState
         let newUndoID = store.undoBanner?.id

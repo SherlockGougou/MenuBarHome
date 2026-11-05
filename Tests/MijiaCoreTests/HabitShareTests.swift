@@ -254,9 +254,7 @@ struct HabitShareTests {
         #expect(!(weirdDefaults.object(forKey: "assistant_habit_share_enabled") is String))
         #expect(weirdDefaults.bool(forKey: "assistant_habit_share_enabled") == false)
 
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         let now = Date()
         var memory = UserHabitMemory()
         memory.record(

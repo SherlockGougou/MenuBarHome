@@ -454,9 +454,7 @@ struct AssistantTests {
     private func makeStore() async throws -> (HomeStore, MockHomeProvider) {
         let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: Self.devices, scenes: Self.scenes))
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.assistant.\(UUID().uuidString)")
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         return (store, mock)
     }
 
@@ -775,9 +773,7 @@ struct AssistantTests {
 
         let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: Self.devices, scenes: Self.scenes))
         let store = HomeStore(provider: mock, defaultsSuiteName: suite)
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
 
         for customURL in ["http://127.0.0.1:3425/v1", "http://localhost:3425/v1"] {
             var observedURLs: [String] = []

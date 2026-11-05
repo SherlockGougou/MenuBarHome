@@ -176,9 +176,7 @@ struct IntentOperationsV2Tests {
     func dispatchFanCommands() async throws {
         let provider = MockHomeProvider(snapshot: SynthesizedHome(devices: Self.devices, scenes: []))
         let store = HomeStore(provider: provider, defaultsSuiteName: "test.v2.\(UUID().uuidString)")
-        for _ in 0..<50 where store.devices.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await store.waitForTestSnapshot()
         _ = await store.runAssistantCommand("风扇调到高档")
         _ = await store.runAssistantCommand("风扇摇头")
         let sent = await provider.executedCommands

@@ -30,7 +30,7 @@ struct ControlFailureTests {
         )
         let store = HomeStore(provider: provider, defaultsSuiteName: "test.controlfailure.\(UUID().uuidString)")
         store.toastAutoDismissInterval = nil
-        try await store.waitForInitialSnapshot(timeout: .seconds(15))
+        try await store.waitForTestSnapshot()
         return store
     }
 
