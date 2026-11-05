@@ -963,7 +963,7 @@ private struct PrivacySettingsTab: View {
 
                             Spacer()
 
-                            if device.reason != .filteredDuplicate, let url = feedbackURL(for: device) {
+                            if let url = UnsupportedDeviceFeedbackURL.make(for: device) {
                                 Link(destination: url) {
                                     HStack(spacing: 3) {
                                         Image(systemName: "arrow.up.right.square")
@@ -1079,18 +1079,6 @@ private struct PrivacySettingsTab: View {
             try? await Task.sleep(for: .seconds(2))
             didCopy = false
         }
-    }
-
-    private func feedbackURL(for device: UnsupportedDevice) -> URL? {
-        var components = URLComponents(string: "https://github.com/jryang1997/MenuBarMijia/issues/new")
-        components?.queryItems = [
-            URLQueryItem(name: "template", value: "unsupported_device.yml"),
-            URLQueryItem(name: "title", value: L10n.tr(
-                "[设备不支持] \(device.name) (\(device.model))",
-                "[Unsupported device] \(device.name) (\(device.model))"
-            )),
-        ]
-        return components?.url
     }
 }
 
