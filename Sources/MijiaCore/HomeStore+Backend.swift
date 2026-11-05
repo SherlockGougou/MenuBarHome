@@ -412,11 +412,41 @@ extension HomeStore {
                 }
             }
         }
+        let defaults = UncheckedUserDefaults(userDefaults)
         return HAWebSocketProvider(
             baseURLString: baseURLString,
             token: token,
-            onAddressSuggestion: callback
+            onAddressSuggestion: callback,
+            allowsToken: { HAPlaintextConsent.allowsToken(to: $0, defaults: defaults.defaults) },
+            onPlaintextConsentNeeded: { @Sendable [weak self] url in
+                Task { @MainActor [weak self] in
+                    self?.askHAPlaintext(url)
+                }
+            }
         )
+    }
+
+    /// Ignores a late callback from a provider that was already replaced, and keeps a declined
+    /// answer so a refresh does not ask again until the address or the provider changes.
+    func askHAPlaintext(_ url: String) {
+        guard homeBackend != .demo,
+              HAWebSocketProvider.normalizeBaseURL(url) == HAWebSocketProvider.normalizeBaseURL(serverURLString),
+              haPlaintextPrompt != .declined(url) else { return }
+        haPlaintextPrompt = .asking(url)
+    }
+
+    /// 仍然连接: remembers consent for this address only, then connects.
+    public func allowHAPlaintext() {
+        guard homeBackend != .demo, let url = haPlaintextPrompt?.address else { return }
+        haPlaintextPrompt = nil
+        HAPlaintextConsent.approve(url, defaults: userDefaults)
+        rebuildLiveProvider()
+    }
+
+    /// 不连接: nothing is sent; the banner keeps the reason and still offers to connect.
+    public func declineHAPlaintext() {
+        guard case .asking(let url) = haPlaintextPrompt else { return }
+        haPlaintextPrompt = .declined(url)
     }
 
     func makeLiveProvider() -> any HomeProvider {
@@ -456,6 +486,7 @@ extension HomeStore {
     private func rebuildLiveProvider() {
         eventTask?.cancel()
         shutdownCurrentProvider()
+        haPlaintextPrompt = nil
         self.provider = makeLiveProvider()
         startListening()
     }
@@ -509,6 +540,7 @@ extension HomeStore {
         if backend == .demo {
             eventTask?.cancel()
             shutdownCurrentProvider()
+            haPlaintextPrompt = nil
             // Strictly offline: stop any LAN TV and update work started by the previous backend (#47).
             if let lgClient = lgWebOSClient {
                 Task { await lgClient.stop() }
@@ -617,6 +649,8 @@ extension HomeStore {
             complete = false
         }
         revokeCloudConsent()
+        HAPlaintextConsent.revokeAll(defaults: userDefaults)
+        haPlaintextPrompt = nil
         if complete {
             showToast(L10n.tr("已退出并吊销本地保存的令牌", "Signed out and removed saved tokens"))
         } else {

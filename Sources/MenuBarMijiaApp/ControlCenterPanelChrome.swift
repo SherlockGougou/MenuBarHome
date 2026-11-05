@@ -1001,6 +1001,47 @@ extension ControlCenterPanel {
         .adaptiveGlass(in: shape)
     }
 
+    /// A public plain-http Home Assistant address: nothing carrying the token is sent until the user agrees (#276).
+    func haPlaintextConsentBanner(_ prompt: HAPlaintextPrompt) -> some View {
+        let shape = RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
+        let host = HAPlaintextConsent.host(prompt.address)
+        let isDeclined = prompt == .declined(prompt.address)
+        return VStack(alignment: .leading, spacing: 6) {
+            Label(
+                isDeclined
+                    ? HAPlaintextConsent.declinedMessage(prompt.address)
+                    : L10n.tr("令牌会以明文传输到 \(host)", "Your token would travel unencrypted to \(host)"),
+                systemImage: "lock.open.fill"
+            )
+            .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
+            .fixedSize(horizontal: false, vertical: true)
+            if !isDeclined {
+                Text(L10n.tr(
+                    "这是公网上的 http 地址，路上任何人都能看到 Home Assistant 令牌。能改用 https 就别连接。",
+                    "This is a public http address, so anyone on the path can read your Home Assistant token. Use https if you can."
+                ))
+                .font(.system(size: DesignTokens.TypeSize.caption))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                Button(L10n.tr("仍然连接", "Connect Anyway")) {
+                    withAnimation(AppleMotion.snappySpring) { store.allowHAPlaintext() }
+                }
+                .buttonStyle(PillActionButtonStyle())
+                if !isDeclined {
+                    Button(L10n.tr("不连接", "Don't Connect")) {
+                        withAnimation(AppleMotion.snappySpring) { store.declineHAPlaintext() }
+                    }
+                    .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: .accentColor))
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .adaptiveGlass(in: shape)
+    }
+
     // MARK: - 3. Floating Undo & Toast Banner
 
     @ViewBuilder
