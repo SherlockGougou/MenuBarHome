@@ -30,17 +30,30 @@ extension HomeStore {
         guard let idx = devices.firstIndex(where: { $0.id == device.id }) else { return nil }
         let previous = devices[idx]
         guard !rejectControlWhileLocked() else { return nil }
-        let operation: IntentOperation
-        switch previous.kind {
-        case .vacuum(let spec):
-            operation = .power(!spec.isCleaning)
-        case .plug(let spec) where spec.switchEntityId.hasPrefix("button."):
-            // A momentary plug button may toggle or trigger something; treat it as an activation.
-            operation = .power(true)
-        default:
-            operation = .power(!previous.isActiveOn)
+        if case .cover(let s) = previous.kind {
+            if s.subtype == .curtain, s.isMoving {
+                // Stopping a moving curtain is a de-escalation action (or expands the drawer if
+                // pause is unavailable) and never asks for hazard confirmation.
+            } else if let pos = s.positionPercent,
+                      (pos == 0 ? s.openDescription : s.closeDescription) != nil {
+                guard allowManualControl(.power(pos == 0), for: previous) else { return nil }
+            } else {
+                toggleExpanded(device.id)
+                return nil
+            }
+        } else {
+            let operation: IntentOperation
+            switch previous.kind {
+            case .vacuum(let spec):
+                operation = .power(!spec.isCleaning)
+            case .plug(let spec) where spec.switchEntityId.hasPrefix("button."):
+                // A momentary plug button may toggle or trigger something; treat it as an activation.
+                operation = .power(true)
+            default:
+                operation = .power(!previous.isActiveOn)
+            }
+            guard allowManualControl(operation, for: previous) else { return nil }
         }
-        guard allowManualControl(operation, for: previous) else { return nil }
         var updated = previous
         var command: DeviceCommand?
 
@@ -109,8 +122,8 @@ extension HomeStore {
                 updated.kind = .cover(s)
                 command = .setSelectOption(entityId: s.entityId, option: pause)
             } else {
-                guard let open = s.openDescription, let close = s.closeDescription,
-                      let pos = s.positionPercent else {
+                guard let pos = s.positionPercent,
+                      let action = (pos == 0 ? s.openDescription : s.closeDescription) else {
                     toggleExpanded(device.id)
                     return nil
                 }
@@ -118,7 +131,7 @@ extension HomeStore {
                 s.positionPercent = shouldOpen ? 100 : 0
                 s.motion = shouldOpen ? .opening : .closing
                 updated.kind = .cover(s)
-                command = .setSelectOption(entityId: s.entityId, option: shouldOpen ? open : close)
+                command = .setSelectOption(entityId: s.entityId, option: action)
             }
         case .speaker, .fridge, .sensor:
             toggleExpanded(device.id)

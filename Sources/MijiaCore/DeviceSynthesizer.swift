@@ -304,8 +304,58 @@ public enum DeviceSynthesizer {
                 entities: devEntities,
                 states: states
             ) {
-                smartDevices.append(built)
-                identities[built.id] = sourceIdentity(device: built, registry: dev, entities: devEntities)
+                let activeCovers = devEntities.filter { entity in
+                    entity.entity_id.hasPrefix("cover.")
+                        && entity.entity_category != "config"
+                        && entity.entity_category != "diagnostic"
+                        && states[entity.entity_id] != nil
+                }
+                if case .cover = built.kind, activeCovers.count > 1 {
+                    let nonCoverEntities = devEntities.filter { !$0.entity_id.hasPrefix("cover.") }
+                    for coverEnt in activeCovers {
+                        let trackId = "\(dev.id)#\(coverEnt.entity_id)"
+                        let rawTrackName = coverEnt.name
+                            ?? states[coverEnt.entity_id]?.attributes["friendly_name"]?.stringValue
+                            ?? coverEnt.original_name
+                            ?? rawDeviceName
+                        let trackName = cleanDeviceName(rawTrackName, roomName: roomName, model: model)
+                        let trackAux = auxiliaryEntities(
+                            for: coverEnt,
+                            allCovers: activeCovers,
+                            nonCoverEntities: nonCoverEntities,
+                            states: states
+                        )
+                        let trackEntities = [coverEnt] + trackAux
+                        if let trackBuilt = applyingSafetyObservations(
+                            buildSmartDevice(
+                                deviceId: trackId,
+                                name: trackName,
+                                roomId: roomId,
+                                roomName: roomName,
+                                model: model,
+                                entities: trackEntities,
+                                states: states
+                            ),
+                            deviceId: trackId,
+                            name: trackName,
+                            roomId: roomId,
+                            roomName: roomName,
+                            model: model,
+                            entities: trackEntities,
+                            states: states
+                        ) {
+                            smartDevices.append(trackBuilt)
+                            identities[trackBuilt.id] = sourceIdentity(
+                                device: trackBuilt,
+                                registry: dev,
+                                entities: trackEntities
+                            )
+                        }
+                    }
+                } else {
+                    smartDevices.append(built)
+                    identities[built.id] = sourceIdentity(device: built, registry: dev, entities: devEntities)
+                }
             }
         }
 
@@ -315,9 +365,10 @@ public enum DeviceSynthesizer {
         for (eid, state) in states {
             guard eid.hasPrefix("light.") || eid.hasPrefix("climate.")
                     || eid.hasPrefix("fan.") || eid.hasPrefix("vacuum.")
-                    || eid.hasPrefix("camera.") || eid.hasPrefix("switch.")
-                    || eid.hasPrefix("media_player.") || eid.hasPrefix("sensor.")
-                    || eid.hasPrefix("binary_sensor.") || eid.hasPrefix("button.") else { continue }
+                    || eid.hasPrefix("camera.") || eid.hasPrefix("cover.")
+                    || eid.hasPrefix("switch.") || eid.hasPrefix("media_player.")
+                    || eid.hasPrefix("sensor.") || eid.hasPrefix("binary_sensor.")
+                    || eid.hasPrefix("button.") else { continue }
             let entity = entityById[eid]
             guard entity?.disabled_by == nil, entity?.hidden_by == nil else { continue }
             if let deviceId = entity?.device_id,
@@ -527,6 +578,92 @@ public enum DeviceSynthesizer {
     }
 
     // MARK: - Device Builders
+
+    private static func auxiliaryEntities(
+        for cover: HAEntityEntry,
+        allCovers: [HAEntityEntry],
+        nonCoverEntities: [HAEntityEntry],
+        states: [String: HAEntityState]
+    ) -> [HAEntityEntry] {
+        let coverTokensById: [String: Set<String>] = Dictionary(
+            uniqueKeysWithValues: allCovers.map { entry in
+                let stem = entry.entity_id.dropFirst("cover.".count).lowercased()
+                let tokens = Set(stem.split(separator: "_").map(String.init))
+                return (entry.entity_id, tokens)
+            }
+        )
+        let commonTokens: Set<String> = coverTokensById.values.reduce(into: coverTokensById.values.first ?? []) { acc, next in
+            acc.formIntersection(next)
+        }
+        let uniqueCoverTokens: [String: Set<String>] = coverTokensById.mapValues { $0.subtracting(commonTokens) }
+
+        func matches(_ candidateCover: HAEntityEntry, aux: HAEntityEntry) -> Bool {
+            let coverStem = candidateCover.entity_id.dropFirst("cover.".count).lowercased()
+            let auxStem = (aux.entity_id.split(separator: ".", maxSplits: 1).last ?? "").lowercased()
+            if !coverStem.isEmpty, auxStem.contains(coverStem) {
+                return true
+            }
+            if let distinguishing = uniqueCoverTokens[candidateCover.entity_id], !distinguishing.isEmpty {
+                let auxTokens = Set(auxStem.split(separator: "_").map(String.init))
+                if distinguishing.isSubset(of: auxTokens) {
+                    return true
+                }
+            }
+            if let coverUid = candidateCover.unique_id?.lowercased(), !coverUid.isEmpty,
+               let auxUid = aux.unique_id?.lowercased(), !auxUid.isEmpty,
+               auxUid.contains(coverUid) || coverUid.contains(auxUid) {
+                return true
+            }
+            let coverLabel = (
+                candidateCover.name
+                ?? states[candidateCover.entity_id]?.attributes["friendly_name"]?.stringValue
+                ?? candidateCover.original_name
+            )?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+            let auxLabel = (
+                aux.name
+                ?? states[aux.entity_id]?.attributes["friendly_name"]?.stringValue
+                ?? aux.original_name
+            )?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+            if !coverLabel.isEmpty, !auxLabel.isEmpty, auxLabel.contains(coverLabel) {
+                return true
+            }
+            return false
+        }
+
+        let batteryCount = nonCoverEntities.filter { entity in
+            guard entity.entity_id.hasPrefix("sensor.") else { return false }
+            if let deviceClass = states[entity.entity_id]?.attributes["device_class"]?.stringValue {
+                return deviceClass == "battery"
+            }
+            return entity.entity_id.contains("battery_level")
+        }.count
+
+        var matched: [HAEntityEntry] = []
+        var shared: [HAEntityEntry] = []
+        for aux in nonCoverEntities {
+            let matchingCovers = allCovers.filter { matches($0, aux: aux) }
+            if matchingCovers.count == 1 {
+                if matchingCovers[0].entity_id == cover.entity_id {
+                    matched.append(aux)
+                }
+                continue
+            }
+            if matchingCovers.contains(where: { $0.entity_id == cover.entity_id }) {
+                matched.append(aux)
+                continue
+            }
+            if matchingCovers.isEmpty {
+                let isBattery = aux.entity_id.hasPrefix("sensor.")
+                    && (states[aux.entity_id]?.attributes["device_class"]?.stringValue == "battery"
+                        || aux.entity_id.contains("battery_level"))
+                if isBattery && batteryCount > 1 {
+                    continue
+                }
+                shared.append(aux)
+            }
+        }
+        return matched + shared
+    }
 
     private static func applyingSafetyObservations(
         _ built: SmartDevice?,
@@ -900,6 +1037,90 @@ public enum DeviceSynthesizer {
             }
             return eid.contains("battery_level")
         }
+
+        // 5c. Cover (curtain, blind, window opener, garage door / gate, #280)
+        let primaryCovers = entities.filter { entity in
+            entity.entity_id.hasPrefix("cover.")
+                && entity.entity_category != "config"
+                && entity.entity_category != "diagnostic"
+                && states[entity.entity_id] != nil
+        }
+        if let coverEnt = primaryCovers.first,
+           let st = states[coverEnt.entity_id] {
+            let deviceClass = st.attributes["device_class"]?.stringValue
+            let friendlyName = st.attributes["friendly_name"]?.stringValue
+                ?? coverEnt.name
+                ?? coverEnt.original_name
+                ?? ""
+            let nameForInference = (name.isEmpty || name == "智能设备") ? friendlyName : name
+            let subtype = CoverSubtype(haDeviceClass: deviceClass, name: nameForInference)
+            let rawPosition = st.attributes["current_position"]?.doubleValue
+                .flatMap(Self.roundedInt)
+                .map { max(0, min(100, $0)) }
+            let stateLower = st.state.lowercased()
+            let positionPercent: Int? = if let rawPosition {
+                rawPosition
+            } else if stateLower == "open" {
+                100
+            } else if stateLower == "closed" {
+                0
+            } else {
+                nil
+            }
+            let supportedFeatures = st.attributes["supported_features"]?.intValue
+            let openDescription: String? = if let supportedFeatures {
+                (supportedFeatures & 1) != 0 ? "Open" : nil
+            } else {
+                "Open"
+            }
+            let closeDescription: String? = if let supportedFeatures {
+                (supportedFeatures & 2) != 0 ? "Close" : nil
+            } else {
+                "Close"
+            }
+            let positionWritable: Bool = if let supportedFeatures {
+                (supportedFeatures & 4) != 0
+            } else {
+                rawPosition != nil
+            }
+            let pauseDescription: String? = if let supportedFeatures {
+                (supportedFeatures & 8) != 0 ? "Pause" : nil
+            } else {
+                "Pause"
+            }
+            let motion: CoverMotion = switch stateLower {
+            case "opening": .opening
+            case "closing": .closing
+            default: .stopped
+            }
+            let batSt = batId.flatMap { states[$0] }
+            let batteryPercent = (batSt?.isAvailable == true ? batSt.flatMap { Double($0.state).flatMap(Self.roundedInt) } : nil)
+                ?? st.attributes["battery_level"]?.intValue
+                ?? st.attributes["battery"]?.intValue
+
+            return SmartDevice(
+                id: deviceId,
+                name: name,
+                roomId: roomId,
+                roomName: roomName,
+                model: model,
+                isOnline: st.isAvailable,
+                kind: .cover(
+                    CoverSpec(
+                        entityId: coverEnt.entity_id,
+                        subtype: subtype,
+                        positionPercent: positionPercent,
+                        positionWritable: positionWritable,
+                        openDescription: openDescription,
+                        closeDescription: closeDescription,
+                        pauseDescription: pauseDescription,
+                        batteryPercent: batteryPercent,
+                        motion: motion
+                    )
+                )
+            )
+        }
+
         let primarySwitches = entities.filter { entity in
             guard entity.entity_id.hasPrefix("switch."),
                   entity.entity_category != "config", entity.entity_category != "diagnostic" else { return false }
@@ -1194,7 +1415,7 @@ public enum DeviceSynthesizer {
     public static func cleanDeviceName(_ raw: String, roomName: String, model: String) -> String {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         // Strip verbose duplicate suffixes appended by Home Assistant entity naming
-        for suffix in ["  灯", "  电暖器", "  风扇", "  音箱", "  电视", "  开关 开关"] {
+        for suffix in ["  灯", "  电暖器", "  风扇", "  音箱", "  电视", "  开关 开关", "  窗帘"] {
             if s.hasSuffix(suffix) {
                 s = String(s.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
             }
