@@ -23,6 +23,7 @@ let package = Package(
             resources: [
                 .copy("Resources/Localizations"),
                 .copy("Resources/fallbackSpecs.json"),
+                .copy("Resources/deviceProfiles.json"),
             ],
             swiftSettings: [
                 .swiftLanguageMode(.v6)

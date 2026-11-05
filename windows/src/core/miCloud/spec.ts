@@ -10,6 +10,7 @@ export interface MiotValueListItem {
 export interface MiotProperty {
   readonly iid: number;
   readonly type: string;
+  readonly description?: string;
   readonly format: string;
   readonly access: readonly string[];
   readonly valueRange?: readonly number[];
@@ -21,6 +22,7 @@ export interface MiotProperty {
 export interface MiotAction {
   readonly iid: number;
   readonly type: string;
+  readonly description?: string;
   readonly in?: readonly number[];
 }
 
@@ -150,6 +152,7 @@ export function parseMiotDeviceSpec(raw: unknown): MiotDeviceSpec | null {
       properties.push({
         iid: pIid,
         type: pType,
+        ...(typeof pObj["description"] === "string" ? { description: pObj["description"] } : {}),
         format,
         access,
         ...(valueRange ? { valueRange } : {}),
@@ -173,6 +176,7 @@ export function parseMiotDeviceSpec(raw: unknown): MiotDeviceSpec | null {
         actions.push({
           iid: aIid,
           type: aType,
+          ...(typeof aObj["description"] === "string" ? { description: aObj["description"] } : {}),
           ...(rawIn && rawIn.length > 0 ? { in: rawIn } : {}),
         });
       }

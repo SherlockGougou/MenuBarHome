@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "noise": {
+    "services": [
+      "device-information",
+      "exception-card",
+      "device-custom",
+      "*-custom"
+    ],
+    "properties": [
+      "bind-timestamp",
+      "trigger-status",
+      "no-reminder-status",
+      "*-timestamp",
+      "*-list",
+      "*-code",
+      "*-result*"
+    ]
+  },
+  "facets": {
+    "maxVisible": 8,
+    "highRiskTypes": [
+      "heater",
+      "*-heater",
+      "electric-blanket"
+    ],
+    "highValue": [
+      "mode",
+      "target-*",
+      "*-level",
+      "brightness"
+    ],
+    "lowRiskWrites": [
+      "brightness",
+      "mode",
+      "fan-level"
+    ]
+  }
+}

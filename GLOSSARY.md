@@ -42,6 +42,10 @@ _Avoid_: Session（会话）、Profile（账号配置）、Home（家庭）
 由 `miot-spec.org` 定义的设备型号能力描述模型（含服务 `siid`、属性 `piid`、动作 `aiid`、取值范围与枚举列表），作为米家云端设备合成与指令映射的元数据契约并按型号缓存于本地。
 _Avoid_: Schema（模式）、Profile（配置表）
 
+**MiotFacet（通用控件）**：
+按「格式 + 读写」从 MIoT 规格自动合成的辅助控件（开关、下拉、滑块、读数、按钮），带 `siid.piid`（属性）或 `siid.aiid`（动作）稳定标识、写入风险等级与高价值标记。没有专用卡片的设备靠它保留可控项；噪声服务与属性、高价值名单、低风险写入白名单都存于双端共读的 `deviceProfiles.json`。
+_Avoid_: Widget（小组件）、Generic control（泛指控件）
+
 **RoomArea（房间区域）**：
 物理空间的归属划分（如客厅、书房、卧室、次卧、厨房），以 Home Assistant 的区域注册表或米家家庭房间列表为准并经过名称归一化。
 _Avoid_: Zone（防区）、Group（分组）
