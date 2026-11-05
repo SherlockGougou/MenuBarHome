@@ -24,16 +24,54 @@ extension HomeStore {
         var opts: [MenuBarMetricOption] = [
             MenuBarMetricOption(id: "auto:primary", title: L10n.tr("自动（第一个温度传感器）", "Auto (First Temp Sensor)"))
         ]
-        for env in environmentReadings where env.temperature != nil {
-            opts.append(MenuBarMetricOption(id: "temp:\(env.id)", title: L10n.tr("\(env.label) · 温度", "\(env.label) · Temp")))
+        let readings = environmentReadings.filter { $0.temperature != nil }
+        for env in sortedByRoom(readings, roomName: \.roomName) {
+            let place = Self.roomQualifiedLabel(env.label, room: env.roomName)
+            opts.append(MenuBarMetricOption(id: "temp:\(env.id)", title: L10n.tr("\(place) · 温度", "\(place) · Temp")))
             if env.humidity != nil {
-                opts.append(MenuBarMetricOption(id: "temp_hum:\(env.id)", title: L10n.tr("\(env.label) · 温湿度", "\(env.label) · Temp & Humidity")))
+                opts.append(MenuBarMetricOption(id: "temp_hum:\(env.id)", title: L10n.tr("\(place) · 温湿度", "\(place) · Temp & Humidity")))
             }
         }
         opts.append(MenuBarMetricOption(id: "power:total", title: L10n.tr("全屋实时总功率 (W)", "Total Home Power (W)")))
+        // Every metered device on its own, mains breakers included: they stay out of the total
+        // above, so this is the only way to show a whole-home meter's reading (#331).
+        for dev in sortedByRoom(devices.filter { Self.livePowerWatts($0) != nil }, roomName: \.roomName) {
+            let place = Self.roomQualifiedLabel(dev.name, room: dev.roomName)
+            opts.append(MenuBarMetricOption(id: "power:\(dev.id)", title: L10n.tr("\(place) · 功率", "\(place) · Power")))
+        }
         opts.append(MenuBarMetricOption(id: "active:count", title: L10n.tr("开启设备数量", "Active Device Count")))
         opts.append(MenuBarMetricOption(id: "icon:only", title: L10n.tr("仅显示图标", "Icon Only")))
         return opts
+    }
+
+    /// `房间 · 设备`, or just the room when the device carries no name of its own (a cleared
+    /// sensor name already falls back to the room).
+    static func roomQualifiedLabel(_ label: String, room: String) -> String {
+        let label = label.trimmingCharacters(in: .whitespaces)
+        let room = room.trimmingCharacters(in: .whitespaces)
+        if room.isEmpty { return label }
+        if label.isEmpty || label == room { return room }
+        return "\(room) · \(label)"
+    }
+
+    /// The live reading of an online plug or meter; nil when it is offline or reports no power.
+    /// A switched-off plug draws nothing, matching how `totalPowerWatts` ignores a stale reading.
+    static func livePowerWatts(_ device: SmartDevice) -> Double? {
+        guard device.isOnline, case .plug(let spec) = device.kind, let watts = spec.powerWatts else { return nil }
+        return spec.isOn ? watts : 0
+    }
+
+    /// Stable sort in panel room order; rooms the store does not know go last.
+    private func sortedByRoom<T>(_ items: [T], roomName: (T) -> String) -> [T] {
+        let ordered = rooms.enumerated()
+            .sorted { ($0.element.sortOrder, $0.offset) < ($1.element.sortOrder, $1.offset) }
+        var rank: [String: Int] = [:]
+        for (index, entry) in ordered.enumerated() where rank[entry.element.name] == nil {
+            rank[entry.element.name] = index
+        }
+        return items.enumerated()
+            .sorted { (rank[roomName($0.element)] ?? .max, $0.offset) < (rank[roomName($1.element)] ?? .max, $1.offset) }
+            .map(\.element)
     }
 
     /// The environment reading selected for `menuBarTargetId` (`temp:<id>` / `temp_hum:<id>`),
@@ -143,6 +181,13 @@ extension HomeStore {
         }
         if menuBarTargetId == "power:total" {
             return String(format: "%.0fW", totalPowerWatts)
+        }
+        if menuBarTargetId.hasPrefix("power:") {
+            // An offline or removed device falls through to the default display, never 0W (#331).
+            let deviceId = String(menuBarTargetId.dropFirst("power:".count))
+            if let watts = devices.first(where: { $0.id == deviceId }).flatMap(Self.livePowerWatts) {
+                return String(format: "%.0fW", watts)
+            }
         }
         if menuBarTargetId == "active:count" {
             let _ = effectiveLanguage
