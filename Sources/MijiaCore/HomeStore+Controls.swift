@@ -31,9 +31,9 @@ extension HomeStore {
         let previous = devices[idx]
         guard !rejectControlWhileLocked() else { return nil }
         if case .cover(let s) = previous.kind {
-            if s.subtype == .curtain, s.isMoving {
-                // Stopping a moving curtain is a de-escalation action (or expands the drawer if
-                // pause is unavailable) and never asks for hazard confirmation.
+            if s.isMoving {
+                // Stopping a moving cover is a de-escalation action (or expands the drawer if
+                // pause is unavailable) and never asks for hazard confirmation (#298).
             } else if let pos = s.positionPercent,
                       (pos == 0 ? s.openDescription : s.closeDescription) != nil {
                 guard allowManualControl(.power(pos == 0), for: previous) else { return nil }
@@ -110,16 +110,18 @@ extension HomeStore {
             updated.kind = .camera(s)
             command = .setSwitch(entityId: s.entityId, isOn: s.isOn)
         case .cover(var s):
-            // A curtain tap is a three-way control: travel stops, otherwise open/close. Window
-            // openers and the other subtypes keep the one-tap open/close they had before (#223).
-            // Pause needs no position reading, so a moving curtain stops before the position guard.
-            if s.subtype == .curtain, s.isMoving {
+            // A cover tap is a three-way control: travel stops, otherwise open/close. Pause needs
+            // no position reading, so a moving cover stops before the position guard (#298).
+            let origin = activeCoverOrigin(for: device.id, fallback: s.positionPercent)
+            if s.isMoving {
                 guard let pause = s.pauseDescription else {
                     toggleExpanded(device.id)
                     return nil
                 }
                 s.motion = .stopped
+                s.motionIsInferred = false
                 updated.kind = .cover(s)
+                coverCommandOrigins[device.id] = origin
                 command = .setSelectOption(entityId: s.entityId, option: pause)
             } else {
                 guard let pos = s.positionPercent,
@@ -127,9 +129,11 @@ extension HomeStore {
                     toggleExpanded(device.id)
                     return nil
                 }
+                coverCommandOrigins[device.id] = pos
                 let shouldOpen = pos == 0
                 s.positionPercent = shouldOpen ? 100 : 0
                 s.motion = shouldOpen ? .opening : .closing
+                s.motionIsInferred = false
                 updated.kind = .cover(s)
                 command = .setSelectOption(entityId: s.entityId, option: action)
             }
@@ -242,7 +246,9 @@ extension HomeStore {
         guard controlContextID == context else { return .superseded }
         if case .cover = requested.kind {
             // Motor control is write-only. Position is reported after the sash moves, so a
-            // successful write is the confirmation rather than an instant 0 or 100 reading.
+            // successful write is the confirmation rather than an instant 0 or 100 reading. The
+            // lock holds the accepted state until the device reports the same travel (or a stop
+            // after a pause), then `coverTravelTakesOver` ends it.
             applyConfirmedPower(from: requested, deviceId: deviceId)
             lockOptimistic(deviceId, duration: .seconds(8))
             return .matched
@@ -505,17 +511,26 @@ extension HomeStore {
         if opening || closing {
             guard allowManualControl(opening ? .power(true) : .power(false), for: previous) else { return }
         }
+        let origin = activeCoverOrigin(for: deviceId, fallback: s.positionPercent)
         if opening {
+            coverCommandOrigins[deviceId] = s.positionPercent
             s.positionPercent = 100
             s.motion = .opening
+            s.motionIsInferred = false
         }
         if closing {
+            coverCommandOrigins[deviceId] = s.positionPercent
             s.positionPercent = 0
             s.motion = .closing
+            s.motionIsInferred = false
         }
-        if pausing { s.motion = .stopped }
+        if pausing {
+            coverCommandOrigins[deviceId] = origin
+            s.motion = .stopped
+            s.motionIsInferred = false
+        }
         devices[idx].kind = .cover(s)
-        if opening || closing { lockOptimistic(deviceId, duration: .seconds(8)) }
+        if opening || closing || pausing { lockOptimistic(deviceId, duration: .seconds(8)) }
         dispatchImmediate(
             deviceId: deviceId,
             fallback: previous,
@@ -530,21 +545,39 @@ extension HomeStore {
               case .cover(var s) = devices[idx].kind, s.positionWritable else { return }
         let previous = devices[idx]
         let clamped = max(0, min(100, percent))
-        let previousPosition = s.positionPercent ?? clamped
-        s.positionPercent = clamped
-        if clamped > previousPosition {
+        let displayed = CoverSpec.snappedPosition(clamped)
+        let previousPosition = s.positionPercent ?? displayed
+        let origin = activeCoverOrigin(for: deviceId, fallback: previousPosition) ?? previousPosition
+        s.positionPercent = displayed
+        if displayed > previousPosition {
             s.motion = .opening
-        } else if clamped < previousPosition {
+            s.motionIsInferred = false
+        } else if displayed < previousPosition {
             s.motion = .closing
+            s.motionIsInferred = false
         }
         devices[idx].kind = .cover(s)
-        lockOptimistic(deviceId, duration: .seconds(8))
+        if s.isMoving {
+            coverCommandOrigins[deviceId] = origin
+            lockOptimistic(deviceId, duration: .seconds(8))
+        } else {
+            coverCommandOrigins.removeValue(forKey: deviceId)
+        }
         dispatchDebounced(
             key: "\(deviceId).cover",
             deviceId: deviceId,
             fallback: previous,
             command: .setNumberValue(entityId: s.entityId, value: Double(clamped))
         )
+    }
+
+    private func activeCoverOrigin(for deviceId: String, fallback: Int?) -> Int? {
+        if let lockUntil = optimisticLockUntil[deviceId], ContinuousClock.now < lockUntil,
+           let origin = coverCommandOrigins[deviceId] {
+            return origin
+        }
+        coverCommandOrigins.removeValue(forKey: deviceId)
+        return fallback
     }
 
 
@@ -918,6 +951,7 @@ extension HomeStore {
                         self.devices[idx] = fallback
                     }
                     self.optimisticLockUntil.removeValue(forKey: deviceId)
+                    self.coverCommandOrigins.removeValue(forKey: deviceId)
                 }
                 self.showControlFailure(error, device: fallback, adjustment: false)
             }
@@ -945,6 +979,7 @@ extension HomeStore {
                         self.devices[idx] = fallback
                     }
                     self.optimisticLockUntil.removeValue(forKey: deviceId)
+                    self.coverCommandOrigins.removeValue(forKey: deviceId)
                 }
                 self.showControlFailure(error, device: fallback, adjustment: true)
             }

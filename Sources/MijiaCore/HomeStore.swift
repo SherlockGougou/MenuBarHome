@@ -571,6 +571,12 @@ public final class HomeStore {
     private var toastTimerTask: Task<Void, Never>?
     var optimisticLockUntil: [String: ContinuousClock.Instant] = [:]
     var optimisticLockRevision: [String: UInt64] = [:]
+    /// Position the card showed when the current cover travel started. A stopped report at that
+    /// position is the pre-command snapshot; any other stopped position is the motor's real stop.
+    var coverCommandOrigins: [String: Int] = [:]
+    /// Last position each cover reported. Inferred travel survives only while this value changes,
+    /// so an obstructed motor with a stale target stops showing "opening" (#298).
+    var lastCoverPositions: [String: Int] = [:]
     public static let deviceAliasesKey = ViewPreferenceKeys.deviceAliases
     var rawDeviceNames: [String: String] = [:]
 

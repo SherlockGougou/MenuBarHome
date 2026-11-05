@@ -174,6 +174,36 @@ extension HomeStore {
         }
     }
 
+    /// A cover that reports the same travel the command started has confirmed the command, so it
+    /// supersedes the optimistic lock instead of waiting for a fixed duration to run out (#298).
+    /// The reported position must also have reached the commanded position in the travel
+    /// direction, so a status word that arrives before the position/target read-back cannot pull
+    /// the card back to an intermediate value.
+    private func coverTravelTakesOver(deviceId: String, local: SmartDevice, incoming: SmartDevice) -> Bool {
+        guard case .cover(let localSpec) = local.kind,
+              case .cover(let incomingSpec) = incoming.kind else { return false }
+        // `positionPercent` is the display target while a MIoT cover travels. The reported
+        // position is what proves the motor moved; target-only devices fall back to the target.
+        guard let localPosition = localSpec.positionPercent,
+              let incomingPosition = incomingSpec.reportedPositionPercent ?? incomingSpec.positionPercent else {
+            return incomingSpec.motion == localSpec.motion
+        }
+        if incomingSpec.motion == .stopped {
+            if incomingPosition == localPosition { return true }
+            // A stop at the position held before the command is the stale pre-travel snapshot.
+            if let origin = coverCommandOrigins[deviceId], incomingPosition == origin { return false }
+            return true
+        }
+        guard localSpec.isMoving else {
+            // A pause is confirmed by the device reporting that it stopped, not by another
+            // moving snapshot.
+            return false
+        }
+        return localSpec.motion == .opening
+            ? incomingPosition >= localPosition
+            : incomingPosition <= localPosition
+    }
+
     private func handleProviderEvent(_ event: HomeProviderEvent) {
         switch event {
         case .statusChanged(let status):
@@ -246,12 +276,29 @@ extension HomeStore {
             var merged: [SmartDevice] = []
             let existingById = Dictionary(uniqueKeysWithValues: self.devices.map { ($0.id, $0) })
 
-            for incoming in snapshot.devices {
+            for device in snapshot.devices {
+                var incoming = device
+                if case .cover(var cover) = incoming.kind {
+                    let reported = cover.reportedPositionPercent ?? cover.positionPercent
+                    let previousPosition = lastCoverPositions[incoming.id]
+                    lastCoverPositions[incoming.id] = reported
+                    if cover.motionIsInferred, previousPosition == reported {
+                        // The position did not move between reports, so the difference against the
+                        // target is not travel. Clear the inferred label and show where the motor
+                        // actually stopped instead of latching the target.
+                        cover.positionPercent = reported
+                        cover.motion = .stopped
+                        cover.motionIsInferred = false
+                        incoming.kind = .cover(cover)
+                    }
+                }
                 rawDeviceNames[incoming.id] = incoming.name
                 let backendChanged = previousBackends[incoming.id] != nil
                     && previousBackends[incoming.id] != snapshot.deviceBackends[incoming.id]
                 if backendChanged {
                     optimisticLockUntil.removeValue(forKey: incoming.id)
+                    coverCommandOrigins.removeValue(forKey: incoming.id)
+                    lastCoverPositions.removeValue(forKey: incoming.id)
                     optimisticLockRevision[incoming.id, default: 0] &+= 1
                     let prefix = "\(incoming.id)."
                     for key in debounceTasks.keys where key == incoming.id || key.hasPrefix(prefix) {
@@ -264,8 +311,19 @@ extension HomeStore {
                    let local = existingById[incoming.id],
                    !waitingDeviceIds.contains(incoming.id),
                    readBackInFlightTicket[incoming.id] == nil {
-                    merged.append(local)
+                    if coverTravelTakesOver(deviceId: incoming.id, local: local, incoming: incoming) {
+                        // The motor has confirmed the command, so its own report is authoritative.
+                        // Keeping the timed lock here would hide it and make the card jump when
+                        // the lock expired (#298).
+                        optimisticLockUntil.removeValue(forKey: incoming.id)
+                        coverCommandOrigins.removeValue(forKey: incoming.id)
+                        merged.append(incoming)
+                    } else {
+                        merged.append(local)
+                    }
                 } else {
+                    optimisticLockUntil.removeValue(forKey: incoming.id)
+                    coverCommandOrigins.removeValue(forKey: incoming.id)
                     merged.append(incoming)
                 }
             }

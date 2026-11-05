@@ -159,6 +159,7 @@ struct GoldenCorpusTests {
             let entityId: String
             let subtype: String
             let positionPercent: Int?
+            let reportedPositionPercent: Int?
             let positionWritable: Bool
             let openDescription: String?
             let closeDescription: String?
@@ -166,6 +167,7 @@ struct GoldenCorpusTests {
             let batteryPercent: Int?
             let faultText: String?
             let motion: String
+            let motionIsInferred: Bool?
         }
 
         init(from decoder: Decoder) throws {
@@ -324,13 +326,15 @@ struct GoldenCorpusTests {
                         entityId: p.entityId,
                         subtype: CoverSubtype(rawValue: p.subtype) ?? .windowOpener,
                         positionPercent: p.positionPercent,
+                        reportedPositionPercent: p.reportedPositionPercent ?? p.positionPercent,
                         positionWritable: p.positionWritable,
                         openDescription: p.openDescription,
                         closeDescription: p.closeDescription,
                         pauseDescription: p.pauseDescription,
                         batteryPercent: p.batteryPercent,
                         faultText: p.faultText,
-                        motion: CoverMotion(rawValue: p.motion) ?? .stopped
+                        motion: CoverMotion(rawValue: p.motion) ?? .stopped,
+                        motionIsInferred: p.motionIsInferred ?? false
                     )
                 )
             }

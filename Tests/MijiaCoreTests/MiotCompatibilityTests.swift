@@ -108,7 +108,7 @@ struct MiotCompatibilityTests {
         let device = MiDeviceRecord(did: "wd1", name: "卧室窗户", model: "linp.wopener.wd1lb", isOnline: true)
         let values: [MiotPropKey: JSONValue] = [
             .init(did: "wd1", siid: 2, piid: 2): .number(42),
-            .init(did: "wd1", siid: 2, piid: 3): .number(40),
+            .init(did: "wd1", siid: 2, piid: 3): .number(42),
             .init(did: "wd1", siid: 2, piid: 5): .number(0),
             .init(did: "wd1", siid: 3, piid: 1): .number(80),
         ]
@@ -196,17 +196,24 @@ struct MiotCompatibilityTests {
         #expect(await mock.executedCommands == [.setSelectOption(entityId: "miot:wd1:2", option: "Open")])
         #expect(store.devices.first?.isActiveOn == true)
 
-        let closing = try #require(store.devices.first)
+        let openSuite = "test.window.open.\(UUID().uuidString)"
+        let openMock = MockHomeProvider(snapshot: SynthesizedHome(devices: [coverDevice(position: 40)]))
+        let openStore = HomeStore(provider: openMock, defaultsSuiteName: openSuite)
+        defer { UserDefaults.standard.removePersistentDomain(forName: openSuite) }
+        for _ in 0..<50 where openStore.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         prompts = 0
-        store.manualControlConfirmationHandler = { _ in
+        openStore.manualControlConfirmationHandler = { _ in
             prompts += 1
             return false
         }
-        #expect(await store.togglePrimary(closing)?.value == true)
+        let closing = try #require(openStore.devices.first)
+        #expect(await openStore.togglePrimary(closing)?.value == true)
         #expect(prompts == 0)
-        #expect(await mock.executedCommands.contains(.setSelectOption(entityId: "miot:wd1:2", option: "Close")))
-        #expect(store.devices.first?.isActiveOn == false)
-        #expect(!store.allOffTargets.contains { $0.id == "wd1" })
+        #expect(await openMock.executedCommands == [.setSelectOption(entityId: "miot:wd1:2", option: "Close")])
+        #expect(openStore.devices.first?.isActiveOn == false)
+        #expect(!openStore.allOffTargets.contains { $0.id == "wd1" })
     }
 
     private func coverDevice(position: Int?) -> SmartDevice {

@@ -13,6 +13,11 @@ struct CoverDetailDrawer: View {
     var body: some View {
         let position = Double(spec.positionPercent ?? 0)
         VStack(alignment: .leading, spacing: 8) {
+            if let motion = spec.motion.localizedLabel {
+                Text(motion)
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
+                    .foregroundStyle(statusColor)
+            }
             if let fault = spec.faultText, !fault.isEmpty {
                 Text(fault)
                     .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))

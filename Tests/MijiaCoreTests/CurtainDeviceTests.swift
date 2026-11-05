@@ -290,7 +290,7 @@ struct CurtainDeviceTests {
         let (store, mock) = try await makeStore([closed])
         #expect(store.devices.first?.coverPosition == 0)
 
-        let (opened, _, _) = try singleTrackHome(position: 73, status: 2)
+        let (opened, _, _) = try singleTrackHome(position: 73, status: 0)
         await mock.updateSnapshot(SynthesizedHome(devices: [opened]))
         await waitUntil { store.devices.first?.coverPosition == 73 }
 

@@ -566,6 +566,76 @@ public enum CoverMotion: String, Equatable, Sendable {
     case stopped
     case opening
     case closing
+
+    /// Nil at rest; the card and drawer both show this label while the motor travels.
+    public var localizedLabel: String? {
+        switch self {
+        case .opening: L10n.tr("正在打开", "Opening")
+        case .closing: L10n.tr("正在关闭", "Closing")
+        case .stopped: nil
+        }
+    }
+}
+
+/// One MIoT `status` value-list word, classified by its letters only. Vendors spell the same
+/// travel differently (`Opening` / `Up` / `Rising`) and the released library contains typos such
+/// as `Dowm` and `Fallin`, so case, spaces, punctuation and digits are dropped before lookup.
+public enum CoverStatusWord: Equatable, Sendable {
+    case opening
+    case closing
+    /// A terminal end-of-travel word (`Open`, `Stop at highest`), not movement.
+    case open
+    /// A terminal end-of-travel word (`Closed`, `Stop at lowest`), not movement.
+    case closed
+    /// An explicit rest word (`Stop`, `Pause`, `Idle`, `Calibration`), not movement.
+    case stopped
+
+    public init?(_ description: String?) {
+        let trimmed = description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        switch trimmed {
+        case "打开中", "开启中":
+            self = .opening
+            return
+        case "关闭中":
+            self = .closing
+            return
+        case "已开", "完全打开":
+            self = .open
+            return
+        case "已关", "完全关闭":
+            self = .closed
+            return
+        case "停止", "已停止", "暂停", "空闲":
+            self = .stopped
+            return
+        default:
+            break
+        }
+        let letters = trimmed.lowercased().filter { $0.isASCII && $0.isLetter }
+        switch letters {
+        case "opening", "up", "uping", "rise", "rising":
+            self = .opening
+        case "closing", "down", "dowm", "falling", "fallin", "dropping", "downing", "lower":
+            self = .closing
+        case "open", "opened", "fullyopen", "stopathighest", "stopatupperlimit", "upperlimitstop", "ceiling":
+            self = .open
+        case "close", "closed", "closeover", "stopatlowest", "stoplowerlimit", "lowerlimitstop", "floor", "lowerlimit":
+            self = .closed
+        case "stop", "stopped", "pause", "paused", "idle", "calibration", "calibrating",
+             "partialopen", "partialclosed", "manual":
+            self = .stopped
+        default:
+            return nil
+        }
+    }
+
+    public var motion: CoverMotion {
+        switch self {
+        case .opening: .opening
+        case .closing: .closing
+        case .open, .closed, .stopped: .stopped
+        }
+    }
 }
 
 /// A cover (GLOSSARY `CoverDevice`). Position is 0 closed … 100 open. Motor words are the spec's
@@ -574,6 +644,9 @@ public struct CoverSpec: Equatable, Sendable {
     public var entityId: String
     public var subtype: CoverSubtype
     public var positionPercent: Int?
+    /// The current-position reading the device reports (or the target when it has none), before
+    /// any travel display substitution.
+    public var reportedPositionPercent: Int?
     public var positionWritable: Bool
     public var openDescription: String?
     public var closeDescription: String?
@@ -581,22 +654,27 @@ public struct CoverSpec: Equatable, Sendable {
     public var batteryPercent: Int?
     public var faultText: String?
     public var motion: CoverMotion
+    /// True when `motion` came from the target/current difference rather than a `status` word.
+    public var motionIsInferred: Bool
 
     public init(
         entityId: String,
         subtype: CoverSubtype,
         positionPercent: Int? = nil,
+        reportedPositionPercent: Int? = nil,
         positionWritable: Bool = false,
         openDescription: String? = nil,
         closeDescription: String? = nil,
         pauseDescription: String? = nil,
         batteryPercent: Int? = nil,
         faultText: String? = nil,
-        motion: CoverMotion = .stopped
+        motion: CoverMotion = .stopped,
+        motionIsInferred: Bool = false
     ) {
         self.entityId = entityId
         self.subtype = subtype
         self.positionPercent = positionPercent
+        self.reportedPositionPercent = reportedPositionPercent
         self.positionWritable = positionWritable
         self.openDescription = openDescription
         self.closeDescription = closeDescription
@@ -604,10 +682,19 @@ public struct CoverSpec: Equatable, Sendable {
         self.batteryPercent = batteryPercent
         self.faultText = faultText
         self.motion = motion
+        self.motionIsInferred = motionIsInferred
     }
 
     public var canMove: Bool { openDescription != nil && closeDescription != nil }
     public var isMoving: Bool { motion != .stopped }
+
+    /// A position within two points of either end is parked on that limit. Without this the card
+    /// shows a noisy 1% or 99% for a motor the device reports as fully closed or open (#298).
+    public static func snappedPosition(_ percent: Int) -> Int {
+        if percent <= 2 { return 0 }
+        if percent >= 98 { return 100 }
+        return percent
+    }
 }
 
 public enum DeviceKind: Equatable, Sendable {
@@ -806,7 +893,9 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
             next.kind = .vacuum(spec)
         case (.cover(var spec), .cover(let want)):
             spec.positionPercent = want.positionPercent
+            spec.reportedPositionPercent = want.reportedPositionPercent
             spec.motion = want.motion
+            spec.motionIsInferred = want.motionIsInferred
             next.kind = .cover(spec)
         case (.tv(var spec), .tv(let want)):
             spec.state = want.state
@@ -1118,6 +1207,7 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
             return L10n.tr("在线", "Online")
         case .cover(let s):
             if let fault = s.faultText, !fault.isEmpty { return fault }
+            if let motion = s.motion.localizedLabel { return motion }
             if let pos = s.positionPercent {
                 if pos <= 0 { return L10n.tr("已关上", "Closed") }
                 if pos >= 100 { return L10n.tr("已打开", "Open") }

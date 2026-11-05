@@ -918,6 +918,7 @@ extension HomeStore {
                     devices[revertIdx] = previous
                 }
                 optimisticLockUntil.removeValue(forKey: previous.id)
+                coverCommandOrigins.removeValue(forKey: previous.id)
             }
             return .failed(previous.name)
         }

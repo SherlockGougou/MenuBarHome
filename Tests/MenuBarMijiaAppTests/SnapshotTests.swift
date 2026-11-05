@@ -154,6 +154,45 @@ struct SnapshotTests {
         }
     }
 
+    @Test("Cover drawer shows travel")
+    func coverDrawerMovingSnapshot() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+
+        let spec = CoverSpec(
+            entityId: "cover.curtain",
+            subtype: .curtain,
+            positionPercent: 60,
+            reportedPositionPercent: 40,
+            positionWritable: true,
+            openDescription: "Open",
+            closeDescription: "Close",
+            pauseDescription: "Pause",
+            motion: .opening
+        )
+        let device = SmartDevice(
+            id: "snapshot-cover", name: "客厅窗帘", roomId: "living", roomName: "客厅",
+            model: "lumi.curtain.hagl05", isOnline: true,
+            kind: .cover(spec)
+        )
+
+        assertRendered(
+            snapshotReady(
+                CoverDetailDrawer(
+                    device: device,
+                    spec: spec,
+                    store: fixture.store,
+                    accent: DesignTokens.active,
+                    statusColor: DesignTokens.active
+                )
+                .padding(8)
+                .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 160),
+            named: "cover-drawer-opening-zh-light"
+        )
+    }
+
     @Test("Climate card wears its tinted platter when on")
     func climateOnCardSnapshot() async throws {
         let fixture = try await SnapshotFixture()

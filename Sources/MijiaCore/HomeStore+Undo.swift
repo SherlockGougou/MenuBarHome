@@ -23,6 +23,8 @@ extension HomeStore {
         grokBallCelebrationTask?.cancel()
         grokBallCelebrationUntil = nil
         optimisticLockUntil.removeAll()
+        coverCommandOrigins.removeAll()
+        lastCoverPositions.removeAll()
         // A different home is a different suggestion context even at the same ambient signature (Codex #116 review).
         lastProactiveRefreshSignature = nil
         for task in debounceTasks.values { task.cancel() }
@@ -503,6 +505,7 @@ extension HomeStore {
                 devices[idx] = pre
             }
             optimisticLockUntil.removeValue(forKey: failedId)
+            coverCommandOrigins.removeValue(forKey: failedId)
         }
     }
 

@@ -528,10 +528,16 @@ public enum MiotSynthesizer {
         let battery = r.first("battery-level", in: r.spec.services(named: "battery"))
         let motor = s.properties.first { $0.shortName == "motor-control" && $0.isWritable }
         let items = motor?.valueList ?? []
-        let positionSource = current ?? target
-        let position = positionSource?.value?.doubleValue.map {
-            percent(fromRaw: $0, property: positionSource!.property)
-        }
+        let currentPosition = coverPosition(current)
+        let targetPosition = coverPosition(target)
+        let statusWord = CoverStatusWord(status?.valueDescription)
+        let statusDefinesTravel = coverStatusDefinesTravel(status)
+        let motion = coverMotion(
+            statusDefinesTravel: statusDefinesTravel,
+            word: statusWord,
+            current: currentPosition,
+            target: targetPosition
+        )
         let faultCode = fault?.value?.intValue
         let faultText = coverFaultText(
             code: faultCode,
@@ -540,14 +546,21 @@ public enum MiotSynthesizer {
         return .cover(CoverSpec(
             entityId: MiotAddress.make(did: r.did, siid: s.iid),
             subtype: CoverSubtype(miotServiceShortName: s.shortName),
-            positionPercent: position,
+            positionPercent: coverDisplayPosition(
+                current: currentPosition,
+                target: targetPosition,
+                motion: motion
+            ) ?? coverStatusFallbackPosition(statusWord),
+            reportedPositionPercent: currentPosition.map(CoverSpec.snappedPosition)
+                ?? targetPosition.map(CoverSpec.snappedPosition),
             positionWritable: s.property(named: "target-position")?.isWritable == true,
             openDescription: coverMotorDescription(in: items, word: .open),
             closeDescription: coverMotorDescription(in: items, word: .close),
             pauseDescription: coverMotorDescription(in: items, word: .pause),
             batteryPercent: battery?.value?.intValue,
             faultText: faultText,
-            motion: coverMotion(forDescription: status?.valueDescription)
+            motion: motion,
+            motionIsInferred: motion != .stopped && !statusDefinesTravel
         ))
     }
 
@@ -558,13 +571,82 @@ public enum MiotSynthesizer {
         return description ?? "\(code)"
     }
 
-    /// Only a status that names movement makes a cover moving. Some specs reuse "Open"/"Close" for
-    /// the end state, so a tap must not read those as travel.
-    static func coverMotion(forDescription description: String?) -> CoverMotion {
-        switch description?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "opening", "打开中": return .opening
-        case "closing", "关闭中": return .closing
-        default: return .stopped
+    /// Reads one position property as a 0…100 percentage.
+    static func coverPosition(_ ref: MiotReader.Ref?) -> Int? {
+        guard let ref, let raw = ref.value?.doubleValue else { return nil }
+        return percent(fromRaw: raw, property: ref.property)
+    }
+
+    /// The target is the card's position while the motor travels, so intermediate current-position
+    /// reports cannot pull the card back. At rest the real current position wins; a target-only
+    /// spec shows its target because no current reading exists.
+    static func coverDisplayPosition(
+        current: Int?,
+        target: Int?,
+        motion: CoverMotion
+    ) -> Int? {
+        let snappedCurrent = current.map(CoverSpec.snappedPosition)
+        let snappedTarget = target.map(CoverSpec.snappedPosition)
+        let resting = snappedCurrent ?? snappedTarget
+        switch motion {
+        case .stopped:
+            return resting
+        case .opening, .closing:
+            // A target read-back can lag the status word. Progress toward the commanded end is the
+            // furthest of the two positions, so a stale sample never pulls the card backwards.
+            guard let current = snappedCurrent, let target = snappedTarget else { return resting }
+            return motion == .opening ? max(current, target) : min(current, target)
+        }
+    }
+
+    /// A status value that names travel wins. When the device publishes a status field whose list
+    /// has no travel words, the target/current difference is the only motion signal. The direction
+    /// is recomputed from every snapshot, so a changed position cannot leave a stale direction.
+    static func coverStatusDefinesTravel(_ status: MiotReader.Ref?) -> Bool {
+        status?.property.valueList?.contains { item in
+            guard let itemWord = CoverStatusWord(item.description) else { return false }
+            return itemWord == .opening || itemWord == .closing
+        } ?? false
+    }
+
+    /// A dedicated travel word (`Opening`, `Rising`, `Closing`, `Falling`) is authoritative.
+    /// Bare `Open`/`Close` are terminal end words in the released library, so they only become
+    /// travel when the status list has no dedicated travel word and the position still differs
+    /// from the target. Explicit rest words (`Stop`, `Pause`, `Idle`) never travel.
+    static func coverMotion(
+        statusDefinesTravel: Bool,
+        word: CoverStatusWord?,
+        current: Int?,
+        target: Int?
+    ) -> CoverMotion {
+        if let word {
+            switch word {
+            case .opening, .closing:
+                return word.motion
+            case .stopped:
+                return .stopped
+            case .open, .closed:
+                return statusDefinesTravel ? .stopped : inferredCoverMotion(current: current, target: target)
+            }
+        }
+        if statusDefinesTravel { return .stopped }
+        return inferredCoverMotion(current: current, target: target)
+    }
+
+    /// The only motion signal for a spec without travel words. Snap before comparing, or a parked
+    /// 99 against a target of 100 would read as travel forever (#298).
+    static func inferredCoverMotion(current: Int?, target: Int?) -> CoverMotion {
+        let current = current.map(CoverSpec.snappedPosition)
+        let target = target.map(CoverSpec.snappedPosition)
+        guard let current, let target, current != target else { return .stopped }
+        return target > current ? .opening : .closing
+    }
+
+    static func coverStatusFallbackPosition(_ word: CoverStatusWord?) -> Int? {
+        switch word {
+        case .open: 100
+        case .closed: 0
+        default: nil
         }
     }
 
