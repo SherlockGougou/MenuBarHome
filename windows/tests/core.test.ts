@@ -1307,6 +1307,146 @@ describe("LocalIntentParser, DelayPhrase, UndoPhrase, and ModelIntentResolver", 
     assert.equal(UndoPhrase.isUndo("刚才那个撤销"), true);
   });
 
+  it("applies the bare category close rule to another category", () => {
+    const secondFan: SmartDevice = {
+      ...devices[2]!,
+      id: "dev_bedroom_fan",
+      name: "主卧落地扇",
+      roomId: "bedroom",
+      roomName: "主卧",
+    };
+    const plan = LocalIntentParser.parse("关风扇", [...devices, secondFan], []);
+    assert.ok(plan);
+    assert.deepEqual(plan.intents, []);
+    assert.deepEqual(
+      plan.suggestions.map((suggestion) => suggestion.title),
+      ["关闭客厅风扇", "关闭主卧落地扇", "全部关掉"],
+    );
+    assert.equal(plan.suggestions.at(-1)?.intents.length, 2);
+
+    const single = LocalIntentParser.parse("关风扇", devices, []);
+    assert.ok(single);
+    assert.deepEqual(single.intents, [
+      { targetId: "dev_fan", operation: { kind: "power", isOn: false } },
+    ]);
+
+    const scoped = LocalIntentParser.parse("关掉所有灯", devices, []);
+    assert.ok(scoped);
+    assert.deepEqual(scoped.intents, [
+      { targetId: "dev_ceiling", operation: { kind: "power", isOn: false } },
+      { targetId: "dev_desk", operation: { kind: "power", isOn: false } },
+    ]);
+  });
+
+  it("keeps a category word a category command when devices are named room + word", () => {
+    const climate = (id: string, name: string, roomName: string, isOn: boolean): SmartDevice => ({
+      id,
+      name,
+      roomId: roomName,
+      roomName,
+      model: "xiaomi.aircondition.mt0",
+      isOnline: true,
+      kind: {
+        kind: "climate",
+        entityId: `climate.${id}`,
+        isOn,
+        hvacMode: isOn ? "cool" : "off",
+        availableModes: ["off", "cool", "heat"],
+        targetTemperature: 24,
+        currentTemperature: null,
+        minTemp: 16,
+        maxTemp: 30,
+        step: 1,
+        fanMode: null,
+        availableFanModes: [],
+      },
+    });
+    const bothOn = LocalIntentParser.parse(
+      "关空调",
+      [climate("ac_living", "客厅空调", "客厅", true), climate("ac_bed", "主卧空调", "主卧", true)],
+      [],
+    );
+    assert.ok(bothOn);
+    assert.deepEqual(bothOn.intents, []);
+    assert.deepEqual(
+      bothOn.suggestions.map((suggestion) => suggestion.title),
+      ["关闭客厅空调", "关闭主卧空调", "全部关掉"],
+    );
+
+    const onlyBedroomOn = LocalIntentParser.parse(
+      "关空调",
+      [climate("ac_living", "客厅空调", "客厅", false), climate("ac_bed", "主卧挂机", "主卧", true)],
+      [],
+    );
+    assert.ok(onlyBedroomOn);
+    assert.deepEqual(onlyBedroomOn.intents, [
+      { targetId: "ac_bed", operation: { kind: "power", isOn: false } },
+    ]);
+
+    const fan = (id: string, name: string, roomName: string): SmartDevice => ({
+      id,
+      name,
+      roomId: roomName,
+      roomName,
+      model: "dmaker.fan.p5",
+      isOnline: true,
+      kind: {
+        kind: "fan",
+        entityId: `fan.${id}`,
+        isOn: true,
+        percentage: null,
+        presetMode: "Level1",
+        availablePresetModes: ["Level1", "Level2", "Level3"],
+        isOscillating: false,
+      },
+    });
+    const fans = LocalIntentParser.parse(
+      "关风扇",
+      [fan("fan_living", "客厅风扇", "客厅"), fan("fan_bed", "主卧风扇", "主卧")],
+      [],
+    );
+    assert.ok(fans);
+    assert.deepEqual(fans.intents, []);
+    assert.equal(fans.suggestions.length, 3);
+  });
+
+  it("scopes a bare category close by room id, not a shared room name", () => {
+    const light = (id: string, name: string, roomId: string, roomName: string): SmartDevice => ({
+      id,
+      name,
+      roomId,
+      roomName,
+      model: "yeelink.light.lamp4",
+      isOnline: true,
+      kind: {
+        kind: "light",
+        entityId: `light.${id}`,
+        isOn: true,
+        brightnessPercent: null,
+        colorTempKelvin: null,
+        minKelvin: 2700,
+        maxKelvin: 6500,
+        currentEffect: null,
+        availableEffects: [],
+      },
+    });
+    const devices = [
+      light("dev_cn", "客厅吸顶灯", "account-cn/ke_ting", "客厅"),
+      light("dev_de", "客厅吊灯", "account-de/ke_ting", "客厅"),
+    ];
+    const withoutRoom = LocalIntentParser.parse("关灯", devices, []);
+    assert.ok(withoutRoom);
+    assert.deepEqual(withoutRoom.intents, []);
+
+    const scoped = LocalIntentParser.parse("关灯", devices, [], {
+      panelRoom: { id: "account-cn/ke_ting", name: "客厅" },
+    });
+    assert.ok(scoped);
+    assert.deepEqual(scoped.intents, [
+      { targetId: "dev_cn", operation: { kind: "power", isOn: false } },
+    ]);
+  });
+
   it("resolves Jev /v1/systemone multi-choice payload", async () => {
     const resolver = new ModelIntentResolver(
       {
@@ -1458,12 +1598,21 @@ describe("LocalIntentParser, DelayPhrase, UndoPhrase, and ModelIntentResolver", 
 
   it("matches the cross-platform golden JSON corpus shared with MijiaCoreTests", () => {
     const raw = readFileSync(resolve(process.cwd(), "../Tests/Fixtures/intent_golden.json"), "utf8");
+    type GoldenIntentCase = {
+      utterance: string;
+      expected: Array<{ targetId: string; kind: string; value: boolean | number | string }> | null;
+      panelRoom?: { id: string; name: string };
+      usageOrder?: string[];
+      expectedReply?: string;
+      candidates?: Array<{
+        title: string;
+        expected: Array<{ targetId: string; kind: string; value: boolean | number | string }>;
+      }>;
+    };
     const corpus = JSON.parse(raw) as {
       devices: SmartDevice[];
-      intentCases: Array<{
-        utterance: string;
-        expected: Array<{ targetId: string; kind: string; value: boolean | number | string }> | null;
-      }>;
+      intentCases: GoldenIntentCase[];
+      catalogCases: Array<{ name: string; devices: SmartDevice[]; cases: GoldenIntentCase[] }>;
       commandValidationCases: Array<{
         name: string;
         intent: { targetId: string; kind: string; value: boolean | number | string };
@@ -1492,13 +1641,41 @@ describe("LocalIntentParser, DelayPhrase, UndoPhrase, and ModelIntentResolver", 
       return { targetId: intent.targetId, kind: k, value: val };
     };
 
-    for (const item of corpus.intentCases) {
-      const plan = LocalIntentParser.parse(item.utterance, corpus.devices, []);
+    const expectIntentCase = (item: GoldenIntentCase, devices: SmartDevice[], label: string): void => {
+      const plan = LocalIntentParser.parse(item.utterance, devices, [], {
+        panelRoom: item.panelRoom ?? null,
+        usageOrder: item.usageOrder ?? [],
+      });
       if (item.expected === null) {
-        assert.equal(plan, null, item.utterance);
-      } else {
-        assert.ok(plan, `Expected plan for: ${item.utterance}`);
-        assert.deepEqual(plan.intents.map(encodeOp as never), item.expected, item.utterance);
+        assert.equal(plan, null, label);
+        return;
+      }
+      assert.ok(plan, `Expected plan for: ${label}`);
+      assert.deepEqual(plan.intents.map(encodeOp as never), item.expected, label);
+      if (item.expectedReply !== undefined) {
+        assert.equal(plan.reply, item.expectedReply, label);
+      }
+      if (item.candidates !== undefined) {
+        assert.deepEqual(
+          plan.suggestions.map((suggestion) => suggestion.title),
+          item.candidates.map((candidate) => candidate.title),
+          label,
+        );
+        assert.deepEqual(
+          plan.suggestions.map((suggestion) => suggestion.intents.map(encodeOp as never)),
+          item.candidates.map((candidate) => candidate.expected),
+          label,
+        );
+      }
+    };
+
+    for (const item of corpus.intentCases) {
+      expectIntentCase(item, corpus.devices, item.utterance);
+    }
+
+    for (const catalog of corpus.catalogCases) {
+      for (const item of catalog.cases) {
+        expectIntentCase(item, catalog.devices, `${catalog.name}: ${item.utterance}`);
       }
     }
 
@@ -1547,6 +1724,37 @@ describe("LocalIntentParser, DelayPhrase, UndoPhrase, and ModelIntentResolver", 
     for (const item of corpus.undoCases) {
       assert.equal(UndoPhrase.isUndo(item.utterance), item.isUndo, item.utterance);
     }
+  });
+
+  it("caps bare category candidates at four plus one 全部关掉 (#273)", () => {
+    const lights: SmartDevice[] = Array.from({ length: 6 }, (_, index) => ({
+      id: `light.${index}`,
+      name: `测试灯${index}`,
+      roomId: `room_${index}`,
+      roomName: `房间${index}`,
+      model: "yeelink.light.lamp4",
+      isOnline: true,
+      kind: {
+        kind: "light",
+        entityId: `light.${index}`,
+        isOn: true,
+        brightnessPercent: 60,
+        colorTempKelvin: 4000,
+        minKelvin: 2700,
+        maxKelvin: 6500,
+        currentEffect: null,
+        availableEffects: [],
+      },
+    }));
+    const plan = LocalIntentParser.parse("关灯", lights, []);
+    assert.ok(plan);
+    assert.equal(plan.intents.length, 0);
+    assert.equal(plan.suggestions.length, 5);
+    assert.deepEqual(
+      plan.suggestions.map((suggestion) => suggestion.title),
+      ["关闭测试灯0", "关闭测试灯1", "关闭测试灯2", "关闭测试灯3", "全部关掉"],
+    );
+    assert.equal(plan.suggestions[4]?.intents.length, 6);
   });
 });
 
@@ -2791,6 +2999,13 @@ describe("Cross-platform habit memory corpus (#113, ADR-0009)", () => {
       phrases?: Array<{ phrase: string; targets: Array<{ targetId: string; operationKey: string }> }>;
       expected: string;
     }>;
+    usageOrderCases: Array<{
+      name: string;
+      date: string;
+      hour: number;
+      entries: Array<{ bucket: string; targetId: string; operationKey: string; count: number; dayType?: string; ageDays?: number }>;
+      expected: string[];
+    }>;
   };
 
   const toIntent = (item: { targetId: string; kind: string; value: unknown }): DeviceIntent => {
@@ -2963,6 +3178,12 @@ describe("Cross-platform habit memory corpus (#113, ADR-0009)", () => {
         item.expected,
         item.name,
       );
+    }
+
+    for (const item of corpus.usageOrderCases) {
+      const now = caseDate(item.date, item.hour);
+      const memory = memoryFrom(item.entries, now);
+      assert.deepEqual(memory.usageOrder(now), item.expected, item.name);
     }
 
     for (const item of corpus.shareCases) {

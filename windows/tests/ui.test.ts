@@ -1038,6 +1038,170 @@ describe("Timers the PC slept through (#22)", () => {
       Date.now = realNow;
     }
   });
+
+  it("resolves a bare 关灯 against the room shown when the timer was set", async () => {
+    startDemo();
+    await click('[data-room="客厅"]');
+    await command("10分钟后关灯");
+    assert.match(document.body.textContent ?? "", /已设定 10 分钟后执行「关灯」/);
+    assert.match(tile("light.living_ceiling"), /已开启/);
+    await click('[data-room="全部"]');
+    const realNow = Date.now;
+    Date.now = () => realNow() + 3 * 3600 * 1000;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      assert.match(document.body.textContent ?? "", /已错过定时：关灯/);
+      await click("[data-run-missed]");
+      await setImmediate();
+      assert.match(tile("light.living_ceiling"), /已关闭/);
+      assert.match(tile("light.study_desk"), /已开启/);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  it("keeps a learned phrase's devices when the same phrase is scheduled", async () => {
+    localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
+      connectionMode: "demo",
+      hasCompletedOnboarding: true,
+      learnedShortcuts: [{
+        phrase: "关灯",
+        reply: "已关闭书房台灯",
+        intents: [{ targetId: "light.study_desk", operation: { kind: "power", isOn: false } }],
+        learnedAt: new Date().toISOString(),
+      }],
+    }));
+    new MenuMijiaWindowsApp(element("#app"));
+    await setImmediate();
+
+    await click('[data-room="客厅"]');
+    await command("10分钟后关灯");
+    assert.match(document.body.textContent ?? "", /已设定 10 分钟后执行「关灯」/);
+    assert.match(tile("light.living_ceiling"), /已开启/);
+
+    const realNow = Date.now;
+    Date.now = () => realNow() + 3 * 3600 * 1000;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      assert.match(document.body.textContent ?? "", /已错过定时：关灯/);
+      await click("[data-run-missed]");
+      await setImmediate();
+      await click('[data-room="全部"]');
+      assert.match(tile("light.study_desk"), /已关闭/);
+      assert.match(tile("light.living_ceiling"), /已开启/);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+});
+
+describe("Bare category commands (#273)", () => {
+  it("关灯 with several lights on offers the lit lights and one 全部关掉", async () => {
+    startDemo();
+    await command("关灯");
+    assert.match(document.body.textContent ?? "", /开着：客厅吸顶灯、书房台灯。请说出房间或设备名/);
+    assert.match(tile("light.living_ceiling"), /已开启/);
+    assert.match(tile("light.study_desk"), /已开启/);
+    const chips = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-suggestion-id]"),
+      (node) => node.textContent ?? "",
+    );
+    assert.deepEqual(chips, ["关闭客厅吸顶灯", "关闭书房台灯", "全部关掉"]);
+
+    element('[data-suggestion-id="bare:off:all"]').click();
+    await setImmediate();
+    await setImmediate();
+    assert.match(tile("light.living_ceiling"), /已关闭/);
+    assert.match(tile("light.study_desk"), /已关闭/);
+    assert.ok(document.querySelector("#btn-undo"), "全部关掉 should offer an undo banner");
+
+    await click("#btn-undo");
+    assert.match(tile("light.living_ceiling"), /已开启/);
+    assert.match(tile("light.study_desk"), /已开启/);
+  });
+
+  it("keeps a room button per room id when two homes share a room name", async () => {
+    localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
+      connectionMode: "demo",
+      hasCompletedOnboarding: true,
+    }));
+    const app = new MenuMijiaWindowsApp(element("#app"));
+    await setImmediate();
+    const light = (id: string, name: string, roomId: string): SmartDevice => ({
+      id,
+      name,
+      roomId,
+      roomName: "客厅",
+      model: "yeelink.light.lamp4",
+      isOnline: true,
+      kind: {
+        kind: "light",
+        entityId: `light.${id}`,
+        isOn: true,
+        brightnessPercent: 80,
+        colorTempKelvin: 4000,
+        minKelvin: 2700,
+        maxKelvin: 6500,
+        currentEffect: null,
+        availableEffects: [],
+      },
+    });
+    app.devices = [
+      light("light.cn_living", "客厅吸顶灯", "home-cn/ke_ting"),
+      light("light.de_living", "客厅吊灯", "home-de/ke_ting"),
+    ];
+    app.render();
+
+    const pills = Array.from(document.querySelectorAll<HTMLElement>('[data-room="客厅"]'));
+    assert.equal(pills.length, 2, "each room id needs its own button");
+    assert.ok(document.querySelector('[data-tile-id="light.cn_living"]'));
+    assert.ok(document.querySelector('[data-tile-id="light.de_living"]'));
+
+    pills[1]!.click();
+    await setImmediate();
+    assert.ok(document.querySelector('[data-tile-id="light.de_living"]'));
+    assert.equal(document.querySelector('[data-tile-id="light.cn_living"]'), null);
+  });
+
+  it("关灯 closes only the room the panel shows", async () => {
+    startDemo();
+    await click('[data-room="客厅"]');
+    await command("关灯");
+    assert.match(tile("light.living_ceiling"), /已关闭/);
+    assert.equal(document.querySelector("[data-suggestion-id]"), null);
+    await click('[data-room="全部"]');
+    assert.match(tile("light.study_desk"), /已开启/);
+  });
+
+  it("关灯 with every light off answers without sending a command", async () => {
+    startDemo();
+    await command("关掉所有灯");
+    assert.match(tile("light.living_ceiling"), /已关闭/);
+    assert.match(tile("light.study_desk"), /已关闭/);
+
+    await command("关灯");
+    assert.match(document.body.textContent ?? "", /灯都关着/);
+    assert.equal(document.querySelector("[data-suggestion-id]"), null);
+    assert.match(tile("light.living_ceiling"), /已关闭/);
+    assert.match(tile("light.study_desk"), /已关闭/);
+  });
+
+  it("a delayed 关灯 that needs a choice sets no timer and runs nothing", async () => {
+    startDemo();
+    await command("10分钟后关灯");
+    assert.match(document.body.textContent ?? "", /开着：客厅吸顶灯、书房台灯。请说出房间或设备名/);
+    assert.equal(document.querySelector("[data-suggestion-id]"), null);
+    assert.doesNotMatch(document.body.textContent ?? "", /剩余/);
+    assert.match(tile("light.living_ceiling"), /已开启/);
+    assert.match(tile("light.study_desk"), /已开启/);
+  });
+
+  it("关监控 closes the only camera that is on and leaves the rest alone", async () => {
+    startDemo();
+    await command("关监控");
+    assert.match(tile("camera.living_cam"), /休眠中/);
+    assert.match(tile("light.living_ceiling"), /已开启/);
+  });
 });
 
 describe("全关 (#23)", () => {

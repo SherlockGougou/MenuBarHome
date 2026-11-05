@@ -131,6 +131,7 @@ import {
   showsKindRow,
   type DeviceKindTag,
   type DeviceListCut,
+  type RoomOption,
 } from "./listCut.js";
 
 import { SpeechRecognitionInstance, type ConnectionMode, type LearnedShortcut, type LoadedSettings, type PersistedSettings, type ReplyBannerState, type UndoAction, type UndoStep } from "./appTypes.js";
@@ -144,7 +145,7 @@ import { renderContextMenu, renderHomeMenu, renderOnboardingModal, renderPrompt,
 import { bindEvents as bindEventsImpl } from "./bindEvents.js";
 import { renderPanel } from "./panelView.js";
 import { applyGlobalHotkey, applyInterfaceLanguage, applyTemperatureSetting, bindGlobalKeys, checkForAppUpdate, hydrateCredentials, initializeCredentials, openSettingsSheet, openUpdatePage, osLanguages, persistCredentials, restoreUpdateState, saveSettings, saveUpdateState, startTimerLoop, startUpdateInstall, submitServiceEndpoints } from "./appLifecycle.js";
-import { handleNaturalCommand, learnShortcut } from "./naturalCommand.js";
+import { handleNaturalCommand, learnShortcut, runScheduledCommand } from "./naturalCommand.js";
 import { currentProactiveSuggestions, invalidateSourceControl, isIntentReversibleOnDevice, maybeRefreshProactiveInBackground, proactiveSignature, renderGrokBallSidebar, renderGrokBallStage, setGrokBallStageExpanded, syncGrokBallEmotion } from "./proactive.js";
 import { applyCommand, dispatchCloudCommand, markCloudValuesFresh, markCloudValuesStale } from "./commandDispatch.js";
 import { cloudPanelStructureFingerprint, cloudPresentationFingerprint, cloudSnapshotIsStale, filterBySelectedHome, foldGrouped, patchCloudPresentation, refreshDevices, refreshHADevices, withSharedHomeDevices } from "./cloudRefresh.js";
@@ -170,10 +171,22 @@ export class MenuMijiaWindowsApp {
     return this.listCut.kind === "room" ? this.listCut.roomName : "全部";
   }
 
-  public set selectedRoom(room: string) {
-    this.listCut = !room || room === "全部"
+  /** Room buttons keyed by id: two homes may both have a 客厅. */
+  public get roomOptions(): RoomOption[] {
+    const seen = new Set<string>();
+    const options: RoomOption[] = [];
+    for (const device of this.devices) {
+      if (!device.roomId || seen.has(device.roomId)) continue;
+      seen.add(device.roomId);
+      options.push({ id: device.roomId, name: device.roomName });
+    }
+    return options;
+  }
+
+  public selectRoom(roomId: string | null, roomName?: string): void {
+    this.listCut = roomId === null
       ? { kind: "all" }
-      : { kind: "room", roomName: room };
+      : { kind: "room", roomId, roomName: roomName ?? roomId };
   }
 
   public selectDeviceKind(tag: DeviceKindTag): void {
@@ -423,11 +436,6 @@ export class MenuMijiaWindowsApp {
     this.render();
   }
 
-  public get rooms(): string[] {
-    const unique = Array.from(new Set(this.devices.map((d) => d.roomName)));
-    return ["全部", ...unique];
-  }
-
   private get filteredDevices(): SmartDevice[] {
     return filterByListCut(this.devices, this.listCut, this.settings.hideOfflineDevices);
   }
@@ -534,7 +542,7 @@ export class MenuMijiaWindowsApp {
   public selectHome(id: string | null): void {
     this.settings.selectedHomeId = id;
     this.isHomeMenuOpen = false;
-    this.selectedRoom = "全部";
+    this.selectRoom(null);
     // A different home is a different suggestion context even at the same ambient signature (Codex #116 review).
     this.aiProactiveSuggestions = null;
     this.aiProactiveSignature = null;
@@ -634,6 +642,10 @@ export class MenuMijiaWindowsApp {
 
   public async handleNaturalCommand(rawInput: string, fromScheduled = false): Promise<void> {
     return handleNaturalCommand(this, rawInput, fromScheduled);
+  }
+
+  public async runScheduledCommand(item: ScheduledCommand): Promise<void> {
+    return runScheduledCommand(this, item);
   }
 
   private learnShortcut(
@@ -885,7 +897,7 @@ export class MenuMijiaWindowsApp {
       this.devices = [];
       this.scenes = [];
       this.groupOwnerByMemberDid = new Map();
-      this.selectedRoom = "全部";
+      this.selectRoom(null);
       this.activeSheet = "none";
       this.qrTicket = null;
       this.saveSettings();

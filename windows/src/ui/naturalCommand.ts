@@ -14,9 +14,24 @@ import {
   buildAssistantContext,
   endpointAllowsSendingSecrets,
   isLocalAssistantEndpoint,
+  type LocalIntentParseOptions,
 } from "../core/assistant.js";
 import type { DeviceIntent, IntentPlan, ScheduledCommand } from "../core/models.js";
 import { withAliases } from "./panelPrefs.js";
+
+function localParseOptions(host: MenuMijiaWindowsApp): LocalIntentParseOptions {
+  const cut = host.listCut;
+  return {
+    panelRoom: cut.kind === "room"
+      ? { id: cut.roomId, name: cut.roomName }
+      : null,
+    usageOrder: new UserHabitMemory(
+      host.settings.habitEntries,
+      host.habitSequences(),
+      host.lastHabitAction(),
+    ).usageOrder(),
+  };
+}
 
 export async function handleNaturalCommand(host: MenuMijiaWindowsApp, rawInput: string, fromScheduled = false): Promise<void> {
     const trimmed = rawInput.trim();
@@ -46,19 +61,48 @@ export async function handleNaturalCommand(host: MenuMijiaWindowsApp, rawInput: 
     if (!fromScheduled) {
       const delaySpec = DelayPhrase.extract(trimmed);
       if (delaySpec) {
-        const scheduled: ScheduledCommand = {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          command: delaySpec.remainder,
-          delaySeconds: delaySpec.seconds,
-          fireTimestampMs: Date.now() + delaySpec.seconds * 1000,
-          reply: t("{delay}后：{command}", { delay: DelayPhrase.formatDelay(delaySpec.seconds), command: delaySpec.remainder }),
+        const queue = (intents: readonly DeviceIntent[] | undefined): void => {
+          const scheduled: ScheduledCommand = {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            command: delaySpec.remainder,
+            delaySeconds: delaySpec.seconds,
+            fireTimestampMs: Date.now() + delaySpec.seconds * 1000,
+            reply: t("{delay}后：{command}", { delay: DelayPhrase.formatDelay(delaySpec.seconds), command: delaySpec.remainder }),
+            intents,
+          };
+          host.scheduledCommands.push(scheduled);
+          host.replyBanner = {
+            text: t("已设定 {delay}后执行「{command}」", { delay: DelayPhrase.formatDelay(delaySpec.seconds), command: delaySpec.remainder }),
+            source: t("定时任务"),
+          };
+          host.render();
         };
-        host.scheduledCommands.push(scheduled);
-        host.replyBanner = {
-          text: t("已设定 {delay}后执行「{command}」", { delay: DelayPhrase.formatDelay(delaySpec.seconds), command: delaySpec.remainder }),
-          source: t("定时任务"),
-        };
-        host.render();
+        // A learned phrase wins over the generic parser, exactly as it does without a delay.
+        const learned = host.settings.learnedShortcuts.find(
+          (shortcut) => shortcut.phrase.replace(/\s+/g, "") === delaySpec.remainder.replace(/\s+/g, ""),
+        );
+        if (learned) {
+          queue(learned.intents);
+          return;
+        }
+        const aliasedDevices = withAliases(host.layout, host.devices);
+        const resolved = LocalIntentParser.parse(
+          delaySpec.remainder,
+          aliasedDevices,
+          host.scenes,
+          localParseOptions(host),
+        );
+        if (resolved && resolved.intents.length === 0) {
+          // A timer never fires an unresolved choice; ask for the room or device now.
+          host.pendingSuggestions = [];
+          host.replyBanner = {
+            text: resolved.reply || t("无法找到指令对应的设备"),
+            source: t("0ms 本地直达"),
+          };
+          host.render();
+          return;
+        }
+        queue(resolved?.intents);
         return;
       }
     }
@@ -77,7 +121,7 @@ export async function handleNaturalCommand(host: MenuMijiaWindowsApp, rawInput: 
 
     try {
       const aliasedDevices = withAliases(host.layout, host.devices);
-      const localPlan = LocalIntentParser.parse(trimmed, aliasedDevices, host.scenes);
+      const localPlan = LocalIntentParser.parse(trimmed, aliasedDevices, host.scenes, localParseOptions(host));
       let plan: IntentPlan | null = localPlan;
       let sourceLabel = t("0ms 本地直达");
 
@@ -184,6 +228,21 @@ export async function handleNaturalCommand(host: MenuMijiaWindowsApp, rawInput: 
       }
     }
   }
+
+export async function runScheduledCommand(host: MenuMijiaWindowsApp, item: ScheduledCommand): Promise<void> {
+  if (item.intents && item.intents.length > 0) {
+    const aliasedDevices = withAliases(host.layout, host.devices);
+    const intents = IntentValidator.sanitize(item.intents, aliasedDevices, host.scenes);
+    await host.executeIntents(
+      intents,
+      IntentReply.describe(intents, aliasedDevices, host.scenes),
+      t("定时任务"),
+      { recordHabits: false },
+    );
+    return;
+  }
+  await handleNaturalCommand(host, item.command, true);
+}
 
 export function learnShortcut(
     host: MenuMijiaWindowsApp,

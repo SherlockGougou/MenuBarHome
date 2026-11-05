@@ -598,7 +598,7 @@ import type { MenuMijiaWindowsApp } from "./app.js";
         const item = host.missedScheduledCommands.find((c) => c.id === btn.dataset.runMissed);
         if (!item) return;
         host.missedScheduledCommands = host.missedScheduledCommands.filter((c) => c.id !== item.id);
-        void host.handleNaturalCommand(item.command, true);
+        void host.runScheduledCommand(item);
       });
     });
 
@@ -648,7 +648,7 @@ import type { MenuMijiaWindowsApp } from "./app.js";
 
     host.root.querySelectorAll<HTMLElement>("[data-room]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        host.selectedRoom = btn.dataset.room ?? "全部";
+        host.selectRoom(btn.dataset.roomId ?? null, btn.dataset.room);
         host.animateEntrance = true;
         host.expandedDeviceId = null;
         host.render();

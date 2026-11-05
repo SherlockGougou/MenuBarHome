@@ -10,6 +10,14 @@ struct GoldenCorpusTests {
         let delayCases: [DelayCase]
         let cancelCases: [CancelCase]
         let undoCases: [UndoCase]
+        /// Extra device catalogs whose names collide with category words or whose power is read-only.
+        let catalogCases: [CatalogCase]
+    }
+
+    private struct CatalogCase: Decodable {
+        let name: String
+        let devices: [CorpusDevice]
+        let cases: [IntentCase]
     }
 
     private struct CorpusDevice: Decodable {
@@ -321,9 +329,23 @@ struct GoldenCorpusTests {
         let value: ExpectedValue
     }
 
+    private struct CandidateCase: Decodable {
+        let title: String
+        let expected: [ExpectedIntent]
+    }
+
+    private struct PanelRoomCase: Decodable {
+        let id: String
+        let name: String
+    }
+
     private struct IntentCase: Decodable {
         let utterance: String
         let expected: [ExpectedIntent]?
+        let panelRoom: PanelRoomCase?
+        let usageOrder: [String]?
+        let expectedReply: String?
+        let candidates: [CandidateCase]?
     }
 
     private struct CommandValidationCase: Decodable {
@@ -630,12 +652,13 @@ struct GoldenCorpusTests {
         let devices = corpus.devices.map { $0.toSmartDevice() }
 
         for item in corpus.intentCases {
-            if let expected = item.expected {
-                let plan = try #require(LocalIntentParser.parse(item.utterance, devices: devices, scenes: []), "\(item.utterance)")
-                let actual = plan.intents.map(Self.encodeIntent)
-                #expect(actual == expected, "\(item.utterance)")
-            } else {
-                #expect(LocalIntentParser.parse(item.utterance, devices: devices, scenes: []) == nil, "\(item.utterance)")
+            try Self.expectIntentCase(item, devices: devices)
+        }
+
+        for catalog in corpus.catalogCases {
+            let catalogDevices = catalog.devices.map { $0.toSmartDevice() }
+            for item in catalog.cases {
+                try Self.expectIntentCase(item, devices: catalogDevices, label: "\(catalog.name): \(item.utterance)")
             }
         }
 
@@ -903,6 +926,15 @@ struct GoldenCorpusTests {
         let sequenceCases: [SequenceCase]
         let topSuggestionCases: [HabitTopSuggestionCase]
         let shareCases: [HabitShareCase]
+        let usageOrderCases: [UsageOrderCase]
+    }
+
+    private struct UsageOrderCase: Decodable {
+        let name: String
+        let date: String
+        let hour: Int
+        let entries: [HabitEntryInput]
+        let expected: [String]
     }
 
     private struct HabitShareCase: Decodable {
@@ -1072,6 +1104,37 @@ struct GoldenCorpusTests {
         )
     }
 
+    private static func expectIntentCase(
+        _ item: IntentCase,
+        devices: [SmartDevice],
+        label: String? = nil
+    ) throws {
+        let name = label ?? item.utterance
+        let plan = LocalIntentParser.parse(
+            item.utterance,
+            devices: devices,
+            scenes: [],
+            panelRoom: item.panelRoom.map { BareCategoryCommand.Room(id: $0.id, name: $0.name) },
+            usageOrder: item.usageOrder ?? []
+        )
+        guard let expected = item.expected else {
+            #expect(plan == nil, "\(name)")
+            return
+        }
+        let resolved = try #require(plan, "\(name)")
+        #expect(resolved.intents.map(Self.encodeIntent) == expected, "\(name)")
+        if let reply = item.expectedReply {
+            #expect(resolved.reply == reply, "\(name)")
+        }
+        if let candidates = item.candidates {
+            #expect(resolved.suggestions.map(\.title) == candidates.map(\.title), "\(name)")
+            #expect(
+                resolved.suggestions.map { $0.intents.map(Self.encodeIntent) } == candidates.map(\.expected),
+                "\(name)"
+            )
+        }
+    }
+
     private static func intent(from expected: ExpectedIntent) -> DeviceIntent? {
         let target = expected.targetId
         switch (expected.kind, expected.value) {
@@ -1186,6 +1249,12 @@ struct GoldenCorpusTests {
             )
             let actual = suggestions.map { $0.intents.map(Self.encodeIntent) }
             #expect(actual == item.expected, "\(item.name)")
+        }
+
+        for item in corpus.usageOrderCases {
+            let now = try Self.habitCaseDate(date: item.date, hour: item.hour)
+            let memory = UserHabitMemory(entries: try item.entries.map { try Self.makeEntry($0, now: now) })
+            #expect(memory.usageOrder(for: now) == item.expected, "\(item.name)")
         }
 
         for item in corpus.shareCases {

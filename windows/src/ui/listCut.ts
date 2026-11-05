@@ -4,8 +4,14 @@ export type DeviceKindTag = DeviceKind["kind"];
 
 export type DeviceListCut =
   | { readonly kind: "all" }
-  | { readonly kind: "room"; readonly roomName: string }
+  | { readonly kind: "room"; readonly roomId: string; readonly roomName: string }
   | { readonly kind: "deviceKind"; readonly tag: DeviceKindTag };
+
+/** A room button: identity plus the display name, which two homes may share. */
+export interface RoomOption {
+  readonly id: string;
+  readonly name: string;
+}
 
 export const KIND_RANK: Record<DeviceKindTag, number> = {
   climate: 0,
@@ -42,7 +48,7 @@ export function filterByListCut(
   hideOffline: boolean,
 ): SmartDevice[] {
   return visible(devices, hideOffline).filter((dev) => {
-    if (cut.kind === "room") return dev.roomName === cut.roomName;
+    if (cut.kind === "room") return dev.roomId === cut.roomId;
     if (cut.kind === "deviceKind") return dev.kind.kind === cut.tag;
     return true;
   });
