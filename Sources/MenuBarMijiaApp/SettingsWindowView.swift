@@ -465,6 +465,25 @@ private struct GeneralSettingsTab: View {
                     }
                     .disabled(!store.doorbellAutoPopup)
 
+                    SettingsToggleRow(
+                        title: L10n.tr("每周日晚发送家庭健康周报", "Send a weekly home health report on Sunday evening"),
+                        isOn: Binding(
+                            get: { store.enableWeeklyHealthReport },
+                            set: { enabled in
+                                store.enableWeeklyHealthReport = enabled
+                                if enabled { askForNotificationsIfNeeded() }
+                            }
+                        )
+                    )
+
+                    HStack {
+                        Spacer()
+                        Button(L10n.tr("导出本周周报…", "Export This Week's Report…")) {
+                            WeeklyHealthReportExport.save(store.weeklyHealthReport())
+                        }
+                        .buttonStyle(PillActionButtonStyle())
+                    }
+
                     NotificationPermissionRow()
 
                     if showNotificationRationale {
@@ -583,6 +602,19 @@ private struct GeneralSettingsTab: View {
         // A denial made in System Settings has nothing left to ask; the permission row offers the repair link.
         if notifications.isDenied { return }
         showNotificationRationale = true
+    }
+}
+
+/// Saves the weekly report as Markdown wherever the user picks (#182).
+@MainActor
+enum WeeklyHealthReportExport {
+    static func save(_ report: WeeklyHealthReport, now: Date = Date()) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.init(filenameExtension: "md") ?? .plainText]
+        let stamp = now.formatted(.iso8601.year().month().day())
+        panel.nameFieldStringValue = L10n.tr("家庭健康周报-\(stamp).md", "home-health-\(stamp).md")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? report.markdown().write(to: url, atomically: true, encoding: .utf8)
     }
 }
 

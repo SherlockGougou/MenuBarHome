@@ -671,6 +671,9 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
                         self.deliverNotification(for: alert)
                     }
                 }
+                if let report = store.takeDueWeeklyHealthReport() {
+                    self.deliverWeeklyHealthReport(report)
+                }
                 await store.checkForUpdatesIfNeeded()
             }
         }
@@ -690,6 +693,20 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
 
         let request = UNNotificationRequest(
             identifier: alert.id,
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    /// Weekly home health report summary (#182); the full report is exported from Settings.
+    private func deliverWeeklyHealthReport(_ report: WeeklyHealthReport) {
+        guard Bundle.main.bundleURL.pathExtension == "app" else { return }
+        let content = UNMutableNotificationContent()
+        content.title = L10n.tr("家庭健康周报", "Weekly Home Health Report")
+        content.body = report.notificationSummary()
+        let request = UNNotificationRequest(
+            identifier: "weekly-health-report-\(Int(Date().timeIntervalSince1970))",
             content: content,
             trigger: nil
         )

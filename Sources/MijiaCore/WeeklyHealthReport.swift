@@ -274,3 +274,29 @@ extension WeeklyHealthReport {
         )
     }
 }
+
+// MARK: - Schedule
+
+/// When the weekly report goes out: Sunday 20:00 local time, once per week. A Mac that slept through
+/// Sunday evening still gets it within the next two days; later than that it would read as stale.
+public enum WeeklyHealthReportSchedule {
+    static let weekday = 1 // Sunday in the Gregorian calendar
+    static let hour = 20
+    static let catchUpWindow: TimeInterval = 2 * 86_400
+
+    /// The most recent Sunday 20:00 at or before `now`.
+    static func latestSlot(atOrBefore now: Date, calendar: Calendar) -> Date? {
+        let components = DateComponents(hour: hour, minute: 0, second: 0, weekday: weekday)
+        if let match = calendar.nextDate(after: now, matching: components, matchingPolicy: .nextTime, direction: .backward) {
+            return match
+        }
+        return nil
+    }
+
+    public static func isDue(now: Date, lastDeliveredAt: Date?, calendar: Calendar = .current) -> Bool {
+        let probe = now.addingTimeInterval(1) // `nextDate(after:)` is exclusive; include the exact slot
+        guard let slot = latestSlot(atOrBefore: probe, calendar: calendar), slot <= now else { return false }
+        guard now.timeIntervalSince(slot) < catchUpWindow else { return false }
+        return (lastDeliveredAt ?? .distantPast) < slot
+    }
+}

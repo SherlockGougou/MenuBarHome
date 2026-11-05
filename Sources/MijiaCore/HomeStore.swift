@@ -165,6 +165,11 @@ public final class HomeStore {
         didSet { userDefaults.set(enableSafetyAlerts, forKey: "enable_safety_alerts") }
     }
 
+    /// Weekly home health report notification (#182). Off by default: a new recurring notification.
+    public var enableWeeklyHealthReport: Bool {
+        didSet { userDefaults.set(enableWeeklyHealthReport, forKey: Self.weeklyHealthReportEnabledKey) }
+    }
+
     /// Open the doorbell's live camera when it rings (#308). Off by default: privacy and interruption.
     public var doorbellAutoPopup: Bool {
         didSet { userDefaults.set(doorbellAutoPopup, forKey: "doorbell_auto_popup") }
@@ -682,6 +687,7 @@ public final class HomeStore {
         self.enableGlobalHotkey = boolOrDefaultTrue("enable_global_hotkey")
         self.enableSafetyAlerts = boolOrDefaultTrue("enable_safety_alerts")
         self.doorbellAutoPopup = ud.bool(forKey: "doorbell_auto_popup")
+        self.enableWeeklyHealthReport = ud.bool(forKey: Self.weeklyHealthReportEnabledKey)
         self.doorbellChime = ud.bool(forKey: "doorbell_chime")
         self.doorbellPopupSeconds = (ud.object(forKey: "doorbell_popup_seconds") as? Int) ?? Self.defaultDoorbellPopupSeconds
         self.blockControlWhileLocked = boolOrDefaultTrue("block_control_while_locked")
