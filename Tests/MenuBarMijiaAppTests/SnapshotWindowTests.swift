@@ -29,4 +29,21 @@ struct SnapshotWindowTests {
         #expect(window.firstResponder === window)
         window.orderOut(nil)
     }
+
+    @Test("The capture window never lets a control take keyboard focus (#351)")
+    func captureWindowRefusesFocus() {
+        _ = NSApplication.shared
+        let button = NSButton(title: "Mic", target: nil, action: nil)
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 120, height: 40))
+        content.addSubview(button)
+        let window = SnapshotWindow.make(size: content.frame.size)
+        window.contentView = content
+
+        // What SwiftUI does on a later pass: hand focus to the first focusable control.
+        window.makeFirstResponder(button)
+
+        #expect(window.firstResponder === window)
+        #expect(!window.canBecomeKey)
+        window.orderOut(nil)
+    }
 }

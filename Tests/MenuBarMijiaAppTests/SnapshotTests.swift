@@ -365,13 +365,7 @@ struct SnapshotTests {
         let hosting = NSHostingView(rootView: view.focusEffectDisabled())
         hosting.frame = NSRect(origin: .zero, size: size)
 
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        window.isReleasedWhenClosed = false
+        let window = SnapshotWindow.make(size: size)
         window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
         window.contentView = hosting
 
@@ -535,11 +529,33 @@ private struct SnapshotFixture {
 /// Brings the offscreen window the snapshot harness captures into its final state.
 @MainActor
 enum SnapshotWindow {
-    /// Lays the window out and draws it, then takes keyboard focus away as the last step before the
-    /// capture (#323). AppKit or SwiftUI may hand focus to the first focusable control (the header
-    /// mic button) during any layout or display pass, so clearing it last is what makes the capture
-    /// independent of that timing. Call it immediately before `cacheDisplay`.
+    /// An offscreen borderless window in which no control can hold keyboard focus (#351). SwiftUI may
+    /// hand focus to the first focusable control (the header mic button) on any later run-loop pass,
+    /// so clearing focus once before the capture (#323) still let a focus ring into CI baselines.
+    static func make(size: CGSize) -> NSWindow {
+        let window = CaptureWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        return window
+    }
+
+    private final class CaptureWindow: NSWindow {
+        override var canBecomeKey: Bool { false }
+        override var canBecomeMain: Bool { false }
+
+        override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+            super.makeFirstResponder(nil)
+        }
+    }
+
+    /// Takes keyboard focus away, then lays the window out and draws it, so a ring drawn for an earlier
+    /// focus is repainted before the capture (#323). Call it immediately before `cacheDisplay`.
     static func prepareForCapture(_ window: NSWindow) {
+        window.makeFirstResponder(nil)
         window.layoutIfNeeded()
         window.contentView?.layoutSubtreeIfNeeded()
         window.contentView?.displayIfNeeded()
