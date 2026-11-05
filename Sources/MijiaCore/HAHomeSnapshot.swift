@@ -18,6 +18,16 @@ struct HAHomeSnapshot {
     private var entities: [HAEntityEntry] = []
     private var states: [String: HAEntityState] = [:]
     private var pendingInitialResults: Set<Int> = [1, 2, 3, 4]
+    private var rings: [DoorbellRing] = []
+    /// Last valid press timestamp per doorbell entity. It survives `unavailable`, so a doorbell
+    /// coming back with a press already seen is not a new press.
+    private var doorbellTimestamps: [String: String] = [:]
+
+    /// Doorbell presses seen since the last call. Initial loads and `get_states` refreshes never ring.
+    mutating func takeDoorbellRings() -> [DoorbellRing] {
+        defer { rings = [] }
+        return rings
+    }
 
     mutating func receive(_ message: [String: JSONValue]) throws -> SynthesizedHome? {
         if message["type"]?.stringValue == "result", let id = message["id"]?.intValue {
@@ -37,6 +47,7 @@ struct HAHomeSnapshot {
                 for value in entries {
                     guard let state = Self.parseState(value) else { throw ReadError.invalidResponse }
                     nextStates[state.entityId] = state
+                    if let timestamp = DoorbellRing.timestamp(state) { doorbellTimestamps[state.entityId] = timestamp }
                 }
                 states = nextStates
             default:
@@ -49,6 +60,13 @@ struct HAHomeSnapshot {
                   case .object(let data) = event["data"],
                   let newState = data["new_state"],
                   let state = Self.parseState(newState) {
+            if let timestamp = DoorbellRing.timestamp(state), timestamp != doorbellTimestamps[state.entityId] {
+                doorbellTimestamps[state.entityId] = timestamp
+                if pendingInitialResults.isEmpty {
+                    let deviceId = entities.first { $0.entity_id == state.entityId }?.device_id ?? state.entityId
+                    rings.append(DoorbellRing(deviceId: deviceId, entityId: state.entityId, firedAt: timestamp))
+                }
+            }
             states[state.entityId] = state
         } else {
             return nil
