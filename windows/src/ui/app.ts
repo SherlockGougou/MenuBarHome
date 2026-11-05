@@ -68,7 +68,7 @@ import {
   deviceEnvironmentReading,
   readMiotPower,
   environmentReadingPriority,
-  isDeviceActiveOn,
+  isActiveDevice,
   joinsAllOff,
   joinsAllOffByDefault,
   localizeNightShot,
@@ -203,6 +203,7 @@ export class MenuMijiaWindowsApp {
       case "fridge":
       case "camera":
       case "sensor":
+      case "cover":
         return value;
       default:
         return null;
@@ -450,7 +451,7 @@ export class MenuMijiaWindowsApp {
   }
 
   public get activeDeviceCount(): number {
-    return this.devices.filter((d) => isDeviceActiveOn(d)).length;
+    return this.devices.filter((d) => isActiveDevice(d)).length;
   }
 
   private get onlineDeviceCount(): number {

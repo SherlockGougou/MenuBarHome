@@ -97,15 +97,29 @@ extension HomeStore {
             updated.kind = .camera(s)
             command = .setSwitch(entityId: s.entityId, isOn: s.isOn)
         case .cover(var s):
-            guard let open = s.openDescription, let close = s.closeDescription,
-                  let pos = s.positionPercent else {
-                toggleExpanded(device.id)
-                return nil
+            // A curtain tap is a three-way control: travel stops, otherwise open/close. Window
+            // openers and the other subtypes keep the one-tap open/close they had before (#223).
+            // Pause needs no position reading, so a moving curtain stops before the position guard.
+            if s.subtype == .curtain, s.isMoving {
+                guard let pause = s.pauseDescription else {
+                    toggleExpanded(device.id)
+                    return nil
+                }
+                s.motion = .stopped
+                updated.kind = .cover(s)
+                command = .setSelectOption(entityId: s.entityId, option: pause)
+            } else {
+                guard let open = s.openDescription, let close = s.closeDescription,
+                      let pos = s.positionPercent else {
+                    toggleExpanded(device.id)
+                    return nil
+                }
+                let shouldOpen = pos == 0
+                s.positionPercent = shouldOpen ? 100 : 0
+                s.motion = shouldOpen ? .opening : .closing
+                updated.kind = .cover(s)
+                command = .setSelectOption(entityId: s.entityId, option: shouldOpen ? open : close)
             }
-            let shouldOpen = pos == 0
-            s.positionPercent = shouldOpen ? 100 : 0
-            updated.kind = .cover(s)
-            command = .setSelectOption(entityId: s.entityId, option: shouldOpen ? open : close)
         case .speaker, .fridge, .sensor:
             toggleExpanded(device.id)
             return nil
@@ -474,11 +488,19 @@ extension HomeStore {
         let previous = devices[idx]
         let opening = s.openDescription.map { description.caseInsensitiveCompare($0) == .orderedSame } ?? false
         let closing = s.closeDescription.map { description.caseInsensitiveCompare($0) == .orderedSame } ?? false
+        let pausing = s.pauseDescription.map { description.caseInsensitiveCompare($0) == .orderedSame } ?? false
         if opening || closing {
             guard allowManualControl(opening ? .power(true) : .power(false), for: previous) else { return }
         }
-        if opening { s.positionPercent = 100 }
-        if closing { s.positionPercent = 0 }
+        if opening {
+            s.positionPercent = 100
+            s.motion = .opening
+        }
+        if closing {
+            s.positionPercent = 0
+            s.motion = .closing
+        }
+        if pausing { s.motion = .stopped }
         devices[idx].kind = .cover(s)
         if opening || closing { lockOptimistic(deviceId, duration: .seconds(8)) }
         dispatchImmediate(
@@ -495,7 +517,13 @@ extension HomeStore {
               case .cover(var s) = devices[idx].kind, s.positionWritable else { return }
         let previous = devices[idx]
         let clamped = max(0, min(100, percent))
+        let previousPosition = s.positionPercent ?? clamped
         s.positionPercent = clamped
+        if clamped > previousPosition {
+            s.motion = .opening
+        } else if clamped < previousPosition {
+            s.motion = .closing
+        }
         devices[idx].kind = .cover(s)
         lockOptimistic(deviceId, duration: .seconds(8))
         dispatchDebounced(

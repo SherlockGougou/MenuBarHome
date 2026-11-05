@@ -103,6 +103,13 @@ public enum DeviceDeduplicator {
                     )
                 )
             } else {
+                // A Mi record split into several cards (a dual-track curtain) shares its did and
+                // MAC with every track, so none of them pairs 1:1 with the HA copy. That copy is
+                // still the same physical device and must not appear as an extra card beside them.
+                if let haIdentity = ha.identity,
+                   isAlreadyShownByMiTracks(haIdentity, in: miCandidates) {
+                    continue
+                }
                 draftCards.append(
                     DraftCard(
                         winner: ha,
@@ -569,6 +576,29 @@ public enum DeviceDeduplicator {
 
     private static func sharesMAC(_ a: DeviceSourceIdentity, _ b: DeviceSourceIdentity) -> Bool {
         !Set(a.macAddresses).isDisjoint(with: b.macAddresses)
+    }
+
+    /// True when one physical Mi device already shows as several cards (a dual-track curtain's
+    /// tracks), which is why the 1:1 pairing passes above never matched the HA copy. A gateway
+    /// MAC is also shared by unrelated sub-devices, so the MAC rule additionally requires curtain
+    /// tracks that share one did.
+    private static func isAlreadyShownByMiTracks(
+        _ haIdentity: DeviceSourceIdentity,
+        in miCandidates: [Candidate]
+    ) -> Bool {
+        let identities = miCandidates.compactMap(\.identity)
+        if identities.contains(where: { sharesDID(haIdentity, $0) }) { return true }
+
+        let tracks = miCandidates.filter { candidate in
+            guard let identity = candidate.identity, sharesMAC(haIdentity, identity),
+                  case .cover(let spec) = candidate.device.kind else { return false }
+            return spec.subtype == .curtain
+        }
+        guard tracks.count >= 2, let first = tracks.first?.identity else { return false }
+        let sharedDIDs = tracks.dropFirst().reduce(Set(first.dids)) { shared, candidate in
+            shared.intersection(candidate.identity?.dids ?? [])
+        }
+        return !sharedDIDs.isEmpty
     }
 
     private static func pairByFallbackGroups(

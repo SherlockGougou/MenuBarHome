@@ -78,13 +78,20 @@ import {
   cloudRefreshDue,
   CLOUD_REFRESH_HIDDEN_MS,
   CLOUD_REFRESH_VISIBLE_MS,
+  type DeviceCommand,
   type DeviceIntent,
   type ScheduledCommand,
   deviceReadout,
+  isActiveDevice,
+  isDeviceActiveOn,
   readMiotPower,
   deviceStatusSummary,
+  type CoverSpec,
   type SmartDevice,
 } from "../src/core/models.js";
+import { applyCommand } from "../src/ui/commandDispatch.js";
+import { executeSingleCommand } from "../src/ui/intentExecution.js";
+import type { MenuMijiaWindowsApp } from "../src/ui/app.js";
 
 const Vectors = {
   ssecurity: "AQIDBAUGBwgJCgsMDQ4PEA==",
@@ -966,6 +973,7 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
       values: Array<{ did: string; siid: number; piid: number; value: unknown }>;
       selectionCases: Array<{ utterance: string; isOn: boolean; ids: string[] }>;
       expectedKinds: Record<string, unknown>;
+      expectedNames?: Record<string, string>;
       expectedEnvironmentReadings: Array<unknown>;
       expectedRequiredProps: Record<string, Array<{ did: string; siid: number; piid: number }>>;
       commandCases: Array<{
@@ -1005,6 +1013,11 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
       const dev = home.devices.find((d) => d.id === did);
       assert.ok(dev, `Missing synthesized device ${did}`);
       assert.deepEqual(dev.kind, expectedKind, `DeviceKind mismatch on ${did}`);
+    }
+    for (const [did, name] of Object.entries(corpus.expectedNames ?? {})) {
+      const dev = home.devices.find((d) => d.id === did);
+      assert.ok(dev, `Missing synthesized device ${did}`);
+      assert.equal(dev.name, name, `Device name mismatch on ${did}`);
     }
     assert.deepEqual(home.environmentReadings, corpus.expectedEnvironmentReadings);
     for (const item of corpus.selectionCases) {
@@ -1070,6 +1083,60 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
         );
       }
     }
+  });
+
+  it("drives curtain cards through motor-control (#279)", () => {
+    const corpus = JSON.parse(readFileSync(resolve(process.cwd(), "../Tests/Fixtures/miot_golden.json"), "utf8")) as {
+      specs: Record<string, unknown>;
+    };
+    const spec = parseMiotDeviceSpec(corpus.specs["fixture.curtain.single"]);
+    assert.ok(spec);
+    const base: SmartDevice = {
+      id: "did_curtain",
+      name: "客厅窗帘",
+      roomId: "room_living",
+      roomName: "客厅",
+      model: "fixture.curtain.single",
+      isOnline: true,
+      kind: {
+        kind: "cover",
+        entityId: "miot:did_curtain:2",
+        subtype: "curtain",
+        positionPercent: 0,
+        positionWritable: true,
+        openDescription: "Open",
+        closeDescription: "Close",
+        pauseDescription: "Pause",
+        batteryPercent: null,
+        faultText: null,
+        motion: "stopped",
+      },
+    };
+    const commands = (isOn: boolean, device: SmartDevice = base) =>
+      IntentValidator.commandsForIntent({ targetId: device.id, operation: { kind: "power", isOn } }, device);
+
+    assert.deepEqual(commands(true), [{ kind: "setSelectOption", entityId: "miot:did_curtain:2", option: "Open" }]);
+    assert.deepEqual(MiotCommandMapper.map(commands(true)[0]!, spec), {
+      kind: "setProps",
+      writes: [{ did: "did_curtain", siid: 2, piid: 1, value: 1 }],
+    });
+    assert.deepEqual(commands(false), [{ kind: "setSelectOption", entityId: "miot:did_curtain:2", option: "Close" }]);
+    assert.deepEqual(MiotCommandMapper.map(commands(false)[0]!, spec), {
+      kind: "setProps",
+      writes: [{ did: "did_curtain", siid: 2, piid: 1, value: 2 }],
+    });
+
+    const moving: SmartDevice = {
+      ...base,
+      kind: { ...(base.kind as CoverSpec), motion: "opening" },
+    };
+    assert.deepEqual(commands(false, moving), [
+      { kind: "setSelectOption", entityId: "miot:did_curtain:2", option: "Pause" },
+    ]);
+    assert.deepEqual(MiotCommandMapper.map(commands(false, moving)[0]!, spec), {
+      kind: "setProps",
+      writes: [{ did: "did_curtain", siid: 2, piid: 1, value: 0 }],
+    });
   });
 
   it("parses split Mesh switch keys and multi-home rooms with room-less home dids", () => {
@@ -4181,5 +4248,158 @@ describe("Mains breaker (#265)", () => {
     ] as const) {
       assert.throws(() => MiotCommandMapper.map(command, breaker), /electronic-valve/);
     }
+  });
+});
+
+describe("Windows curtain control (#279)", () => {
+  function cover(position: number | null, motion: "stopped" | "opening" | "closing" = "stopped"): SmartDevice {
+    return {
+      id: "did_curtain",
+      name: "客厅窗帘",
+      roomId: "room_living",
+      roomName: "客厅",
+      model: "fixture.curtain.single",
+      isOnline: true,
+      kind: {
+        kind: "cover",
+        entityId: "miot:did_curtain:2",
+        subtype: "curtain",
+        positionPercent: position,
+        positionWritable: true,
+        openDescription: "Open",
+        closeDescription: "Close",
+        pauseDescription: "Pause",
+        batteryPercent: null,
+        faultText: null,
+        motion,
+      },
+    };
+  }
+
+  function coverHost(device: SmartDevice) {
+    const fake = {
+      settings: { connectionMode: "demo", habitLearningEnabled: false },
+      sourceRevision: 0,
+      devices: [device],
+      localControlRevision: 0,
+      replyBanner: null as { text: string; source: string; isError?: boolean } | null,
+      grokBballCelebrationUntil: 0,
+      lastUndoAction: null as unknown,
+      render: () => {},
+      async applyCommand(command: DeviceCommand, readBackPower = false): Promise<boolean> {
+        return applyCommand(fake as unknown as MenuMijiaWindowsApp, command, readBackPower);
+      },
+    };
+    return fake;
+  }
+
+  it("applies motor writes and confirms covers without a power read-back", async () => {
+    const device = cover(0);
+    const fake = coverHost(device);
+    const host = fake as unknown as MenuMijiaWindowsApp;
+    const kind = device.kind;
+    assert.equal(kind.kind, "cover");
+    if (kind.kind !== "cover") assert.fail("Expected cover");
+
+    const open = IntentValidator.commandsForIntent(
+      { targetId: device.id, operation: { kind: "power", isOn: true } },
+      device,
+    )[0];
+    assert.ok(open);
+    await executeSingleCommand(
+      host,
+      device,
+      open,
+      "已打开客厅窗帘",
+      { targetId: device.id, operation: { kind: "power", isOn: true } },
+      true,
+    );
+    assert.equal(kind.positionPercent, 100);
+    assert.equal(kind.motion, "opening");
+    assert.notEqual(fake.replyBanner?.isError, true);
+
+    kind.positionPercent = 40;
+    kind.motion = "stopped";
+    const close = IntentValidator.commandsForIntent(
+      { targetId: device.id, operation: { kind: "power", isOn: false } },
+      device,
+    )[0];
+    assert.ok(close);
+    await executeSingleCommand(
+      host,
+      device,
+      close,
+      "已关闭客厅窗帘",
+      { targetId: device.id, operation: { kind: "power", isOn: false } },
+      true,
+    );
+    assert.equal(kind.positionPercent, 0);
+    assert.equal(kind.motion, "closing");
+    assert.notEqual(fake.replyBanner?.isError, true);
+
+    kind.positionPercent = 40;
+    kind.motion = "opening";
+    const stop = IntentValidator.commandsForIntent(
+      { targetId: device.id, operation: { kind: "power", isOn: false } },
+      device,
+    )[0];
+    assert.deepEqual(stop, { kind: "setSelectOption", entityId: "miot:did_curtain:2", option: "Pause" });
+    await executeSingleCommand(
+      host,
+      device,
+      stop!,
+      "已停止客厅窗帘",
+      { targetId: device.id, operation: { kind: "power", isOn: false } },
+      true,
+    );
+    assert.equal(kind.positionPercent, 40);
+    assert.equal(kind.motion, "stopped");
+    assert.notEqual(fake.replyBanner?.isError, true);
+  });
+
+  it("stops a moving curtain even when its position is unknown", async () => {
+    const device = cover(null, "opening");
+    const fake = coverHost(device);
+    const host = fake as unknown as MenuMijiaWindowsApp;
+    const kind = device.kind;
+    assert.equal(kind.kind, "cover");
+    if (kind.kind !== "cover") assert.fail("Expected cover");
+    assert.equal(kind.positionPercent, null);
+
+    const stop = IntentValidator.commandsForIntent(
+      { targetId: device.id, operation: { kind: "power", isOn: true } },
+      device,
+    )[0];
+    assert.deepEqual(stop, { kind: "setSelectOption", entityId: "miot:did_curtain:2", option: "Pause" });
+
+    await executeSingleCommand(
+      host,
+      device,
+      stop!,
+      "已停止客厅窗帘",
+      { targetId: device.id, operation: { kind: "power", isOn: true } },
+      true,
+    );
+    assert.equal(kind.positionPercent, null);
+    assert.equal(kind.motion, "stopped");
+    assert.notEqual(fake.replyBanner?.isError, true);
+  });
+
+  it("keeps an open curtain out of active counts and assistant summaries", () => {
+    const open = cover(60);
+    assert.equal(isDeviceActiveOn(open), true);
+    assert.equal(isActiveDevice(open), false);
+
+    const context = buildAssistantContext({
+      now: new Date(2026, 10, 5, 15, 30),
+      readings: [],
+      devices: [open],
+      scenes: [],
+      sharing: "off",
+      memory: { entries: [] },
+      phrases: [],
+      mention: { kind: "none" },
+    });
+    assert.equal(context.activeDevicesSummary, "全屋设备均关闭");
   });
 });

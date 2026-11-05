@@ -5,7 +5,7 @@ import type {
   HomeScene,
   SmartDevice,
 } from "../models.js";
-import { deviceAcceptsControlWrites, isDeviceActiveOn } from "../models.js";
+import { deviceAcceptsControlWrites, isActiveDevice } from "../models.js";
 import { deviceHeadInstruction, proactiveHeadInstruction } from "./actionPolicy.js";
 import type { AssistantContext } from "./context.js";
 import { buildEnvironmentSummary, buildTimeSummary, EMPTY_ASSISTANT_CONTEXT } from "./context.js";
@@ -43,7 +43,7 @@ export function buildAssistantContext(options: {
   readonly mention: CommandMention;
 }): AssistantContext {
   const active = options.devices
-    .filter((device) => device.isOnline && isDeviceActiveOn(device))
+    .filter((device) => device.isOnline && isActiveDevice(device))
     .map((device) => `${device.name}(${catalogStateSummary(device)})`);
   const habitSummary = shareHabitSentence({
     sharing: options.sharing,
@@ -87,6 +87,7 @@ export function assistantDeviceCategory(device: SmartDevice): string | null {
       return isAirPurifierDevice(device) ? "airPurifier" : "fan";
     case "fridge":
     case "sensor":
+    case "cover":
       return null;
   }
 }
@@ -138,6 +139,8 @@ export function catalogStateSummary(device: SmartDevice): string {
     case "fridge":
     case "sensor":
       return "";
+    case "cover":
+      return kind.positionPercent === null ? "" : `开${kind.positionPercent}%`;
   }
 }
 
