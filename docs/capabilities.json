@@ -118,28 +118,57 @@
       "en": "Mi Air Purifiers, Air Fresheners & Humidifiers",
       "zh": "米家空净 / 新风机 / 加湿器",
       "macos": "supported",
-      "windows": "supported"
+      "windows": "supported",
+      "miotTypes": [
+        "air-purifier",
+        "air-fresh",
+        "humidifier"
+      ]
     },
     {
       "id": "fridges-kitchen",
       "en": "Fridges & Kitchen Appliances",
       "zh": "冰箱与厨房家电",
       "macos": "supported",
-      "windows": "supported"
+      "windows": "supported",
+      "miotTypes": [
+        "fridge",
+        "cooker",
+        "kettle",
+        "oven",
+        "microwave-oven",
+        "air-fryer",
+        "health-pot"
+      ]
     },
     {
       "id": "dehumidifiers-blankets-diffusers-speakers",
       "en": "Dehumidifiers, Blankets, Diffusers & Speakers",
       "zh": "除湿机 / 水暖毯 / 香氛机 / 音箱",
       "macos": "supported",
-      "windows": "supported"
+      "windows": "partial",
+      "miotTypes": [
+        "dehumidifier",
+        "electric-blanket",
+        "diffuser",
+        "speaker"
+      ]
     },
     {
       "id": "locks-sensors",
       "en": "Locks & Presence Sensors",
       "zh": "门锁与人体、环境传感器",
       "macos": "supported",
-      "windows": "supported"
+      "windows": "supported",
+      "miotTypes": [
+        "lock",
+        "occupancy-sensor",
+        "motion-sensor",
+        "magnet-sensor",
+        "temperature-humidity-sensor",
+        "illumination-sensor",
+        "submersion-sensor"
+      ]
     },
     {
       "id": "camera-live",

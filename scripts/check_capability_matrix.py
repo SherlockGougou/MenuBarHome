@@ -2,7 +2,8 @@
 """Compare README capability tables with docs/capabilities.json, then check code anchors.
 
 Most rows only prove the two READMEs match the handwritten manifest. CODE_ANCHORS
-additionally fails when a claimed platform status contradicts a source file.
+additionally fails when a claimed platform status contradicts a source file, and a row's
+`miotTypes` derives both platforms' status from the MIoT coverage baseline (#185).
 """
 
 import json
@@ -11,6 +12,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "docs/capabilities.json"
+COVERAGE = ROOT / "Tests/Fixtures/miot_coverage_golden.json"
 TABLES = (
     ("README.md", "| Feature Area |", "en"),
     ("README.zh-CN.md", "| 功能维度 |", "zh"),
@@ -161,6 +163,49 @@ def code_anchor_errors(root: pathlib.Path, rows: list[dict]) -> list[str]:
     return errors
 
 
+def coverage_status(golden: dict, types: list[str], platform: str) -> str:
+    """Status a platform earns for these MIoT device types, per the coverage baseline (#295).
+
+    Both platforms' test suites assert their synthesis equals the baseline, so this reads the
+    code's behaviour on one real public spec per type. Windows reads `windowsDivergences`
+    where it classifies a spec differently from macOS.
+    """
+    divergences = golden.get("windowsDivergences", {}) if platform == "windows" else {}
+    categories = [
+        divergences.get(model, entry)["category"]
+        for model, entry in golden["models"].items()
+        if entry["deviceType"] in types
+    ]
+    matched = categories.count("matched")
+    if categories and matched == len(categories):
+        return "supported"
+    return "partial" if matched else "unsupported"
+
+
+def coverage_errors(golden: dict, rows: list[dict]) -> list[str]:
+    known = {entry["deviceType"] for entry in golden["models"].values()}
+    errors: list[str] = []
+    for row in rows:
+        types = row.get("miotTypes")
+        if not types:
+            continue
+        missing = [kind for kind in types if kind not in known]
+        if missing:
+            errors.append(f"{row['id']} 的 miotTypes 不在覆盖率基线里：{', '.join(missing)}")
+            continue
+        for platform in ("macos", "windows"):
+            derived = coverage_status(golden, types, platform)
+            if row.get(platform) != derived:
+                unmatched = sorted(
+                    kind for kind in types if coverage_status(golden, [kind], platform) != "supported"
+                )
+                errors.append(
+                    f"{row['id']} 的 {platform} 标为 {row.get(platform)}，覆盖率基线推出 {derived}"
+                    + (f"（没对上的类型：{', '.join(unmatched)}）" if unmatched else "")
+                )
+    return errors
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -198,6 +243,7 @@ def main() -> int:
             )
 
     errors.extend(code_anchor_errors(ROOT, expected))
+    errors.extend(coverage_errors(json.loads(COVERAGE.read_text(encoding="utf-8")), expected))
 
     if errors:
         print("❌ 能力表与文档或代码锚点不一致：")
@@ -205,11 +251,13 @@ def main() -> int:
             print(f"  - {error}")
         print("文档行请同时更新 README.md、README.zh-CN.md 与 docs/capabilities.json。")
         print("代码锚点行要改 capabilities.json 的状态，或改掉对不上的源文件。")
+        print("带 miotTypes 的行，状态以覆盖率基线为准：改合成并重录基线，或照推出的状态改文档。")
         return 1
-    unchecked = len(expected) - len(CODE_ANCHORS)
+    derived = sum(1 for row in expected if row.get("miotTypes"))
+    unchecked = len(expected) - len(CODE_ANCHORS) - derived
     print(
         f"✅ {len(expected)} 行能力状态与两份 README 一致。"
-        f"其中 {len(CODE_ANCHORS)} 行对照了代码锚点，"
+        f"其中 {len(CODE_ANCHORS)} 行对照了代码锚点，{derived} 行由 MIoT 覆盖率基线推出，"
         f"其余 {unchecked} 行只核对文档，不能证明实现没漂移。"
     )
     return 0
