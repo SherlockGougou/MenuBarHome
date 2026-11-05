@@ -1,4 +1,5 @@
 import AppKit
+import os
 import SwiftUI
 import MijiaCore
 
@@ -23,9 +24,22 @@ import MijiaCore
 /// scroll position, search text and layout state survive a close; `didShow` / `didHide` notifications
 /// let the panel replay its drop-in animation. `store.setPanelVisible` is driven from here, so the
 /// polling rhythm does not depend on SwiftUI lifecycle callbacks firing per open.
+///
+/// To watch click, long-press, and context-menu routing decisions live without rebuilding (#330)
+/// (call `/usr/bin/log` by full path because in zsh `log` can be shadowed by a shell function):
+/// ```sh
+/// /usr/bin/log stream --level debug --predicate 'subsystem == "com.jryang1997.MenuBarMijia" AND category == "StatusItem"'
+/// ```
 @MainActor
 final class MenuBarPanelController: NSObject {
     static let shared = MenuBarPanelController()
+
+    static let statusItemLogSubsystem = "com.jryang1997.MenuBarMijia"
+    static let statusItemLogCategory = "StatusItem"
+    private static let statusItemLogger = Logger(
+        subsystem: statusItemLogSubsystem,
+        category: statusItemLogCategory
+    )
 
     /// Control center width, identical in every skin.
     static let panelWidth: CGFloat = 376
@@ -67,9 +81,31 @@ final class MenuBarPanelController: NSObject {
     var statusContextMenuScheduler: (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
+    var statusItemTraceSink: ((String) -> Void)?
     var statusItemToggle: (() -> Void)?
     var statusItemEventNumber: () -> Int? = {
         MenuBarPanelController.statusEventNumber(for: NSApplication.shared.currentEvent)
+    }
+
+    private func traceStatusItem(_ message: @autoclosure () -> String) {
+        let line = message()
+        statusItemTraceSink?(line)
+        Self.statusItemLogger.debug("\(line, privacy: .public)")
+    }
+
+    private static func statusEventTypeName(_ eventType: NSEvent.EventType?) -> String {
+        guard let eventType else { return "nil" }
+        switch eventType {
+        case .leftMouseDown: return "leftMouseDown"
+        case .leftMouseUp: return "leftMouseUp"
+        case .rightMouseDown: return "rightMouseDown"
+        case .rightMouseUp: return "rightMouseUp"
+        case .otherMouseDown: return "otherMouseDown"
+        case .otherMouseUp: return "otherMouseUp"
+        case .keyDown: return "keyDown"
+        case .keyUp: return "keyUp"
+        default: return "raw(\(eventType.rawValue))"
+        }
     }
 
     /// Reads the current event's number only when it is a mouse event. `NSEvent.eventNumber` raises
@@ -371,12 +407,38 @@ final class MenuBarPanelController: NSObject {
 
     /// Opens the context menu now, or after `settle` on an out-of-process host. Repeated requests
     /// for the same click replace the pending one, so the menu opens once, after the last signal.
-    private func requestStatusContextMenu(settle: TimeInterval) {
+    private func requestStatusContextMenu(
+        settle: TimeInterval,
+        eventType: NSEvent.EventType? = nil,
+        pressedMouseButtons: Int = NSEvent.pressedMouseButtons
+    ) {
+        let now = ProcessInfo.processInfo.systemUptime
+        let resolvedEventType = eventType ?? NSApp?.currentEvent?.type
+        let eventName = Self.statusEventTypeName(resolvedEventType)
+        let buttons = "0x\(String(pressedMouseButtons, radix: 16))"
+        let settleText = String(format: "%.3f", settle)
+        let uptimeText = String(format: "%.3f", now)
         guard hostsStatusItemOutOfProcess else {
-            showStatusContextMenu()
+            traceStatusItem(
+                "requestStatusContextMenu event=\(eventName) buttons=\(buttons) settle=\(settleText) uptime=\(uptimeText) decision=synchronous(inProcess)"
+            )
+            showStatusContextMenu(
+                eventType: resolvedEventType,
+                pressedMouseButtons: pressedMouseButtons
+            )
             return
         }
-        guard ProcessInfo.processInfo.systemUptime >= suppressContextMenuUntil, !pressTriggered else {
+        guard now >= suppressContextMenuUntil else {
+            traceStatusItem(
+                "requestStatusContextMenu event=\(eventName) buttons=\(buttons) settle=\(settleText) uptime=\(uptimeText) guard=suppressContextMenuUntil"
+            )
+            restoreStatusItemHighlight()
+            return
+        }
+        guard !pressTriggered else {
+            traceStatusItem(
+                "requestStatusContextMenu event=\(eventName) buttons=\(buttons) settle=\(settleText) uptime=\(uptimeText) guard=pressTriggered"
+            )
             restoreStatusItemHighlight()
             return
         }
@@ -384,33 +446,57 @@ final class MenuBarPanelController: NSObject {
         // toggle the panel while the menu is still on its way.
         // Bounded, so a request that ends up not presenting can never strand primary clicks.
         pressAllowsToggle = false
-        suppressReleaseUntil = max(suppressReleaseUntil, ProcessInfo.processInfo.systemUptime + settle + 0.1)
+        suppressReleaseUntil = max(suppressReleaseUntil, now + settle + 0.1)
         setStatusItemHighlighted(true)
+        let replacedPending = pendingContextMenu != nil
         pendingContextMenu?.cancel()
         weak var weakWork: DispatchWorkItem?
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, weakWork?.isCancelled == false else { return }
                 self.pendingContextMenu = nil
-                self.showStatusContextMenu()
+                self.showStatusContextMenu(
+                    eventType: resolvedEventType,
+                    pressedMouseButtons: pressedMouseButtons
+                )
             }
         }
         weakWork = work
         pendingContextMenu = work
+        traceStatusItem(
+            "requestStatusContextMenu event=\(eventName) buttons=\(buttons) settle=\(settleText) uptime=\(uptimeText) decision=schedule(replacedPending=\(replacedPending))"
+        )
         statusContextMenuScheduler(settle, work)
     }
 
-    private func showStatusContextMenu() {
+    private func showStatusContextMenu(
+        eventType: NSEvent.EventType? = nil,
+        pressedMouseButtons: Int = NSEvent.pressedMouseButtons
+    ) {
         pendingContextMenu?.cancel()
         pendingContextMenu = nil
         let now = ProcessInfo.processInfo.systemUptime
+        let eventName = Self.statusEventTypeName(eventType ?? NSApp?.currentEvent?.type)
+        let buttons = "0x\(String(pressedMouseButtons, radix: 16))"
+        let uptimeText = String(format: "%.3f", now)
         guard now >= suppressContextMenuUntil else {
+            traceStatusItem(
+                "showStatusContextMenu event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=suppressContextMenuUntil"
+            )
             restoreStatusItemHighlight()
             return
         }
         // Keep the release timer alive once hold-to-talk has started. Opening AppKit's modal menu
         // here can consume the left-button release and strand both recording and `pressTriggered`.
-        guard !pressTriggered else { return }
+        guard !pressTriggered else {
+            traceStatusItem(
+                "showStatusContextMenu event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=pressTriggered"
+            )
+            return
+        }
+        traceStatusItem(
+            "showStatusContextMenu event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) decision=present"
+        )
 
         // A pop-up menu runs a modal event loop. Suppress every duplicate/synthetic status-item
         // action while it is open. Its dismissal event is remembered below so the next distinct
@@ -788,21 +874,40 @@ final class MenuBarPanelController: NSObject {
 
     func handleStatusItemEvent(eventType: NSEvent.EventType?, pressedMouseButtons: Int) {
         let eventNumber = statusItemEventNumber()
+        let now = ProcessInfo.processInfo.systemUptime
+        let eventName = Self.statusEventTypeName(eventType)
+        let buttons = "0x\(String(pressedMouseButtons, radix: 16))"
+        let uptimeText = String(format: "%.3f", now)
         switch eventType {
         case .leftMouseDown?:
             if isContextMenuDismissalEvent(eventNumber) {
+                traceStatusItem(
+                    "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=contextMenuDismissalEvent"
+                )
                 restoreStatusItemHighlight()
                 return
             }
-            let now = ProcessInfo.processInfo.systemUptime
-            guard !pressTriggered else { return }
+            guard !pressTriggered else {
+                traceStatusItem(
+                    "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=pressTriggered"
+                )
+                return
+            }
             if now < suppressReleaseUntil {
                 // The menu-bar host can synthesize a primary pair after dismissing the context
                 // menu; it has no physical left-button bit. Keep filtering that pair, but let the
                 // user's next real click cancel the time-based tail immediately.
-                guard (pressedMouseButtons & 0x1) != 0 else { return }
+                guard (pressedMouseButtons & 0x1) != 0 else {
+                    traceStatusItem(
+                        "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=suppressReleaseUntil"
+                    )
+                    return
+                }
                 suppressReleaseUntil = 0
             }
+            traceStatusItem(
+                "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) decision=beginPress"
+            )
             // Only an accepted down consumes the pending post-menu click; a rejected synthetic pair
             // must leave it armed for the host's next mouse-up-only delivery.
             clearPostMenuPrimaryMouseUp()
@@ -810,13 +915,26 @@ final class MenuBarPanelController: NSObject {
             setStatusItemHighlighted(true)
             beginPress()
         case .rightMouseDown?:
-            requestStatusContextMenu(settle: ContextMenuSettle.fallback)
+            traceStatusItem(
+                "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) decision=requestStatusContextMenu(fallback)"
+            )
+            requestStatusContextMenu(
+                settle: ContextMenuSettle.fallback,
+                eventType: eventType,
+                pressedMouseButtons: pressedMouseButtons
+            )
         case .rightMouseUp?:
+            traceStatusItem(
+                "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=rightMouseUp"
+            )
             restoreStatusItemHighlight()
             return
         case .leftMouseUp?:
             defer { restoreStatusItemHighlight() }
             if isContextMenuDismissalEvent(eventNumber) {
+                traceStatusItem(
+                    "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=contextMenuDismissalEvent"
+                )
                 return
             }
             // On macOS 26+ (NSSceneStatusItem), `-[NSStatusItem _performOneShotAction:]` synthesizes
@@ -826,17 +944,34 @@ final class MenuBarPanelController: NSObject {
             // eventual release.
             if (pressedMouseButtons & 0x1) == 0 {
                 if isStatusItemPressActive {
+                    traceStatusItem(
+                        "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) decision=finishPress"
+                    )
                     finishPress()
                 } else if acceptsStandalonePostMenuMouseUp,
-                          ProcessInfo.processInfo.systemUptime >= suppressReleaseUntil {
+                          now >= suppressReleaseUntil {
+                    traceStatusItem(
+                        "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) decision=postMenuStandaloneToggle"
+                    )
                     clearPostMenuPrimaryMouseUp()
                     pressAllowsToggle = false
                     suppressReleaseUntil = ProcessInfo.processInfo.systemUptime + 0.15
                     performStatusItemToggle()
+                } else if acceptsStandalonePostMenuMouseUp {
+                    traceStatusItem(
+                        "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=suppressReleaseUntil"
+                    )
+                } else {
+                    traceStatusItem(
+                        "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=inactiveRelease"
+                    )
                 }
+            } else {
+                traceStatusItem(
+                    "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=primaryStillPressed"
+                )
             }
         default:
-            let now = ProcessInfo.processInfo.systemUptime
             // Keyboard and accessibility activation never produce the mouse-up this fallback waits
             // for. Past the dismissal grace, drop the stale fallback so the key still toggles; the
             // grace window keeps Escape and the menu's own synthetic tail from opening the panel.
@@ -846,7 +981,22 @@ final class MenuBarPanelController: NSObject {
             if !acceptsStandalonePostMenuMouseUp,
                !pressTriggered,
                now >= suppressReleaseUntil {
+                traceStatusItem(
+                    "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) decision=defaultToggle"
+                )
                 performStatusItemToggle()
+            } else if pressTriggered {
+                traceStatusItem(
+                    "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=pressTriggered"
+                )
+            } else if now < suppressReleaseUntil {
+                traceStatusItem(
+                    "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=suppressReleaseUntil"
+                )
+            } else {
+                traceStatusItem(
+                    "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=postMenuAwaitingMouseUp"
+                )
             }
             if pressedMouseButtons == 0 {
                 restoreStatusItemHighlight()
@@ -865,13 +1015,31 @@ final class MenuBarPanelController: NSObject {
         eventType: NSEvent.EventType?,
         pressedMouseButtons: Int
     ) {
+        let now = ProcessInfo.processInfo.systemUptime
+        let eventName = Self.statusEventTypeName(eventType)
+        let buttons = "0x\(String(pressedMouseButtons, radix: 16))"
+        let uptimeText = String(format: "%.3f", now)
         if eventType == .rightMouseDown || (pressedMouseButtons & 0x2) != 0 {
-            requestStatusContextMenu(settle: ContextMenuSettle.native)
+            traceStatusItem(
+                "handleStatusItemNativeLongPressEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) decision=requestStatusContextMenu(native)"
+            )
+            requestStatusContextMenu(
+                settle: ContextMenuSettle.native,
+                eventType: eventType,
+                pressedMouseButtons: pressedMouseButtons
+            )
             return
         }
 
-        let now = ProcessInfo.processInfo.systemUptime
-        guard now >= suppressReleaseUntil else { return }
+        guard now >= suppressReleaseUntil else {
+            traceStatusItem(
+                "handleStatusItemNativeLongPressEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=suppressReleaseUntil"
+            )
+            return
+        }
+        traceStatusItem(
+            "handleStatusItemNativeLongPressEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) decision=primaryLongPress(finishImmediately=\((pressedMouseButtons & 0x1) == 0))"
+        )
         clearPostMenuPrimaryMouseUp()
         if (pressedMouseButtons & 0x1) != 0 {
             setStatusItemHighlighted(true)
@@ -1180,13 +1348,32 @@ final class MenuBarPanelController: NSObject {
                 point: screenPoint,
                 eventType: eventType
             ) {
+                let now = ProcessInfo.processInfo.systemUptime
+                let eventName = Self.statusEventTypeName(eventType)
+                let buttons = "0x\(String(pressedMouseButtons, radix: 16))"
+                let uptimeText = String(format: "%.3f", now)
                 if eventType == .rightMouseDown {
-                    requestStatusContextMenu(settle: ContextMenuSettle.fallback)
+                    traceStatusItem(
+                        "handleMouseDown event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) decision=requestStatusContextMenu(fallback)"
+                    )
+                    requestStatusContextMenu(
+                        settle: ContextMenuSettle.fallback,
+                        eventType: eventType,
+                        pressedMouseButtons: pressedMouseButtons
+                    )
                 } else if eventType == .leftMouseDown, (pressedMouseButtons & 0x1) != 0 {
                     // The 6 pt tolerance serves hold tracking. A post-menu click must land on the
                     // button itself, or a neighboring status item could toggle this panel.
+                    let allowsPostMenuToggle = statusRect.contains(screenPoint)
+                    traceStatusItem(
+                        "handleMouseDown event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) decision=beginHoldDetectionFromMonitor(allowsPostMenuToggle=\(allowsPostMenuToggle))"
+                    )
                     beginHoldDetectionFromMonitor(
-                        allowsPostMenuToggle: statusRect.contains(screenPoint)
+                        allowsPostMenuToggle: allowsPostMenuToggle
+                    )
+                } else {
+                    traceStatusItem(
+                        "handleMouseDown event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=ignoredStatusHit"
                     )
                 }
                 return

@@ -756,6 +756,87 @@ struct MenuBarPanelControllerTests {
         #expect(toggleCount == 0)
     }
 
+    @Test("Status-item debug trace records handler entry, event, buttons, uptime, and decision or guard")
+    func statusItemDebugTraceRecordsHandlersDecisionsAndEarlyReturnGuards() {
+        _ = NSApplication.shared
+        #expect(MenuBarPanelController.statusItemLogSubsystem == "com.jryang1997.MenuBarMijia")
+        #expect(MenuBarPanelController.statusItemLogCategory == "StatusItem")
+
+        let statusItem = TestStatusItem()
+        let hostWindow = NSWindow(
+            contentRect: NSRect(x: 100, y: 900, width: 80, height: 24),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        defer { hostWindow.orderOut(nil) }
+        statusItem.testButton.frame = NSRect(x: 0, y: 0, width: 80, height: 24)
+        hostWindow.contentView = statusItem.testButton
+
+        let controller = MenuBarPanelController(statusItem: statusItem)
+        var traceLines: [String] = []
+        var scheduled: [(delay: TimeInterval, work: DispatchWorkItem)] = []
+        controller.statusItemHostsOutOfProcess = { true }
+        controller.statusItemTraceSink = { traceLines.append($0) }
+        controller.statusContextMenuScheduler = { delay, work in
+            scheduled.append((delay, work))
+        }
+        controller.statusContextMenuPresenter = { _ in }
+
+        // Outside click must not log a status-item trace line.
+        controller.handleMouseDown(
+            in: nil,
+            at: NSPoint(x: 10, y: 10),
+            eventType: .leftMouseDown,
+            pressedMouseButtons: 0x1
+        )
+        #expect(traceLines.isEmpty)
+
+        // Secondary click sequence: monitor -> fallback schedule -> native secondary action -> settle -> present.
+        controller.handleMouseDown(
+            in: hostWindow,
+            at: NSPoint(x: 140, y: 912),
+            eventType: .rightMouseDown,
+            pressedMouseButtons: 0x2
+        )
+        controller.handleStatusItemNativeLongPressEvent(
+            eventType: .rightMouseDown,
+            pressedMouseButtons: 0x2
+        )
+        scheduled.last?.work.perform()
+
+        // Post-menu duplicate right-click and synthetic primary pair hit early-return guards.
+        controller.handleStatusItemEvent(eventType: .rightMouseDown, pressedMouseButtons: 0x2)
+        controller.handleStatusItemEvent(eventType: .leftMouseDown, pressedMouseButtons: 0)
+        controller.handleStatusItemEvent(eventType: .rightMouseUp, pressedMouseButtons: 0)
+
+        #expect(traceLines.count == 9)
+        for line in traceLines {
+            #expect(line.contains("event="))
+            #expect(line.contains("buttons=0x"))
+            #expect(line.contains("uptime="))
+            #expect(line.contains("decision=") || line.contains("guard="))
+        }
+        #expect(traceLines[0].hasPrefix("handleMouseDown event=rightMouseDown buttons=0x2 "))
+        #expect(traceLines[0].contains("decision=requestStatusContextMenu(fallback)"))
+        #expect(traceLines[1].hasPrefix("requestStatusContextMenu event=rightMouseDown buttons=0x2 settle=0.300 "))
+        #expect(traceLines[1].contains("decision=schedule(replacedPending=false)"))
+        #expect(traceLines[2].hasPrefix("handleStatusItemNativeLongPressEvent event=rightMouseDown buttons=0x2 "))
+        #expect(traceLines[2].contains("decision=requestStatusContextMenu(native)"))
+        #expect(traceLines[3].hasPrefix("requestStatusContextMenu event=rightMouseDown buttons=0x2 settle=0.080 "))
+        #expect(traceLines[3].contains("decision=schedule(replacedPending=true)"))
+        #expect(traceLines[4].hasPrefix("showStatusContextMenu event=rightMouseDown buttons=0x2 "))
+        #expect(traceLines[4].contains("decision=present"))
+        #expect(traceLines[5].hasPrefix("handleStatusItemEvent event=rightMouseDown buttons=0x2 "))
+        #expect(traceLines[5].contains("decision=requestStatusContextMenu(fallback)"))
+        #expect(traceLines[6].hasPrefix("requestStatusContextMenu event=rightMouseDown buttons=0x2 settle=0.300 "))
+        #expect(traceLines[6].contains("guard=suppressContextMenuUntil"))
+        #expect(traceLines[7].hasPrefix("handleStatusItemEvent event=leftMouseDown buttons=0x0 "))
+        #expect(traceLines[7].contains("guard=suppressReleaseUntil"))
+        #expect(traceLines[8].hasPrefix("handleStatusItemEvent event=rightMouseUp buttons=0x0 "))
+        #expect(traceLines[8].contains("guard=rightMouseUp"))
+    }
+
     @Test("Native status menu is attached before exactly one status-button click")
     func nativeStatusMenuUsesStatusItemPresentation() {
         let statusItem = TestStatusItem()
