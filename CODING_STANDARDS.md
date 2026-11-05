@@ -87,4 +87,20 @@ External payloads (Mi cloud responses, MIoT instance JSON, Home Assistant WebSoc
 - A fuzzer that finds a trap ships with the fix and a minimal regression case (see the `tfhd` / `trun` short-payload and huge-number cases). Production code must not convert external numbers with trapping initialisers: use `Int(exactly:)` / `DeviceSynthesizer.roundedInt` and degrade to "no reading" when out of range.
 - A separate libFuzzer target is intentionally not wired into SwiftPM. The parsers are pure functions with deterministic seeds already reproducible on macOS and Linux; libFuzzer would add an LLVM-only build path without covering more code. Revisit only if a parser starts consuming non-deterministic process state.
 
+## 12. A Conditional View Ships With Its Snapshot
+
+A view that appears only in some state (a banner, a prompt, an empty or error state) ships with a snapshot case that puts the store into that state. Existing baselines never render it, so the `no-snapshot-change` label is wrong for it even though no current PNG changes.
+
+The snapshot is the check that the layout holds: the plaintext-consent banner (#276) truncated its reason on one line until its own snapshot showed it. Reserve `no-snapshot-change` for changes that alter no visible state at all.
+
+## 13. Pending UI State Ends on Every Transition
+
+State that waits on the user or a timer (a consent prompt, an auto-dismiss timer, a window a ring opened) has an owner and an end. For each such field, check every path that can supersede it:
+
+- **Backend switch.** Entering demo mode or rebuilding the provider clears it, and a late callback from the replaced provider is ignored. #276 shipped a consent banner whose 仍然连接 rebuilt the live backends while the app said demo.
+- **User takeover.** A window or session the user opened, kept or moved into picture-in-picture belongs to the user; automation never moves, switches or closes it. #308 needed this three times: a ring hijacked an open camera view, a later ring re-armed auto-close after picture-in-picture, and a restore was closed by an old timer.
+- **Repeat and stale events.** A repeated event renews what it owns or does nothing; an event about an older head, address or timestamp is ignored.
+
+Name the clearing site for each new field in the diff; a field set in one place and cleared nowhere is the defect.
+
 

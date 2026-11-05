@@ -83,10 +83,10 @@ printf '%s\n' "$SOURCES" | sed 's/^/  - /' >&2
 cat >&2 <<'MSG'
 
 本地既有漂移不代表基线仍然有效：scripts/snapshot-drift-check.sh 只回答“这些失配是不是早就存在”，
-回答不了“这次 UI 改动是否欠一批新基线”。重录流程：
-  1. gh workflow run ci.yml --ref <branch>
-  2. gh run download <run-id> -n snapshot-baselines -D /tmp/snap
-  3. 只把本次改动涉及的 PNG 拷进 Tests/MenuBarMijiaAppTests/__Snapshots__/SnapshotTests/ 并提交
+回答不了“这次 UI 改动是否欠一批新基线”。重录：先 push 分支，再运行
+  bash scripts/record_snapshots.sh <branch> --dry-run   # 在 CI 上录制，只列出会变的 PNG
+  bash scripts/record_snapshots.sh <branch>             # 把变化的 PNG 拷回仓库，审阅后提交
+新增只在某个状态下出现的视图（横幅、提示、空状态）时，先给该状态加快照用例再录制。
 确实不影响渲染时：这个文件永远画不进截图，就把它加进本脚本的 NON_RENDERING 名单；
 只是这一次不影响，就给 PR 加 no-snapshot-change 标签跳过本检查。
 MSG
