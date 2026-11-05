@@ -64,6 +64,34 @@ struct SnapshotTests {
         )
     }
 
+    // MARK: - Room order (#146)
+
+    @Test("The room-order list renders over the dashboard with 16 rooms")
+    func roomOrderSnapshot() async throws {
+        let fixture = try await SnapshotFixture(roomCount: 16, editMode: .roomOrder)
+        defer { fixture.restore() }
+
+        UserDefaults.standard.set(AppAppearance.system.rawValue, forKey: AppAppearance.storageKey)
+
+        assertRendered(
+            snapshotReady(ControlCenterPanel(store: fixture.store)),
+            size: CGSize(width: 376, height: 560),
+            named: "panel-room-order-zh-light"
+        )
+
+        // The drag needs the real backing scroll view: without it auto-scroll never runs and the
+        // pointer-to-row mapping loses the scroll offset (found in review, guarded here).
+        let scrollView = try #require(
+            RoomOrderScrollProbe.lastResolvedScrollView,
+            "the room-order list must hand the drag its NSScrollView"
+        )
+        let document = try #require(scrollView.documentView)
+        #expect(
+            document.frame.height > scrollView.contentView.bounds.height,
+            "16 rooms must overflow the list so the drag can scroll"
+        )
+    }
+
     // MARK: - Device cards: light / climate / plug / sensor / TV
 
     @Test("Five device card families render")
@@ -375,14 +403,29 @@ private struct SnapshotFixture {
     private let previousAppearance: String?
     private let previousTemperatureUnit: String?
     private let previousLanguage: AppLanguage
+    private let previousRoomOrder: String?
+    private let previousRoomAliases: String?
 
-    init(miSession: MiSession? = nil) async throws {
+    /// - Parameters:
+    ///   - roomCount: builds a home with that many rooms instead of the demo's three, so the
+    ///     room-order list can be rendered at the scale it was designed for (#146).
+    ///   - editMode: opens the panel in that mode, e.g. `.roomOrder` for the order list baseline.
+    init(miSession: MiSession? = nil, roomCount: Int? = nil, editMode: PanelEditMode = .none) async throws {
         previousLanguage = L10n.currentLanguage
         L10n.currentLanguage = .zhHans
         previousAppearance = UserDefaults.standard.string(forKey: AppAppearance.storageKey)
         previousTemperatureUnit = UserDefaults.standard.string(forKey: TemperatureUnitPreference.storageKey)
+        // The panel reads room order/aliases through `@AppStorage` on `.standard`, i.e. the real
+        // developer's preferences. Save them and hand the renderer a deterministic empty value —
+        // clearing without restoring would wipe a developer's own room layout on every test run.
+        previousRoomOrder = UserDefaults.standard.string(forKey: RoomPrefs.orderKey)
+        previousRoomAliases = UserDefaults.standard.string(forKey: RoomPrefs.aliasesKey)
         UserDefaults.standard.set(AppAppearance.system.rawValue, forKey: AppAppearance.storageKey)
         UserDefaults.standard.set(TemperatureUnitPreference.celsius.rawValue, forKey: TemperatureUnitPreference.storageKey)
+        UserDefaults.standard.removeObject(forKey: RoomPrefs.orderKey)
+        UserDefaults.standard.removeObject(forKey: RoomPrefs.aliasesKey)
+        // The session state is a process-wide observable: a previous test's draft must not leak in.
+        LayoutUIState.shared.resetForTesting()
 
         let suiteName = "MenuBarMijiaSnapshotTests-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
@@ -399,7 +442,7 @@ private struct SnapshotFixture {
         }
 
         store = HomeStore(
-            provider: MockHomeProvider(snapshot: DemoHomeProvider.defaultHome(includeCamera: false)),
+            provider: MockHomeProvider(snapshot: Self.home(roomCount: roomCount)),
             defaultsSuiteName: suiteName
         )
 
@@ -409,6 +452,41 @@ private struct SnapshotFixture {
             attempts += 1
         }
         #expect(!store.devices.isEmpty, "MockHomeProvider should deliver a snapshot right away")
+
+        if editMode == .roomOrder {
+            LayoutUIState.shared.beginRoomOrder(
+                rooms: store.rooms,
+                order: RoomPrefs.storedOrder(),
+                aliases: RoomPrefs.decodeAliases(UserDefaults.standard.string(forKey: RoomPrefs.aliasesKey) ?? "{}")
+            )
+        }
+    }
+
+    /// The demo home with its three rooms replaced by `roomCount` rooms; devices are spread over
+    /// them so the list shows more than "0 台" on every row.
+    private static func home(roomCount: Int?) -> SynthesizedHome {
+        var home = DemoHomeProvider.defaultHome(includeCamera: false)
+        guard let roomCount, roomCount > 0 else { return home }
+        let names = [
+            "客厅", "主卧", "书房", "儿童房", "厨房", "餐厅", "阳台", "玄关",
+            "卫生间", "次卧", "客房", "衣帽间", "储物间", "影音室", "健身房", "阁楼"
+        ]
+        let rooms = (0..<roomCount).map { index in
+            RoomArea(
+                id: "room_\(index)",
+                name: index < names.count ? names[index] : "房间 \(index + 1)",
+                sortOrder: index
+            )
+        }
+        home.rooms = rooms
+        home.devices = home.devices.enumerated().map { index, device in
+            var device = device
+            let room = rooms[index % rooms.count]
+            device.roomId = room.id
+            device.roomName = room.name
+            return device
+        }
+        return home
     }
 
     func restore() {
@@ -423,5 +501,17 @@ private struct SnapshotFixture {
         } else {
             UserDefaults.standard.removeObject(forKey: TemperatureUnitPreference.storageKey)
         }
+        // Put the developer's real room preferences back, byte for byte.
+        if let previousRoomOrder {
+            UserDefaults.standard.set(previousRoomOrder, forKey: RoomPrefs.orderKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: RoomPrefs.orderKey)
+        }
+        if let previousRoomAliases {
+            UserDefaults.standard.set(previousRoomAliases, forKey: RoomPrefs.aliasesKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: RoomPrefs.aliasesKey)
+        }
+        LayoutUIState.shared.resetForTesting()
     }
 }

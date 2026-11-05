@@ -20,17 +20,20 @@ extension ControlCenterPanel {
         )
     }
 
-    // MARK: - Room Strip Editing (#146)
+    // MARK: - Room Strip (#146)
 
-    enum RoomSpace {
-        static let name = "room_pills"
+    /// Aliases the strip draws: the session draft while reordering, the saved ones otherwise.
+    var roomAliases: [String: String] {
+        layoutUI.roomOrderDraft?.aliases ?? RoomPrefs.decodeAliases(roomAliasesRaw)
     }
 
-    var roomAliases: [String: String] { RoomPrefs.decodeAliases(roomAliasesRaw) }
-
-    /// Rooms with the saved order applied; saved ids for rooms that vanished are ignored.
+    /// Rooms with the saved order applied; while a session is open the draft wins, which is what
+    /// makes the strip a live preview. Saved ids for rooms that vanished are ignored.
     var displayRooms: [RoomArea] {
-        RoomPrefs.apply(order: RoomPrefs.decodeOrder(roomOrderRaw), to: store.rooms)
+        let order = layoutUI.roomOrderDraft?.order
+            ?? liveRoomOrder
+            ?? RoomPrefs.decodeOrder(roomOrderRaw)
+        return RoomPrefs.apply(order: order, to: store.rooms)
     }
 
     func roomDisplayTitle(_ room: RoomArea) -> String {
@@ -52,111 +55,98 @@ extension ControlCenterPanel {
         RoomPrefs.seededOrder(RoomPrefs.decodeOrder(roomOrderRaw), rooms: store.rooms)
     }
 
-    func roomId(at point: CGPoint) -> String? {
-        roomFrames.first { $0.value.contains(point) }?.key
-    }
+    // MARK: - Room Order Session (#146 redesign)
 
-    func roomPhase(_ id: String) -> Double {
-        Double(abs(id.hashValue % 97)) / 97 * .pi * 2
-    }
-
-    /// Long press enters room edit mode; while editing, a drag reorders rooms. Mirrors the tile
-    /// container gesture so both strips behave the same way.
-    var roomStripGesture: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .named(RoomSpace.name))
-            .onChanged { value in
-                guard !search.isSearching else { return }
-                let moved = hypot(value.translation.width, value.translation.height)
-                if isEditingRooms {
-                    if draggingRoomId == nil, moved > 3, let id = roomId(at: value.startLocation) {
-                        beginRoomDrag(id, at: value.startLocation)
-                    }
-                    if let id = draggingRoomId {
-                        roomDragLocation = value.location
-                        swapRoomIfNeeded(dragged: id, at: value.location)
-                    }
-                    return
-                }
-                if roomPressTask == nil, !roomPressCancelled, moved <= 8, let id = roomId(at: value.startLocation) {
-                    let start = value.startLocation
-                    roomPressTask = Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(450))
-                        guard !Task.isCancelled else { return }
-                        NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                            isEditingLayout = false
-                            draggingId = nil
-                            activeResize = nil
-                            store.expandedDeviceId = nil
-                            isEditingRooms = true
-                        }
-                        beginRoomDrag(id, at: start)
-                    }
-                } else if moved > 8 {
-                    roomPressTask?.cancel()
-                    roomPressCancelled = true
-                }
-            }
-            .onEnded { _ in
-                roomPressTask?.cancel()
-                roomPressTask = nil
-                roomPressCancelled = false
-                lastRoomSwapTarget = nil
-                guard draggingRoomId != nil else { return }
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                    draggingRoomId = nil
-                    roomDragLocation = nil
-                }
-            }
-    }
-
-    func beginRoomDrag(_ id: String, at start: CGPoint) {
-        let origin = roomFrames[id]?.minX ?? start.x
-        roomGrabOffset = start.x - origin
-        roomDragLocation = start
-        withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) { draggingRoomId = id }
-    }
-
-    /// Horizontal offset that keeps the picked-up pill under the pointer after a reorder.
-    func roomDragOffset(for id: String) -> CGFloat {
-        guard draggingRoomId == id, let location = roomDragLocation, let frame = roomFrames[id] else { return 0 }
-        return location.x - roomGrabOffset - frame.minX
-    }
-
-    func swapRoomIfNeeded(dragged: String, at location: CGPoint) {
-        guard Date().timeIntervalSince(lastRoomSwapAt) > 0.2 else { return }
-        guard let target = roomFrames.first(where: { $0.key != dragged && $0.value.contains(location) })?.key else { return }
-        let after = location.x > (roomFrames[target]?.midX ?? location.x)
-        let slot = "\(target)|\(after)"
-        guard slot != lastRoomSwapTarget else { return }
-        let order = RoomPrefs.move(currentRoomOrder, id: dragged, relativeTo: target, after: after)
-        guard order != currentRoomOrder else { return }
-        lastRoomSwapTarget = slot
-        lastRoomSwapAt = Date()
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-            roomOrderRaw = RoomPrefs.encodeOrder(order)
+    /// Opens the reorder list from the strip's sort button or a pill's "排序房间…" item.
+    func beginRoomOrder() {
+        guard store.rooms.count >= 2 else { return }
+        withAnimation(AppleMotion.snappySpring) {
+            store.expandedDeviceId = nil
+            draggingId = nil
+            activeResize = nil
+            // Only reachable from browsing, but make the transition explicit so a future entry point
+            // cannot leave device-layout editing half-open (§5.2).
+            layoutUI.endDeviceLayoutEditing()
+            liveRoomOrder = nil
+            // The grid is gone for the duration of the session, so its frames are stale (§5.1).
+            tileFrames = [:]
+            layoutUI.beginRoomOrder(rooms: store.rooms, order: currentRoomOrder, aliases: roomAliases)
         }
     }
 
-    /// "Move Left" / "Move Right" for a room pill's context menu.
+    /// Done / Cancel. Everything but an explicit cancel writes the draft back; a session that changed
+    /// nothing writes nothing (that is what `isDirty` is for), which is the same outcome as a cancel
+    /// without touching `UserDefaults`.
+    func finishRoomOrder(_ exit: RoomOrderExit) {
+        let draft = layoutUI.roomOrderDraft
+        let nothingToWrite = exit == .commit && draft?.isDirty(currentRooms: store.rooms) == false
+        withAnimation(AppleMotion.snappySpring) {
+            if exit == .commit, !nothingToWrite {
+                // `@AppStorage` republishes a moment after the write; without this mirror the strip
+                // would fall back to the pre-session order for one frame (§6.3).
+                liveRoomOrder = draft?.order
+            }
+            layoutUI.exitRoomOrder(nothingToWrite ? .cancel : exit)
+        }
+    }
+
+    /// One visible slot left/right, for a pill's context menu and VoiceOver.
     func moveRoom(_ id: String, by delta: Int) {
-        let order = RoomPrefs.shift(
-            currentRoomOrder,
-            id: id,
-            by: delta,
-            visible: Set(store.rooms.map(\.id))
-        )
-        guard order != currentRoomOrder else { return }
+        guard let from = displayRooms.firstIndex(where: { $0.id == id }) else { return }
+        moveRoom(id, toVisibleIndex: from + delta)
+    }
+
+    /// Moves a room to `index` of the visible list. Inside a session this edits the draft; on the
+    /// strip it writes the saved order straight away, so one-step adjustments skip the whole mode.
+    func moveRoom(_ id: String, toVisibleIndex index: Int) {
+        let visible = displayRooms.map(\.id)
+        if layoutUI.editMode == .roomOrder {
+            withAnimation(AppleMotion.snappySpring) {
+                layoutUI.updateRoomOrderDraft(rooms: store.rooms) { draft in
+                    draft.move(id: id, toVisibleIndex: index, visible: draft.visibleOrder(for: store.rooms))
+                }
+            }
+            return
+        }
+        let next = RoomPrefs.reordered(currentRoomOrder, id: id, toVisibleIndex: index, visible: visible)
+        guard next != currentRoomOrder else { return }
         withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
-            roomOrderRaw = RoomPrefs.encodeOrder(order)
+            roomOrderRaw = RoomPrefs.encodeOrder(next)
         }
     }
 
-    func resetRoomPrefs() {
-        let cleared = RoomPrefs.reset()
+    /// First / last visible slot, for the VoiceOver actions on a row and on a pill.
+    func moveRoom(_ id: String, toFront: Bool) {
+        if layoutUI.editMode == .roomOrder {
+            withAnimation(AppleMotion.snappySpring) {
+                layoutUI.updateRoomOrderDraft(rooms: store.rooms) { draft in
+                    if toFront { draft.moveToFront(id: id) } else { draft.moveToEnd(id: id) }
+                }
+            }
+            return
+        }
+        let next = toFront
+            ? RoomPrefs.moveToFront(currentRoomOrder, id: id)
+            : RoomPrefs.moveToEnd(currentRoomOrder, id: id)
+        guard next != currentRoomOrder else { return }
         withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
-            roomAliasesRaw = cleared.aliases
-            roomOrderRaw = cleared.order
+            roomOrderRaw = RoomPrefs.encodeOrder(next)
+        }
+    }
+
+    /// Writes one room alias: the session draft while reordering, `UserDefaults` otherwise.
+    func setRoomAlias(_ id: String, to alias: String?) {
+        if layoutUI.editMode == .roomOrder {
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
+                layoutUI.updateRoomOrderDraft(rooms: store.rooms) { $0.rename(id: id, to: alias) }
+                layoutUI.renamingRoomId = nil
+            }
+            return
+        }
+        var aliases = RoomPrefs.decodeAliases(roomAliasesRaw)
+        aliases[id] = alias
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
+            roomAliasesRaw = RoomPrefs.encodeAliases(aliases)
             layoutUI.renamingRoomId = nil
         }
     }
@@ -387,7 +377,8 @@ extension ControlCenterPanel {
                 }
             }
         } else if let rid = layoutUI.renamingRoomId, let room = store.rooms.first(where: { $0.id == rid }) {
-            let currentAliases = RoomPrefs.decodeAliases(roomAliasesRaw)
+            // In the reorder session the alias is part of the draft, so Cancel rolls it back too.
+            let currentAliases = roomAliases
             let originalName = room.name
             promptBackdrop {
                 GroupNamePrompt(
@@ -395,21 +386,11 @@ extension ControlCenterPanel {
                     name: RoomPrefs.alias(for: rid, in: currentAliases) ?? L10n.displayRoomName(originalName),
                     placeholder: L10n.displayRoomName(originalName),
                     onReset: currentAliases[rid] != nil ? {
-                        var aliases = RoomPrefs.decodeAliases(roomAliasesRaw)
-                        aliases.removeValue(forKey: rid)
-                        withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
-                            roomAliasesRaw = RoomPrefs.encodeAliases(aliases)
-                            layoutUI.renamingRoomId = nil
-                        }
+                        setRoomAlias(rid, to: nil)
                     } : nil
                 ) { name in
-                    var aliases = RoomPrefs.decodeAliases(roomAliasesRaw)
                     // Saving the original room name clears the alias.
-                    aliases[rid] = name == L10n.displayRoomName(originalName) ? nil : name
-                    withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
-                        roomAliasesRaw = RoomPrefs.encodeAliases(aliases)
-                        layoutUI.renamingRoomId = nil
-                    }
+                    setRoomAlias(rid, to: name == L10n.displayRoomName(originalName) ? nil : name)
                 } onCancel: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { layoutUI.renamingRoomId = nil }
                 }
@@ -484,8 +465,9 @@ extension ControlCenterPanel {
                             NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                                 store.expandedDeviceId = nil
-                                isEditingRooms = false
-                                isEditingLayout = true
+                                // Entering layout commits any open room-order draft: no draft crosses
+                                // into another context (§5.2).
+                                layoutUI.beginDeviceLayoutEditing()
                             }
                             beginDrag(id, at: start)
                         }
@@ -671,21 +653,49 @@ extension ControlCenterPanel {
         tileSizesRaw = DeviceLayoutPrefs.encode(sizes)
     }
 
+    /// "完成" for either edit mode. In the room-order list Return is routed by the panel's key
+    /// monitor (so it can never fall through to `toggleFocusedDevice`), which is why the default
+    /// action shortcut is only attached in device-layout mode.
+    @ViewBuilder
     var doneEditingButton: some View {
+        if isRoomOrdering {
+            doneButton
+        } else {
+            doneButton.keyboardShortcut(.defaultAction)
+        }
+    }
+
+    private var doneButton: some View {
         Button {
+            if isRoomOrdering {
+                finishRoomOrder(.commit)
+                return
+            }
             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                isEditingLayout = false
-                isEditingRooms = false
                 draggingId = nil
                 activeResize = nil
-                draggingRoomId = nil
-                roomDragLocation = nil
+                layoutUI.endDeviceLayoutEditing()
             }
         } label: {
             Text(L10n.tr("完成", "Done")).font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
         }
         .buttonStyle(PillActionButtonStyle(isSelected: true))
-        .keyboardShortcut(.defaultAction)
+        .accessibilityHint(isRoomOrdering
+            ? L10n.tr("保存房间顺序并返回首页", "Save the room order and go back")
+            : L10n.tr("结束布局编辑", "Finish editing the layout"))
+    }
+
+    /// "取消" only exists for the room-order session: it discards the draft and rolls the strip
+    /// back to the order from before the session started. Esc does the same.
+    var cancelRoomOrderButton: some View {
+        Button {
+            finishRoomOrder(.cancel)
+        } label: {
+            Text(L10n.tr("取消", "Cancel")).font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
+        }
+        .buttonStyle(PillActionButtonStyle())
+        .accessibilityHint(Text(L10n.tr("放弃本次排序并恢复原顺序", "Discard this order and restore the previous one")))
+        .panelHelp(L10n.tr("取消并恢复排序前的房间顺序（Esc）", "Cancel and restore the previous room order (Esc)"))
     }
 
     func usesClimatePanel(_ device: SmartDevice) -> Bool {

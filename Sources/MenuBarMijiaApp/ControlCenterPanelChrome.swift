@@ -172,7 +172,11 @@ extension ControlCenterPanel {
                 .accessibilityHint(Text(L10n.tr("用一句话控制设备", "Control devices with natural language")))
                 .panelHelp(L10n.tr("AI 指令：用一句话控制设备（快捷键 /）", "AI command: control devices with natural language (shortcut /)"))
 
-                if isEditingLayout || isEditingRooms {
+                if isEditing {
+                    if isRoomOrdering {
+                        cancelRoomOrderButton
+                            .transition(.scale(scale: 0.8).combined(with: .opacity))
+                    }
                     doneEditingButton
                         .transition(.scale(scale: 0.8).combined(with: .opacity))
                 } else if !store.allOffTargets.isEmpty {
@@ -362,8 +366,10 @@ extension ControlCenterPanel {
     }
 
     var statusSummaryText: String {
-        if isEditingRooms {
-            return L10n.tr("拖动房间排序，点铅笔图标改名", "Drag rooms to reorder, tap the pencil to rename")
+        if isRoomOrdering {
+            // Short on purpose: the long explanation lives under the list title, and a sentence
+            // this wide used to be clipped inside the 166 pt status column (§5.9).
+            return L10n.tr("调整房间顺序", "Reorder rooms")
         }
         if isEditingLayout {
             return L10n.tr("拖动卡片排序，点右下角圆弧手柄改大小", "Drag to reorder, drag or tap the corner handle to resize")
@@ -443,52 +449,16 @@ extension ControlCenterPanel {
 
     // MARK: - 2. Room Filter Strip & Grid Toggle
 
+    /// Only real rooms live in the scrolling part; `全部` is pinned by `roomFilterBar` (§5.1).
     var roomPillsRow: some View {
-        HStack(spacing: 5) {
-            roomPill(title: L10n.tr("全部", "All"), roomId: nil)
+        HStack(spacing: 2) {
+            Color.clear.frame(width: 0, height: 1).id("roomsStart")
             ForEach(displayRooms) { room in
-                roomPillRowItem(room)
-            }
-            if isEditingRooms {
-                Button {
-                    resetRoomPrefs()
-                } label: {
-                    Label(L10n.tr("重置", "Reset"), systemImage: "arrow.counterclockwise")
-                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
-                        .lineLimit(1)
-                }
-                .buttonStyle(PillActionButtonStyle())
-                .accessibilityHint(Text(L10n.tr("清除房间名称和顺序", "Clears room names and order")))
-                .panelHelp(L10n.tr("恢复房间原名与默认顺序", "Restore original room names and order"))
-                .transition(.scale(scale: 0.88).combined(with: .opacity))
+                roomPill(title: roomDisplayTitle(room), roomId: room.id)
+                    .id(room.id)
             }
         }
         .animation(AppleMotion.snappySpring, value: displayRooms.map(\.id))
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isEditingRooms)
-    }
-
-    func roomPillRowItem(_ room: RoomArea) -> some View {
-        roomPill(title: roomDisplayTitle(room), roomId: room.id)
-            .id(room.id)
-            .offset(x: roomDragOffset(for: room.id))
-            // Measured outside the drag offset and the jiggle, like device cards: those transforms
-            // would otherwise feed back into `roomDragOffset` (the reported frame would already
-            // include the offset) and the pill would jump.
-            .background {
-                GeometryReader { geo in
-                    let frame = geo.frame(in: .named(RoomSpace.name))
-                    Color.clear.preference(
-                        key: RoomFramesKey.self,
-                        value: [room.id: CGRect(
-                            x: frame.minX.rounded(),
-                            y: frame.minY.rounded(),
-                            width: frame.width.rounded(),
-                            height: frame.height.rounded()
-                        )]
-                    )
-                }
-            }
-            .zIndex(draggingRoomId == room.id ? 2 : 0)
     }
 
     func scrollRoomStrip(using proxy: ScrollViewProxy, roomId: String?, animated: Bool) {
@@ -608,60 +578,107 @@ extension ControlCenterPanel {
         .animation(AppleMotion.snappySpring, value: isSelected)
     }
 
+    /// `[全部] [rooms…scroll…]` inside one capsule track, with the sort and view controls beside it.
+    /// 全部 sits outside the scroll view so the most-used filter can never be scrolled out of view
+    /// while a room is selected (§2.2 audit item 5).
     var roomFilterBar: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 5) {
             ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 2) {
-                        Color.clear.frame(width: 0, height: 1).id("roomsStart")
+                HStack(spacing: 0) {
+                    roomPill(title: L10n.tr("全部", "All"), roomId: nil)
+                        .padding(.vertical, 3)
+                        .padding(.leading, 4)
+
+                    ScrollView(.horizontal, showsIndicators: false) {
                         roomPillsRow
                             .padding(.vertical, 3)
-                            .padding(.horizontal, 4)
-                            .coordinateSpace(name: RoomSpace.name)
-                            .simultaneousGesture(roomStripGesture)
-                            .onPreferenceChange(RoomFramesKey.self) { frames in
-                                if frames != roomFrames { roomFrames = frames }
-                            }
+                            .padding(.trailing, 4)
+                            .horizontalWheelScroll()
                     }
-                    .horizontalWheelScroll()
-                }
-                .defaultScrollAnchor(.leading)
-                .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-                // The menu-bar window restores a stale horizontal offset on reopen; snap back to
-                // the start (or the selected room) so the first pill is not half scrolled out.
-                .onChange(of: isPresented) { _, shown in
-                    guard shown else { return }
-                    scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: false)
-                }
-                .onAppear {
-                    scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: false)
-                }
-                .onChange(of: store.selectedRoomId) { _, id in
-                    scrollRoomStrip(using: proxy, roomId: id, animated: true)
-                }
-                .onChange(of: roomScrollTrigger) { _, _ in
-                    scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: true)
-                }
-                .mask(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .black.opacity(0.0), location: 0.0),
-                            .init(color: .black, location: 0.035),
-                            .init(color: .black, location: 0.86),
-                            .init(color: .black.opacity(0.0), location: 1.0)
-                        ],
-                        startPoint: .leading, endPoint: .trailing
+                    .defaultScrollAnchor(.leading)
+                    .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+                    // The menu-bar window restores a stale horizontal offset on reopen; snap back to
+                    // the start (or the selected room) so the first pill is not half scrolled out.
+                    .onChange(of: isPresented) { _, shown in
+                        guard shown else { return }
+                        scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: false)
+                    }
+                    .onAppear {
+                        scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: false)
+                    }
+                    .onChange(of: store.selectedRoomId) { _, id in
+                        scrollRoomStrip(using: proxy, roomId: id, animated: true)
+                    }
+                    .onChange(of: roomScrollTrigger) { _, _ in
+                        scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: true)
+                    }
+                    // Fade only the trailing edge: 全部 is pinned right beside this edge, so a fade
+                    // there would read as a seam between the fixed pill and the scrolling rooms.
+                    .mask(
+                        LinearGradient(
+                            stops: [
+                                .init(color: .black, location: 0.0),
+                                .init(color: .black, location: 0.88),
+                                .init(color: .black.opacity(0.0), location: 1.0)
+                            ],
+                            startPoint: .leading, endPoint: .trailing
+                        )
                     )
-                )
+                }
+                .background(segmentedTrack, in: Capsule(style: .continuous))
+                .overlay {
+                    Capsule(style: .continuous)
+                        .strokeBorder(segmentedTrackRim, lineWidth: DesignTokens.hairline)
+                }
+                .clipShape(Capsule(style: .continuous))
             }
-            .background(segmentedTrack, in: Capsule(style: .continuous))
-            .overlay {
-                Capsule(style: .continuous)
-                    .strokeBorder(segmentedTrackRim, lineWidth: DesignTokens.hairline)
-            }
-            .clipShape(Capsule(style: .continuous))
 
+            sortRoomsButton
             gridToggleButtons
+        }
+    }
+
+    /// The one discoverable entry to reordering (#146): a permanent 26×24 pt button instead of the
+    /// 450 ms long press, which no pointer-less path could reach. Hidden with 0 or 1 rooms, where
+    /// there is nothing to order.
+    @ViewBuilder
+    var sortRoomsButton: some View {
+        // Device-layout editing has its own Done; entering a second mode from inside it is not part
+        // of the state machine (§5.2), so the entry is closed there.
+        if store.rooms.count >= 2, !isEditingLayout {
+            Button {
+                if isRoomOrdering {
+                    finishRoomOrder(.commit)
+                } else {
+                    beginRoomOrder()
+                }
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
+                    .foregroundStyle(isRoomOrdering ? Color.white : Color.primary.opacity(0.78))
+                    .frame(width: 26, height: 24)
+                    .background {
+                        if isRoomOrdering {
+                            Capsule(style: .continuous).fill(Color.accentColor)
+                        }
+                    }
+                    .modifier(
+                        ChipSurface(
+                            shape: Capsule(style: .continuous),
+                            tint: nil,
+                            interactive: true,
+                            clear: false,
+                            isHidden: isRoomOrdering
+                        )
+                    )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text(L10n.tr("房间排序", "Room order")))
+            .accessibilityAddTraits(isRoomOrdering ? .isSelected : [])
+            .accessibilityHint(Text(L10n.tr("调整房间在首页的显示顺序", "Set the order rooms appear in")))
+            .panelHelp(isRoomOrdering
+                ? L10n.tr("完成排序并返回设备", "Finish reordering and go back")
+                : L10n.tr("房间排序：调整房间在首页的显示顺序", "Room order: set the order rooms appear in"))
         }
     }
 
@@ -749,57 +766,40 @@ extension ControlCenterPanel {
         let isSelected = roomId == nil
             ? store.listCut == .all
             : store.selectedRoomId == roomId
-        let isEditable = isEditingRooms && roomId != nil
-        // The selected pill is a lit tile of its own, so its label takes the tile's ink: a dark
-        // capsule in dark mode would otherwise keep the light-mode platter ink.
+        // While the order list is open the strip is a live preview: pills neither select nor drag.
+        let isPreview = isRoomOrdering
         let surface = TileSurface(isActive: true, scheme: effectiveScheme)
-        let content = HStack(spacing: 4) {
-            Text(title)
-                .font(.system(size: DesignTokens.TypeSize.caption, weight: isSelected ? .semibold : .medium))
-                .foregroundStyle(isSelected ? surface.ink : Color.secondary)
-            if isEditable, let roomId {
-                // #146: an explicit pencil so the edit-mode pill never doubles as "rename" on a
-                // long-press release.
-                Button {
-                    layoutUI.renamingRoomId = roomId
-                } label: {
-                    Image(systemName: "pencil")
-                        .font(.system(size: DesignTokens.TypeSize.micro, weight: .semibold))
-                        .foregroundStyle(isSelected ? surface.ink : Color.secondary)
-                        .frame(width: 14, height: 14)
-                        .contentShape(Rectangle())
+        let content = Text(title)
+            .font(.system(size: DesignTokens.TypeSize.caption, weight: isSelected ? .semibold : .medium))
+            .foregroundStyle(isSelected ? surface.ink : Color.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 5)
+            .background {
+                if isSelected {
+                    Capsule(style: .continuous)
+                        .fill(surface.fill)
+                        .shadow(color: .black.opacity(effectiveScheme == .dark ? 0.28 : 0.10), radius: 2, y: 1)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(L10n.tr("重命名房间", "Rename Room")))
-                .panelHelp(L10n.tr("重命名这个房间", "Rename this room"))
             }
-        }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 5)
-        .background {
-            if isSelected {
-                Capsule(style: .continuous)
-                    .fill(surface.fill)
-                    .shadow(color: .black.opacity(effectiveScheme == .dark ? 0.28 : 0.10), radius: 2, y: 1)
-            }
-        }
-        .contentShape(Capsule(style: .continuous))
+            .contentShape(Capsule(style: .continuous))
 
         Group {
-            if roomId == nil || !isEditingRooms {
+            // 只有预览态下胶囊不可点；浏览态连「全部」也必须能点，否则选中房间后无法点回全屋视图。
+            if isPreview {
+                content
+            } else {
                 Button {
                     selectRoom(roomId, animation: AppleMotion.snappySpring)
                 } label: {
                     content
                 }
                 .buttonStyle(.plain)
-            } else {
-                content
             }
         }
         .animation(AppleMotion.snappySpring, value: isSelected)
         .contextMenu {
-            if let roomId {
+            if let roomId, !isPreview {
                 Button {
                     layoutUI.renamingRoomId = roomId
                 } label: {
@@ -818,17 +818,31 @@ extension ControlCenterPanel {
                 }
                 .disabled(displayRooms.last?.id == roomId)
                 Divider()
+                // One-step nudge stays on the strip; whole-list ordering opens the list view.
                 Button {
-                    resetRoomPrefs()
+                    beginRoomOrder()
                 } label: {
-                    Label(L10n.tr("重置房间名称与顺序", "Reset Room Names & Order"), systemImage: "arrow.counterclockwise")
+                    Label(L10n.tr("排序房间…", "Reorder Rooms…"), systemImage: "arrow.up.arrow.down")
                 }
             }
         }
-        .accessibilityHint(Text(isEditable
-            ? L10n.tr("点按铅笔改名，拖动调整顺序", "Tap the pencil to rename, drag to reorder")
+        .accessibilityLabel(Text(title))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityHint(Text(isPreview
+            ? L10n.tr("排序预览，不可点选", "Order preview; not selectable")
             : L10n.tr("切换到该房间", "Show this room")))
-        .modifier(RoomPillJiggle(active: isEditable && draggingRoomId != roomId, phase: roomPhase(roomId ?? "")))
+        // Pointer-free single-step reordering, so VoiceOver users never need the list view (#146).
+        .accessibilityActions {
+            if let roomId, !isPreview {
+                Button(L10n.tr("左移", "Move Left")) { moveRoom(roomId, by: -1) }
+                    .disabled(displayRooms.first?.id == roomId)
+                Button(L10n.tr("右移", "Move Right")) { moveRoom(roomId, by: 1) }
+                    .disabled(displayRooms.last?.id == roomId)
+                Button(L10n.tr("移到最前", "Move to Front")) { moveRoom(roomId, toFront: true) }
+                Button(L10n.tr("移到最后", "Move to End")) { moveRoom(roomId, toFront: false) }
+                Button(L10n.tr("排序房间", "Reorder Rooms…")) { beginRoomOrder() }
+            }
+        }
     }
 
     func sectionHeader(_ title: String, count: Int) -> some View {

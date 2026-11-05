@@ -61,6 +61,11 @@ final class MenuBarMijiaAppDelegate: NSObject, NSApplicationDelegate, Observable
     func application(_ application: NSApplication, open urls: [URL]) {
         URLCommandHandler.shared.enqueue(urls)
     }
+
+    /// #146 §5.2：应用退出时也要把排序草稿提交回 `UserDefaults`，否则拖到一半的会话会静默丢失。
+    func applicationWillTerminate(_ notification: Notification) {
+        LayoutUIState.shared.commitRoomOrderIfNeeded()
+    }
 }
 
 // MARK: - Menu Bar Tooltip (#54)

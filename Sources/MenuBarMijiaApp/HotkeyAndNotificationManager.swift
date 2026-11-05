@@ -314,6 +314,64 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
         return keyCode == kVK_Escape
     }
 
+    /// #146 §5.5：排序模式下每个按键的归属。判定与执行分开，`handleKeyDown` 只把结果映射到
+    /// `RoomOrderKeyboard` / `LayoutUIState`，这张表本身可以逐键断言，不依赖真实事件。
+    enum RoomOrderKeyAction: Equatable {
+        /// ↑ ↓ / Tab ⇧Tab：只移动列表焦点，不碰设备。
+        case moveFocus(Int)
+        /// ⌘↑ ⌘↓：焦点行上下移动一位。
+        case moveRow(Int)
+        /// ⌘Home ⌘End：移到最前 / 最后（`true` = 最前）。
+        case moveRowToEdge(Bool)
+        /// Return / 小键盘 Enter：提交并退出。
+        case commit
+        /// Esc：回滚并退出。
+        case cancel
+        /// Space / ← → / 1…9：只吞掉，绝不落到设备操作。
+        case consume
+    }
+
+    /// 返回 `nil` 表示这个键不归排序会话，调用方继续走面板旧逻辑。`/` 与 `v` 故意不在这里：
+    /// 助手栏是叠在列表上的输入条，不会改动房间顺序，所以保持原来的打开行为。
+    static func roomOrderKeyAction(
+        keyCode: UInt16,
+        hasCommand: Bool,
+        hasShift: Bool,
+        charactersIgnoringModifiers: String?
+    ) -> RoomOrderKeyAction? {
+        switch Int(keyCode) {
+        case kVK_UpArrow:
+            return hasCommand ? .moveRow(-1) : .moveFocus(-1)
+        case kVK_DownArrow:
+            return hasCommand ? .moveRow(1) : .moveFocus(1)
+        case kVK_Home, kVK_End:
+            // 未按 ⌘ 的 Home/End 不是这个会话的键，维持原来的落空行为。
+            guard hasCommand else { return nil }
+            return .moveRowToEdge(Int(keyCode) == kVK_Home)
+        case kVK_Return, kVK_ANSI_KeypadEnter:
+            return .commit
+        case kVK_Escape:
+            return .cancel
+        case kVK_Tab:
+            return .moveFocus(hasShift ? -1 : 1)
+        case kVK_Space:
+            // 空格原来会落到 `toggleFocusedDevice()`；排序列表下它必须什么都不做。
+            return .consume
+        case kVK_LeftArrow, kVK_RightArrow:
+            // 左右键一律吞掉：主 switch 的 `adjustFocusedDevice` 不检查修饰键，⌘← 同样会改到残留的
+            // `focusedDeviceId` 上（那是改设备属性/亮度的路径，不只是移动焦点）；排序列表里没有
+            // 「选中设备」的视觉表达，左右键在这个模式下没有合理语义。
+            return .consume
+        default:
+            // 1…9 原来会 `selectQuickIndex()` 直接开关设备。⌘ 也吞：与 `adjustFocusedDevice` 同类问题，
+            // 主 switch 的数字段不检查修饰键；排序列表里 1…9 没有合法语义。
+            guard let chars = charactersIgnoringModifiers, chars.count == 1,
+                  let digit = Int(chars), (1...9).contains(digit)
+            else { return nil }
+            return .consume
+        }
+    }
+
     private func handleKeyDown(_ event: NSEvent, store: HomeStore) -> Bool {
         let code = Int(event.keyCode)
 
@@ -349,6 +407,20 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
             return true
         }
 
+        // #146 §5.5 ②：重命名/新建提示打开时 Esc 归提示所有。文本域 guard 会把 Esc 变成
+        // `makeFirstResponder(nil)` 并留下没关掉的提示，所以这一步必须排在它前面。
+        if LayoutUIState.shared.hasActivePrompt {
+            if code == kVK_Escape {
+                LayoutUIState.shared.dismissActivePrompt()
+                return true
+            }
+            // Return / ↑↓ 交给提示里的文本框；继续往下走会命中 `toggleFocusedDevice()`，在面板背后
+            // 误控卡片。
+            if code == kVK_Return || code == kVK_UpArrow || code == kVK_DownArrow {
+                return false
+            }
+        }
+
         // Do not let key-repeats of the global shortcut (e.g. holding ⌥M for voice input) leak into
         // a focused text field (`µ` on US keyboards) or re-toggle the panel mid-hold.
         if store.enableGlobalHotkey,
@@ -377,6 +449,45 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
         // Arrow/space/digit shortcuts belong to the menu-bar panel. The Settings window (⌘,) keeps
         // normal AppKit control behavior instead of triggering device actions (#42).
         if !MenuBarPanelController.shared.isPanelWindow(NSApp.keyWindow) {
+            return false
+        }
+
+        // #146 §5.5 ③：排序模式优先于下面的面板快捷键。Return / Esc / Tab 必须在这里被吃掉，否则会落到
+        // `toggleFocusedDevice()`、关面板的 Esc 阶梯或 `cycleRoom` 的旧顺序上，与预览列表对不上。
+        // Space、← → 与数字 1…9 同样吃掉：`toggleFocusedDevice()` 在 `focusedDeviceId == nil` 时会直接
+        // 开关列表第一台设备、`selectQuickIndex()` 会按序号开关设备，进入排序前清不清焦点都挡不住
+        // （审计里 Return 误控设备是同一条不变量）。有意的例外是 `/` 与 `v`——助手栏是叠在列表上的
+        // 输入条，不改动房间顺序，所以放行给下面的旧逻辑。
+        if LayoutUIState.shared.editMode == .roomOrder {
+            if let action = Self.roomOrderKeyAction(
+                keyCode: event.keyCode,
+                hasCommand: event.modifierFlags.contains(.command),
+                hasShift: event.modifierFlags.contains(.shift),
+                charactersIgnoringModifiers: event.charactersIgnoringModifiers
+            ) {
+                switch action {
+                case .moveFocus(let delta):
+                    RoomOrderKeyboard.moveFocus(delta, rooms: store.rooms)
+                case .moveRow(let slots):
+                    RoomOrderKeyboard.moveFocused(bySlots: slots, rooms: store.rooms)
+                case .moveRowToEdge(let toFront):
+                    RoomOrderKeyboard.moveFocusedToEdge(toFront: toFront, rooms: store.rooms)
+                case .commit:
+                    // 排序模式的 Return 只提交退出，绝不能落到 `toggleFocusedDevice()`。
+                    LayoutUIState.shared.exitRoomOrder(.commit)
+                case .cancel:
+                    // Esc 只回滚排序，不执行关面板阶梯。
+                    LayoutUIState.shared.cancelRoomOrder()
+                case .consume:
+                    break
+                }
+                return true
+            }
+        }
+
+        // #146 §5.5 ④：`doneEditingButton` 的 `.defaultAction` 要靠这个 Return 事件触发，放行给下面的
+        // `kVK_Return` 分支会在设备布局模式里误控选中设备。
+        if LayoutUIState.shared.editMode == .deviceLayout, code == kVK_Return {
             return false
         }
 

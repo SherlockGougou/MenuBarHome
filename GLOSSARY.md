@@ -116,6 +116,14 @@ _Avoid_: Static icon（静态图标）、Chatbot avatar（聊天头像）
 把米家云端 `group.*` 灯组与其成员单灯合成一张卡片的展示规则：`v2/groupv2/query_status` 返回的成员归属（`member_ship`，插件 SDK 写作 `membership`）随设备列表缓存到 `SynthesizedHome.lightGroupOwners`；面板只在灯组卡片本身可见时，从 `HomeStore.visibleDevices` 隐藏其成员灯，`filteredDevices` 仍保留完整集合，因此全关、场景、搜索与助手继续按每盏成员灯计算。偏好「灯组内的单灯不重复显示」(`hideGroupedLights`) 默认开启。
 _Avoid_: DeviceGroup（本地自定义分组）、Room grouping（房间分组）
 
+**RoomOrderDraft（房间排序草稿）**：
+一次房间排序会话里在内存中维护的完整顺序与别名（`RoomOrderDraft`）：进入会话时用 `RoomPrefs.seededOrder` 拍下完整历史顺序（含其他家庭/账号暂时不可见的房间 id），拖动、键盘与 VoiceOver 只改草稿，不写 `UserDefaults`；「完成」或任一会触发提交的隐式退出（面板隐藏、搜索、换家庭、进入设备布局、退出应用）经 `RoomPrefs.persist` 合并写回 `room_custom_order` / `room_aliases`，只有显式「取消」/`Esc` 丢弃草稿。「恢复默认顺序」只把当前可见房间恢复成 provider 顺序，保留其他家庭 id 的相对位置，且不改动别名。
+_Avoid_: Room order（保存后的顺序值）、Layout edit（设备布局编辑）
+
+**PanelEditMode（面板编辑模式）**：
+面板唯一的三态编辑状态（`none` / `deviceLayout` / `roomOrder`），保存在共享的 `LayoutUIState` 上，因此面板视图与全局键盘监视器读到同一个值。进入任一模式时按自身规则收尾另一个会话：进入设备布局会先提交房间排序草稿。排序模式的 `Return` 提交退出、`Esc` 取消回滚，都不会落到「开关聚焦设备」或「关闭面板」。
+_Avoid_: isEditingLayout / isEditingRooms（已被本枚举取代的两个布尔值）
+
 **ViewPreference（本地视图偏好）**：
 仅作用于当前客户端的展示配置（包括星标常用置顶、自定义分组 `DeviceGroup`、长按拖拽排序、通过编辑态卡片右下角圆弧手柄拖拽或轻点调节的分页面卡片尺寸 `TileSize`、单设备固定数据源覆盖、隐藏特定设备、隐藏离线设备、面板高度 `PanelHeight`、Windows 面板位置 `PanelAnchor`（跟随任务栏或工作区四角，保存在 `%APPDATA%\MenuBarMijia\panel-placement.json` 以便拖动窗口后即时落盘）、菜单栏常驻指标选择），存储在本地且不回写远端数据源。
 _Avoid_: Device config（设备配置）、Profile（档案）

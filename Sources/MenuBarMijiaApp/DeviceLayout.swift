@@ -343,14 +343,6 @@ struct TileFramesKey: PreferenceKey {
     }
 }
 
-/// Room pill frames in the room strip coordinate space, used to hit-test drag reordering (#146).
-struct RoomFramesKey: PreferenceKey {
-    static let defaultValue: [String: CGRect] = [:]
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
-        value.merge(nextValue()) { _, new in new }
-    }
-}
-
 // MARK: - Flow Layout
 
 struct TileSpanKey: LayoutValueKey {
@@ -480,8 +472,7 @@ public enum RoomPrefs {
     }
 
     public static func encodeOrder(_ ids: [String]) -> String {
-        var seen = Set<String>()
-        let unique = ids.filter { seen.insert($0).inserted }
+        let unique = RoomPrefs.deduped(ids)
         return (try? String(data: JSONEncoder().encode(unique), encoding: .utf8)) ?? "[]"
     }
 
@@ -576,6 +567,15 @@ final class LayoutUIState {
     /// Latest card frames in window `.global` coordinates; lets UI tests locate the resize
     /// handle after dynamic relayouts without hard-coding pixel positions.
     var cardGlobalFrames: [String: CGRect] = [:]
+    /// The one edit mode the panel is in (#146 room-order redesign). Replaces the two booleans
+    /// `isEditingLayout` / `isEditingRooms` that every entry point had to clear by hand. Lives here
+    /// rather than in the panel's `@State` because the app-wide key monitor has to read it.
+    var editMode: PanelEditMode = .none
+    /// The reorder session's in-memory order and aliases; `nil` outside `roomOrder`. Dragging writes
+    /// only here, so `@AppStorage` never republishes mid-drag.
+    var roomOrderDraft: RoomOrderDraft?
+    /// Keyboard / VoiceOver focus inside the room-order list.
+    var focusedRoomId: String?
 }
 
 /// Inline name prompt shown over the panel for creating or renaming a group.
