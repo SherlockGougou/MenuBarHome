@@ -63,6 +63,10 @@ final class MenuBarPanelController: NSObject {
     var performUpdateCheck: (() -> Void)?
     /// Event-boundary seams keep gesture routing testable without creating a process-wide NSApp.
     var statusContextMenuPresenter: ((NSMenu) -> Void)?
+    var statusItemHostsOutOfProcess: (() -> Bool)?
+    var statusContextMenuScheduler: (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
     var statusItemToggle: (() -> Void)?
     var statusItemEventNumber: () -> Int? = {
         MenuBarPanelController.statusEventNumber(for: NSApplication.shared.currentEvent)
@@ -158,6 +162,8 @@ final class MenuBarPanelController: NSObject {
         removeMouseMonitors()
         labelTimer?.invalidate()
         labelTimer = nil
+        pendingContextMenu?.cancel()
+        pendingContextMenu = nil
         stopPressTimer()
         for observer in observers {
             NotificationCenter.default.removeObserver(observer)
@@ -356,13 +362,17 @@ final class MenuBarPanelController: NSObject {
 
     /// The menu bar runs in another process when the status item takes `setLongPressAction:`.
     private var hostsStatusItemOutOfProcess: Bool {
-        statusItem?.responds(to: NSSelectorFromString("setLongPressAction:")) == true
+        if let statusItemHostsOutOfProcess {
+            return statusItemHostsOutOfProcess()
+        }
+        guard statusContextMenuPresenter == nil else { return false }
+        return statusItem?.responds(to: NSSelectorFromString("setLongPressAction:")) == true
     }
 
     /// Opens the context menu now, or after `settle` on an out-of-process host. Repeated requests
     /// for the same click replace the pending one, so the menu opens once, after the last signal.
     private func requestStatusContextMenu(settle: TimeInterval) {
-        guard hostsStatusItemOutOfProcess, statusContextMenuPresenter == nil else {
+        guard hostsStatusItemOutOfProcess else {
             showStatusContextMenu()
             return
         }
@@ -377,15 +387,17 @@ final class MenuBarPanelController: NSObject {
         suppressReleaseUntil = max(suppressReleaseUntil, ProcessInfo.processInfo.systemUptime + settle + 0.1)
         setStatusItemHighlighted(true)
         pendingContextMenu?.cancel()
+        weak var weakWork: DispatchWorkItem?
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, weakWork?.isCancelled == false else { return }
                 self.pendingContextMenu = nil
                 self.showStatusContextMenu()
             }
         }
+        weakWork = work
         pendingContextMenu = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + settle, execute: work)
+        statusContextMenuScheduler(settle, work)
     }
 
     private func showStatusContextMenu() {

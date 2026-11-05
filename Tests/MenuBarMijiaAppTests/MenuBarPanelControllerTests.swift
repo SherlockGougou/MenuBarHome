@@ -628,6 +628,134 @@ struct MenuBarPanelControllerTests {
         #expect(button.cell?.isHighlighted == false)
     }
 
+    @Test("Out-of-process secondary click coalesces monitor and native signals into one presentation after native settle")
+    func outOfProcessSecondaryClickPresentsOnceAfterNativeSettle() {
+        _ = NSApplication.shared
+        let statusItem = TestStatusItem()
+        let hostWindow = NSWindow(
+            contentRect: NSRect(x: 100, y: 900, width: 80, height: 24),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        defer { hostWindow.orderOut(nil) }
+        statusItem.testButton.frame = NSRect(x: 0, y: 0, width: 80, height: 24)
+        hostWindow.contentView = statusItem.testButton
+
+        let controller = MenuBarPanelController(statusItem: statusItem)
+        var presentedMenus: [NSMenu] = []
+        var scheduled: [(delay: TimeInterval, work: DispatchWorkItem)] = []
+        controller.statusItemHostsOutOfProcess = { true }
+        controller.statusContextMenuScheduler = { delay, work in
+            scheduled.append((delay, work))
+        }
+        controller.statusContextMenuPresenter = { menu in
+            presentedMenus.append(menu)
+        }
+
+        let insidePoint = NSPoint(x: 140, y: 912)
+        controller.handleMouseDown(
+            in: hostWindow,
+            at: insidePoint,
+            eventType: .rightMouseDown,
+            pressedMouseButtons: 0x2
+        )
+
+        #expect(presentedMenus.isEmpty, "menu must wait for the out-of-process host to settle")
+        #expect(scheduled.count == 1)
+        #expect(scheduled.first?.delay == MenuBarPanelController.ContextMenuSettle.fallback)
+        #expect(scheduled.first?.work.isCancelled == false)
+        #expect(statusItem.testButton.cell?.isHighlighted == true)
+
+        controller.handleStatusItemNativeLongPressEvent(
+            eventType: .rightMouseDown,
+            pressedMouseButtons: 0x2
+        )
+
+        #expect(presentedMenus.isEmpty, "native secondary action resets the settle window instead of presenting immediately")
+        #expect(scheduled.count == 2)
+        #expect(scheduled.first?.work.isCancelled == true)
+        #expect(scheduled.last?.delay == MenuBarPanelController.ContextMenuSettle.native)
+        #expect(scheduled.last?.work.isCancelled == false)
+
+        scheduled.first?.work.perform()
+        #expect(presentedMenus.isEmpty, "cancelled fallback work item must not present the menu")
+
+        scheduled.last?.work.perform()
+        #expect(presentedMenus.count == 1)
+        #expect(statusItem.testButton.cell?.isHighlighted == false)
+    }
+
+    @Test("Out-of-process secondary click without native action presents once after fallback settle")
+    func outOfProcessSecondaryClickFallbackPresentsOnce() {
+        _ = NSApplication.shared
+        let statusItem = TestStatusItem()
+        let hostWindow = NSWindow(
+            contentRect: NSRect(x: 100, y: 900, width: 80, height: 24),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        defer { hostWindow.orderOut(nil) }
+        statusItem.testButton.frame = NSRect(x: 0, y: 0, width: 80, height: 24)
+        hostWindow.contentView = statusItem.testButton
+
+        let controller = MenuBarPanelController(statusItem: statusItem)
+        var presentedMenus: [NSMenu] = []
+        var scheduled: [(delay: TimeInterval, work: DispatchWorkItem)] = []
+        controller.statusItemHostsOutOfProcess = { true }
+        controller.statusContextMenuScheduler = { delay, work in
+            scheduled.append((delay, work))
+        }
+        controller.statusContextMenuPresenter = { menu in
+            presentedMenus.append(menu)
+        }
+
+        controller.handleMouseDown(
+            in: hostWindow,
+            at: NSPoint(x: 140, y: 912),
+            eventType: .rightMouseDown,
+            pressedMouseButtons: 0x2
+        )
+
+        #expect(presentedMenus.isEmpty)
+        #expect(scheduled.count == 1)
+        #expect(scheduled.first?.delay == MenuBarPanelController.ContextMenuSettle.fallback)
+
+        scheduled.first?.work.perform()
+        #expect(presentedMenus.count == 1)
+    }
+
+    @Test("Synthetic primary click during the context-menu settle window does not toggle the panel")
+    func syntheticPrimaryClickDuringSettleWindowDoesNotTogglePanel() {
+        let statusItem = TestStatusItem()
+        let controller = MenuBarPanelController(statusItem: statusItem)
+        var presentedMenus: [NSMenu] = []
+        var scheduled: [(delay: TimeInterval, work: DispatchWorkItem)] = []
+        var toggleCount = 0
+        controller.statusItemHostsOutOfProcess = { true }
+        controller.statusContextMenuScheduler = { delay, work in
+            scheduled.append((delay, work))
+        }
+        controller.statusContextMenuPresenter = { menu in
+            presentedMenus.append(menu)
+        }
+        controller.statusItemToggle = { toggleCount += 1 }
+
+        controller.handleStatusItemEvent(eventType: .rightMouseDown, pressedMouseButtons: 0x2)
+        #expect(presentedMenus.isEmpty)
+        #expect(scheduled.count == 1)
+
+        controller.handleStatusItemEvent(eventType: .leftMouseDown, pressedMouseButtons: 0)
+        controller.handleStatusItemEvent(eventType: .leftMouseUp, pressedMouseButtons: 0)
+        #expect(toggleCount == 0, "synthetic primary pair during settle window must not toggle the panel")
+        #expect(presentedMenus.isEmpty)
+
+        scheduled.first?.work.perform()
+        #expect(presentedMenus.count == 1)
+        #expect(toggleCount == 0)
+    }
+
     @Test("Native status menu is attached before exactly one status-button click")
     func nativeStatusMenuUsesStatusItemPresentation() {
         let statusItem = TestStatusItem()
