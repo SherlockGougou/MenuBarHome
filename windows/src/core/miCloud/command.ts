@@ -358,6 +358,19 @@ export const MiotCommandMapper = {
         }
         throw new Error(`Unsupported vacuum action: ${command.action}`);
       }
+      case "mediaSetVolume": {
+        if (miotShortName(service.type) !== "speaker" || !Number.isFinite(command.level)) {
+          throw new Error("Unsupported property: volume");
+        }
+        const { prop } = findProp("volume");
+        const lo = prop.valueRange?.[0] ?? 0;
+        const hi = prop.valueRange?.[1] ?? 100;
+        const level = Math.max(0, Math.min(1, command.level));
+        return {
+          kind: "setProps",
+          writes: [{ did: addr.did, siid: service.iid, piid: prop.iid, value: coerce(prop, lo + level * (hi - lo)) }],
+        };
+      }
       case "activateScene":
         throw new Error("Scenes are not Miot device properties");
       default: {

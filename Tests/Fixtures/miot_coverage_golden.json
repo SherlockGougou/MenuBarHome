@@ -949,39 +949,5 @@
     "specs" : 205,
     "unexposedWritableTotal" : 352
   },
-  "windowsDivergences" : {
-    "090615.wifispeaker.x6bj" : {
-      "category" : "misclaimed",
-      "deviceType" : "speaker",
-      "service" : "air-conditioner"
-    },
-    "123888.tv.xhzn11" : {
-      "category" : "droppedControllable",
-      "deviceType" : "television"
-    },
-    "asu.projector.apro" : {
-      "category" : "droppedControllable",
-      "deviceType" : "projector"
-    },
-    "babai.wopener.82" : {
-      "category" : "droppedControllable",
-      "deviceType" : "window-opener"
-    },
-    "chuangmi.radio.v1" : {
-      "category" : "droppedControllable",
-      "deviceType" : "radio"
-    },
-    "gimi.projector.fm01" : {
-      "category" : "droppedControllable",
-      "deviceType" : "projector"
-    },
-    "xiaomi.btspker.oh3s" : {
-      "category" : "droppedControllable",
-      "deviceType" : "ble-speaker"
-    },
-    "xiaomi.split_tv.b1" : {
-      "category" : "droppedControllable",
-      "deviceType" : "split-tv"
-    }
-  }
+  "windowsDivergences" : {}
 }

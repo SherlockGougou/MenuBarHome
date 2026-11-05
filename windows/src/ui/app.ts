@@ -204,6 +204,7 @@ export class MenuMijiaWindowsApp {
       case "camera":
       case "sensor":
       case "cover":
+      case "speaker":
         return value;
       default:
         return null;

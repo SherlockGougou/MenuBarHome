@@ -88,6 +88,7 @@ export function assistantDeviceCategory(device: SmartDevice): string | null {
     case "fridge":
     case "sensor":
     case "cover":
+    case "speaker":
       return null;
   }
 }
@@ -138,6 +139,7 @@ export function catalogStateSummary(device: SmartDevice): string {
       return kind.isOn ? "开" : "关";
     case "fridge":
     case "sensor":
+    case "speaker":
       return "";
     case "cover":
       return kind.positionPercent === null ? "" : `开${kind.positionPercent}%`;

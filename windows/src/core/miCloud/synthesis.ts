@@ -244,6 +244,7 @@ export function primaryMiotService(spec: MiotDeviceSpec): MiotService | undefine
     "electric-blanket",
     "dehumidifier",
     "diffuser",
+    "speaker",
     "light",
     "fan",
     "air-purifier",
@@ -252,6 +253,7 @@ export function primaryMiotService(spec: MiotDeviceSpec): MiotService | undefine
     "video-doorbell",
     "vacuum",
     "curtain",
+    "window-opener",
     "fridge",
     "camera-control",
     "outlet",
@@ -818,7 +820,41 @@ export const MiotSynthesizer = {
       };
     }
 
-    if (sName === "curtain") {
+    if (sName === "speaker") {
+      const volume = readProp(primaryService, "volume");
+      const mute = readProp(primaryService, "mute");
+      const playing = readFirst(
+        spec.services.filter((s) => miotShortName(s.type) === "play-control"),
+        "playing-state",
+      );
+      const intelligent = spec.services.find((s) => miotShortName(s.type) === "intelligent-speaker");
+      const sleep = intelligent ? readProp(intelligent, "sleep-mode") : null;
+      const playingCode = typeof playing?.val === "number" ? Math.trunc(playing.val) : null;
+      const playingWord =
+        playingCode !== null
+          ? (playing?.prop.valueList?.find((i) => i.value === playingCode)?.description.toLowerCase() ?? "")
+          : "";
+      const state = playingWord === "playing" || playingWord === "play"
+        ? "playing"
+        : playingWord === "paused" || playingWord === "pause"
+          ? "paused"
+          : "idle";
+      const speakerAddress = makeMiotAddress(did, primaryService.iid);
+      return {
+        kind: "speaker",
+        mediaEntityId: speakerAddress,
+        state,
+        volumePercent: volume && typeof volume.val === "number" ? coverPercent(volume.val, volume.prop) : 0,
+        isMuted: miotBool(mute?.val) ?? false,
+        muteSwitchEntityId: exposesWrite(mute?.prop.access) ? speakerAddress : null,
+        sleepModeEntityId:
+          intelligent && exposesWrite(sleep?.prop.access) ? makeMiotAddress(did, intelligent.iid) : null,
+        isSleepMode: miotBool(sleep?.val) ?? false,
+        volumeWritable: exposesWrite(volume?.prop.access),
+      };
+    }
+
+    if (sName === "curtain" || sName === "window-opener") {
       const current = readProp(primaryService, "current-position");
       const target = readProp(primaryService, "target-position");
       const status = readProp(primaryService, "status");
@@ -845,7 +881,7 @@ export const MiotSynthesizer = {
       return {
         kind: "cover",
         entityId: makeMiotAddress(did, primaryService.iid),
-        subtype: "curtain",
+        subtype: sName,
         positionPercent:
           positionSource && typeof positionSource.val === "number"
             ? coverPercent(positionSource.val, positionSource.prop)

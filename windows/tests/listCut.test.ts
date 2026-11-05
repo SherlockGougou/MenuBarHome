@@ -152,7 +152,7 @@ describe("device list cut", () => {
   it("uses catalog keys for every chip title and hint", () => {
     assert.deepEqual(
       Object.entries(KIND_RANK).sort((a, b) => a[1] - b[1]).map(([tag]) => tag),
-      ["climate", "light", "plug", "fan", "vacuum", "fridge", "camera", "sensor", "cover"],
+      ["climate", "light", "plug", "fan", "vacuum", "fridge", "speaker", "camera", "sensor", "cover"],
     );
     assert.equal(KIND_CHIP.light.title, "灯");
     assert.equal(KIND_CHIP.climate.title, "空调");

@@ -78,6 +78,10 @@ export function buildInverseCommand(dev: SmartDevice, command: DeviceCommand): D
           const prevOn = command.entityId === k.motionDetectionEntityId ? Boolean(k.isMotionDetectionOn) : k.isOn;
           return [{ kind: "setSwitch", entityId: command.entityId, isOn: prevOn }];
         }
+        if (k.kind === "speaker") {
+          if (command.entityId === k.muteSwitchEntityId) return [{ kind: "setSwitch", entityId: command.entityId, isOn: k.isMuted }];
+          if (command.entityId === k.sleepModeEntityId) return [{ kind: "setSwitch", entityId: command.entityId, isOn: k.isSleepMode }];
+        }
         return [];
       case "setSelectOption":
         if (k.kind === "camera" && k.nightShot !== null) {
@@ -97,6 +101,8 @@ export function buildInverseCommand(dev: SmartDevice, command: DeviceCommand): D
           }
         }
         return [];
+      case "mediaSetVolume":
+        return k.kind === "speaker" ? [{ kind: "mediaSetVolume", entityId: k.mediaEntityId, level: k.volumePercent / 100 }] : [];
       case "vacuumAction":
       case "activateScene":
         return [];

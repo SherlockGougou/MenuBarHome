@@ -134,6 +134,19 @@ export interface CoverSpec {
   motion: "stopped" | "opening" | "closing";
 }
 
+/** Media card for a MIoT `speaker` service; TTS and play-music actions stay macOS-only. */
+export interface SpeakerSpec {
+  readonly kind: "speaker";
+  readonly mediaEntityId: string;
+  state: "idle" | "playing" | "paused";
+  volumePercent: number;
+  isMuted: boolean;
+  readonly muteSwitchEntityId: string | null;
+  readonly sleepModeEntityId: string | null;
+  isSleepMode: boolean;
+  readonly volumeWritable: boolean;
+}
+
 export type DeviceKind =
   | LightSpec
   | ClimateSpec
@@ -143,7 +156,8 @@ export type DeviceKind =
   | VacuumSpec
   | CameraSpec
   | SensorSpec
-  | CoverSpec;
+  | CoverSpec
+  | SpeakerSpec;
 export interface SmartDevice {
   readonly id: string;
   readonly name: string;
@@ -201,6 +215,8 @@ export type DeviceCommand =
   | { readonly kind: "setSwitch"; readonly entityId: string; readonly isOn: boolean }
   | { readonly kind: "setSelectOption"; readonly entityId: string; readonly option: string }
   | { readonly kind: "setNumberValue"; readonly entityId: string; readonly value: number }
+  /** `level` is 0…1, scaled onto the volume property's range (macOS `mediaSetVolume`). */
+  | { readonly kind: "mediaSetVolume"; readonly entityId: string; readonly level: number }
   | { readonly kind: "vacuumAction"; readonly entityId: string; readonly action: VacuumAction }
   | { readonly kind: "activateScene"; readonly entityId: string };
 
@@ -260,6 +276,7 @@ export function deviceCanTogglePower(device: SmartDevice): boolean {
       return kind.actionsWritable !== false;
     case "cover":
       return kind.openDescription !== null && kind.closeDescription !== null;
+    case "speaker":
     case "fridge":
     case "sensor":
       return false;
@@ -304,6 +321,8 @@ export function deviceAcceptsControlWrites(device: SmartDevice): boolean {
       return (kind.openDescription !== null && kind.closeDescription !== null) || kind.positionWritable;
     case "fridge":
       return kind.modeEntityId !== null || kind.fridgeTargetEntityId !== null || kind.freezerTargetEntityId !== null;
+    case "speaker":
+      return kind.volumeWritable || kind.muteSwitchEntityId !== null || kind.sleepModeEntityId !== null;
     case "sensor":
       return false;
     default: {
@@ -377,6 +396,8 @@ export function isDeviceActiveOn(device: SmartDevice): boolean {
       return device.kind.status === "cleaning";
     case "cover":
       return (device.kind.positionPercent ?? 0) > 0;
+    case "speaker":
+      return device.kind.state === "playing";
     case "fridge":
     case "sensor":
       return false;
@@ -696,6 +717,11 @@ export function deviceStatusSummary(device: SmartDevice): string {
       if (k.positionPercent <= 0) return t("已关上");
       if (k.positionPercent >= 100) return t("已打开");
       return t("开 {percent}%", { percent: k.positionPercent });
+    }
+    case "speaker": {
+      const play = k.state === "playing" ? t("播放中") : t("待机");
+      const volume = k.isMuted ? t("已静音") : t("音量 {percent}%", { percent: k.volumePercent });
+      return `${play} · ${volume}`;
     }
     default: {
       const _exhaustive: never = k;

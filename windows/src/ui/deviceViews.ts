@@ -1,6 +1,7 @@
 import { t } from "../core/i18n.js";
 import { IntentReply } from "../core/assistant.js";
 import {
+  deviceAcceptsControlWrites,
   deviceCanTogglePower,
   deviceReadout,
   deviceStatusSummary,
@@ -323,6 +324,28 @@ export function renderDeviceDrawer(dev: SmartDevice, escapeHtml: (value: string)
         </div>
       `;
     }
+    if (k.kind === "speaker") {
+      const id = escapeHtml(dev.id);
+      return `
+        <div class="cc-tile-drawer">
+          ${k.volumeWritable ? `<div class="cc-slider-group">
+            <div class="cc-slider-label">
+              <span>${t("音量")}</span>
+              <strong>${k.volumePercent}%</strong>
+            </div>
+            <input class="cc-range" type="range" min="0" max="100" value="${k.volumePercent}" data-volume="${id}" aria-label="${t("音量")}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${k.volumePercent}" />
+          </div>` : ""}
+          ${k.muteSwitchEntityId || k.sleepModeEntityId ? `<div class="cc-segmented-pills">
+            ${k.muteSwitchEntityId ? `<button class="cc-seg-pill ${k.isMuted ? "is-active" : ""}" data-speakermute="${id}" aria-pressed="${k.isMuted}">
+              ${k.isMuted ? t("静音：开") : t("静音：关")}
+            </button>` : ""}
+            ${k.sleepModeEntityId ? `<button class="cc-seg-pill ${k.isSleepMode ? "is-active" : ""}" data-speakersleep="${id}" aria-pressed="${k.isSleepMode}">
+              ${k.isSleepMode ? t("睡眠模式：开") : t("睡眠模式：关")}
+            </button>` : ""}
+          </div>` : ""}
+        </div>
+      `;
+    }
     if (k.kind === "camera") {
       if (k.powerWritable === false && k.availableNightShots.length === 0 && !k.motionDetectionEntityId) return "";
       const id = escapeHtml(dev.id);
@@ -418,6 +441,8 @@ function devicePaletteClass(dev: SmartDevice): string {
       return "palette-teal";
     case "cover":
       return "palette-teal";
+    case "speaker":
+      return "palette-indigo";
   }
 }
 
@@ -440,6 +465,8 @@ function deviceSvgIcon(dev: SmartDevice): string {
       return SF_ICONS.sensorFill;
     case "cover":
       return SF_ICONS.sensorFill;
+    case "speaker":
+      return SF_ICONS.speakerFill;
   }
 }
 
@@ -503,7 +530,8 @@ export function renderDeviceTile(dev: SmartDevice, state: DeviceTileViewState): 
         (dev.kind.swingWritable !== false && dev.kind.isOscillating !== null))) ||
     (dev.kind.kind === "camera" &&
       (writable || dev.kind.availableNightShots.length > 0 || dev.kind.motionDetectionEntityId !== null)) ||
-    (dev.kind.kind === "vacuum" && dev.kind.actionsWritable !== false);
+    (dev.kind.kind === "vacuum" && dev.kind.actionsWritable !== false) ||
+    (dev.kind.kind === "speaker" && deviceAcceptsControlWrites(dev));
   const subtitle =
     state.selectedRoom === "全部"
       ? `${dev.roomName} · ${deviceStatusSummary(dev)}`

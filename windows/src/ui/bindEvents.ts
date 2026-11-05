@@ -88,6 +88,7 @@ import {
   type SmartDevice,
   allOffTargets,
   cloudRefreshDue,
+  deviceAcceptsControlWrites,
   deviceCanTogglePower,
   deviceEnvironmentReading,
   deviceReadout,
@@ -740,9 +741,10 @@ import type { MenuMijiaWindowsApp } from "./app.js";
             toggleDeviceById(id);
           }
           host.cameraLive.openCameraLiveView(id);
-        } else if (k === "light" || k === "climate" || k === "fan" || k === "fridge") {
+        } else if (k === "light" || k === "climate" || k === "fan" || k === "fridge" || k === "speaker") {
           const canExpand =
             k === "fridge" ||
+            (k === "speaker" && deviceAcceptsControlWrites(dev)) ||
             k === "fan" ||
             (dev.kind.kind === "light" &&
               (dev.kind.brightnessWritable !== false || dev.kind.colorWritable !== false || dev.kind.availableEffects.length > 0)) ||
@@ -899,6 +901,45 @@ import type { MenuMijiaWindowsApp } from "./app.js";
         e.stopPropagation();
         const id = btn.dataset.cameraLive;
         if (id) host.cameraLive.openCameraLiveView(id);
+      });
+    });
+
+    host.root.querySelectorAll<HTMLInputElement>("[data-volume]").forEach((slider) => {
+      slider.addEventListener("change", () => {
+        const dev = host.devices.find((d) => d.id === slider.dataset.volume);
+        if (!dev || dev.kind.kind !== "speaker" || !dev.kind.volumeWritable) return;
+        const percent = Math.max(0, Math.min(100, Math.round(Number(slider.value))));
+        void host.executeSingleCommand(
+          dev,
+          { kind: "mediaSetVolume", entityId: dev.kind.mediaEntityId, level: percent / 100 },
+          t("已将{name}音量设为 {percent}%", { name: dev.name, percent }),
+        );
+      });
+    });
+
+    host.root.querySelectorAll<HTMLElement>("[data-speakermute]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const dev = host.devices.find((d) => d.id === btn.dataset.speakermute);
+        if (!dev || dev.kind.kind !== "speaker" || !dev.kind.muteSwitchEntityId) return;
+        const next = !dev.kind.isMuted;
+        void host.executeSingleCommand(
+          dev,
+          { kind: "setSwitch", entityId: dev.kind.muteSwitchEntityId, isOn: next },
+          t("已{action}{name}静音", { action: next ? t("开启") : t("关闭"), name: dev.name }),
+        );
+      });
+    });
+
+    host.root.querySelectorAll<HTMLElement>("[data-speakersleep]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const dev = host.devices.find((d) => d.id === btn.dataset.speakersleep);
+        if (!dev || dev.kind.kind !== "speaker" || !dev.kind.sleepModeEntityId) return;
+        const next = !dev.kind.isSleepMode;
+        void host.executeSingleCommand(
+          dev,
+          { kind: "setSwitch", entityId: dev.kind.sleepModeEntityId, isOn: next },
+          t("已{action}{name}睡眠模式", { action: next ? t("开启") : t("关闭"), name: dev.name }),
+        );
       });
     });
 

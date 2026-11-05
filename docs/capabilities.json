@@ -146,7 +146,7 @@
       "en": "Dehumidifiers, Blankets, Diffusers & Speakers",
       "zh": "除湿机 / 水暖毯 / 香氛机 / 音箱",
       "macos": "supported",
-      "windows": "partial",
+      "windows": "supported",
       "miotTypes": [
         "dehumidifier",
         "electric-blanket",

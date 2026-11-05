@@ -20,9 +20,10 @@ export const KIND_RANK: Record<DeviceKindTag, number> = {
   fan: 3,
   vacuum: 4,
   fridge: 5,
-  camera: 6,
-  sensor: 7,
-  cover: 8,
+  speaker: 6,
+  camera: 7,
+  sensor: 8,
+  cover: 9,
 };
 
 export const KIND_CHIP: Record<
@@ -35,6 +36,7 @@ export const KIND_CHIP: Record<
   fan: { title: "风扇", hint: "也包括净化器、新风、加湿器和除湿器" },
   vacuum: { title: "扫地机" },
   fridge: { title: "冰箱" },
+  speaker: { title: "音箱" },
   camera: { title: "摄像机" },
   sensor: { title: "传感器", hint: "也包括没有开关的小家电" },
   cover: { title: "门窗" },

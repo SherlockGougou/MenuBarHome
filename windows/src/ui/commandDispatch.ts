@@ -129,6 +129,14 @@ export async function applyCommand(host: MenuMijiaWindowsApp, command: DeviceCom
             } else if (k.motionDetectionEntityId === command.entityId) {
               k.isMotionDetectionOn = command.isOn;
             }
+          } else if (k.kind === "speaker") {
+            if (k.muteSwitchEntityId === command.entityId) k.isMuted = command.isOn;
+            else if (k.sleepModeEntityId === command.entityId) k.isSleepMode = command.isOn;
+          }
+          break;
+        case "mediaSetVolume":
+          if (k.kind === "speaker" && k.mediaEntityId === command.entityId) {
+            k.volumePercent = Math.round(Math.max(0, Math.min(1, command.level)) * 100);
           }
           break;
         case "setSelectOption":
@@ -200,6 +208,9 @@ export async function dispatchCloudCommand(host: MenuMijiaWindowsApp, command: D
         );
       }
       if (k.kind === "sensor") return false;
+      if (k.kind === "speaker") {
+        return [k.mediaEntityId, k.muteSwitchEntityId, k.sleepModeEntityId].includes(command.entityId);
+      }
       return k.entityId === command.entityId;
     });
     if (!dev) throw new Error(t("无法找到指令对应的设备"));

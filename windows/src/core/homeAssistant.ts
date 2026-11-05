@@ -668,6 +668,8 @@ export function haServiceCall(command: DeviceCommand): HaServiceCall {
       return call(
         command.action === "returnToBase" ? "return_to_base" : command.action,
       );
+    case "mediaSetVolume":
+      return call("volume_set", { volume_level: command.level });
     case "activateScene":
       return call("turn_on");
   }
