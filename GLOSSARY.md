@@ -23,7 +23,7 @@ _Avoid_: Data mapping（数据映射）、Parsing（解析）
 _Avoid_: Server type（服务器类型）、Mode（模式）
 
 **LocalNetworkEndpoint（局域网端点）**：
-流量不离开本机或家庭网络的服务地址：回环地址、私有网段、Tailscale 网段、`.local`/`.lan`/`.home.arpa`/`.internal` 后缀，以及不带点的单段主机名。凭据（HA token、AI key）只发往 https 地址或局域网端点；Home Assistant 的其余明文 http 地址须由用户逐个同意明文传输后才能使用。
+流量不离开本机或家庭网络的服务地址：回环地址、私有网段、Tailscale 网段、`.local`/`.lan`/`.home.arpa`/`.internal` 后缀，以及不带点的单段主机名（两个字母或 `xn--` 开头的国家顶级域除外，它们可能自己解析到公网）。凭据（HA token、AI key）只发往 https 地址或局域网端点；Home Assistant 的其余明文 http 地址须由用户逐个同意明文传输后才能使用。
 _Avoid_: Intranet（内网）、Trusted host（可信主机）
 
 **DeviceDeduplication（跨源设备去重合并）**：

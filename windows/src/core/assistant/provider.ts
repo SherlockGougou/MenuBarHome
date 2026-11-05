@@ -156,10 +156,18 @@ export function ipv4Octets(host: string): number[] | null {
   return octets;
 }
 
-/** Loopback, private LAN, link-local, CGNAT/Tailscale, IPv6 ULA/link-local, or mDNS `.local` names. */
+const LOCAL_HOST_SUFFIXES = [".local", ".lan", ".home.arpa", ".internal"] as const;
+
+/**
+ * Loopback, private LAN, link-local, CGNAT/Tailscale, IPv6 ULA/link-local,
+ * `.local`/`.lan`/`.home.arpa`/`.internal` names, or a dotless single-label host such as `homeassistant`
+ * (not a two-letter or IDN country-code label, which can resolve publicly).
+ */
 export function isLocalNetworkEndpoint(endpoint: AssistantEndpoint): boolean {
   const host = endpoint.host;
-  if (host === "localhost" || host === "::1" || host.endsWith(".local")) return true;
+  if (host === "localhost" || host === "::1" || LOCAL_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix))) {
+    return true;
+  }
   const octets = ipv4Octets(host);
   if (octets) {
     const [a, b] = octets as [number, number, number, number];
@@ -175,7 +183,17 @@ export function isLocalNetworkEndpoint(endpoint: AssistantEndpoint): boolean {
   if (host.includes(":")) {
     return /^(fc|fd|fe[89ab])/.test(host);
   }
-  return false;
+  return isPrivateSingleLabel(host);
+}
+
+/**
+ * A dotless name such as `homeassistant` resolves through the router's search domain.
+ * ICANN forbids dotless records only for generic TLDs; country-code TLDs (`ai`, `xn--p1ai`) may resolve
+ * on their own to a public server, so those labels never count as local. Mirrors macOS `isPrivateSingleLabel`.
+ */
+function isPrivateSingleLabel(host: string): boolean {
+  if (host.includes(".") || host.startsWith("xn--") || /[^\x00-\x7f]/.test(host)) return false;
+  return !/^[a-z]{2}$/.test(host);
 }
 
 /** API keys only travel over https, or over plain http that stays on the local network. */

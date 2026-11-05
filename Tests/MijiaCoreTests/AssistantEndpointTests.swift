@@ -11,6 +11,11 @@ struct AssistantEndpointTests {
         let keyTransport: [TransportCase]
     }
 
+    private struct LocalNetworkGolden: Decodable {
+        struct Case: Decodable { let host: String; let isLocalNetwork: Bool }
+        let cases: [Case]
+    }
+
     private static func locateFixture(_ relativePath: String) throws -> URL {
         var dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         for _ in 0..<8 {
@@ -39,6 +44,45 @@ struct AssistantEndpointTests {
         for item in golden.keyTransport {
             let allows = AssistantConfig(baseURL: item.url, model: "m", apiKey: "k").allowsSendingAPIKey
             #expect(allows == item.allowsKey, "\(item.url)")
+        }
+    }
+
+    @Test("Shared local_network_endpoint_golden.json: LAN detection matches Windows")
+    func localNetworkGoldenParity() throws {
+        let data = try Data(contentsOf: Self.locateFixture("Tests/Fixtures/local_network_endpoint_golden.json"))
+        let golden = try JSONDecoder().decode(LocalNetworkGolden.self, from: data)
+        #expect(golden.cases.count >= 50)
+        for item in golden.cases {
+            let raw = item.host.contains(":") ? "http://[\(item.host)]" : "http://\(item.host)"
+            let endpoint = try #require(AssistantEndpoint(raw))
+            #expect(endpoint.isLocalNetwork == item.isLocalNetwork, "\(item.host)")
+        }
+    }
+
+    @Test("inet_aton IPv4 spellings cannot smuggle a public address past the plain-http key refusal")
+    func inetAtonPublicLiteralsAreNotLocal() throws {
+        for raw in ["http://134744072/v1", "http://0x08080808/v1", "http://0x8.0x8.0x8.0x8/v1"] {
+            let endpoint = try #require(AssistantEndpoint(raw))
+            #expect(endpoint.isLocalNetwork == false, "\(raw)")
+            #expect(endpoint.allowsSendingSecrets == false, "\(raw)")
+        }
+    }
+
+    @Test("inet_aton loopback and private spellings still classify as local after rewriting")
+    func inetAtonLocalLiteralsRewriteToLocalHosts() throws {
+        let cases = [
+            ("http://2130706433/v1", "127.0.0.1"),
+            ("http://0x7f000001/v1", "127.0.0.1"),
+            ("http://0177.0.0.1/v1", "127.0.0.1"),
+            ("http://0xc0.0xa8.0x1.0x14/v1", "192.168.1.20"),
+            ("http://192.168.1/v1", "192.168.0.1"),
+            ("http://127.1/v1", "127.0.0.1")
+        ]
+        for (raw, host) in cases {
+            let endpoint = try #require(AssistantEndpoint(raw))
+            #expect(endpoint.host == host, "\(raw)")
+            #expect(endpoint.isLocalNetwork, "\(raw)")
+            #expect(endpoint.allowsSendingSecrets, "\(raw)")
         }
     }
 
