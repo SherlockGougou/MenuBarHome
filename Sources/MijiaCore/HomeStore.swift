@@ -221,6 +221,9 @@ public final class HomeStore {
     /// Test seam for the manual-control debounce window (sliders fire continuously, #113).
     var controlDebounceInterval: Duration = .milliseconds(280)
 
+    /// Test seam for the toast lifetime. `nil` keeps the toast up until the test reads it.
+    var toastAutoDismissInterval: Duration? = .seconds(2.8)
+
     /// Ask macOS to keep speech recognition on this Mac (no audio sent to Apple) when the language supports it.
     /// Defaults on for privacy; an explicitly saved `false` still wins (#50).
     public var prefersOnDeviceSpeech: Bool = true {
@@ -713,8 +716,10 @@ public final class HomeStore {
         let notice = ToastNotice(message: message, isError: isError)
         self.toastNotice = notice
         toastTimerTask?.cancel()
+        toastTimerTask = nil
+        guard let interval = toastAutoDismissInterval else { return }
         toastTimerTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2.8))
+            try? await Task.sleep(for: interval)
             guard !Task.isCancelled else { return }
             if self?.toastNotice?.id == notice.id {
                 self?.toastNotice = nil

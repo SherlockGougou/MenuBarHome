@@ -55,6 +55,8 @@ public enum HomeProviderError: LocalizedError, Equatable, Sendable {
     case unauthorized
     case serviceCallFailed(Int, String)
     case networkError(String)
+    /// A routed command needs a backend the composite provider was not given.
+    case backendNotConfigured(HomeBackend)
 
     public var errorDescription: String? {
         switch self {
@@ -62,6 +64,12 @@ public enum HomeProviderError: LocalizedError, Equatable, Sendable {
         case .unauthorized: return L10n.tr("令牌无效或已过期，请在设置中更新", "Invalid or expired token; update it in Settings")
         case .serviceCallFailed(let code, let msg): return L10n.tr("指令执行失败 (\(code))：\(msg)", "Command failed (\(code)): \(msg)")
         case .networkError(let msg): return L10n.tr("网络异常：\(msg)", "Network error: \(msg)")
+        case .backendNotConfigured(.xiaomiCloud):
+            return L10n.tr("米家云端未配置", "Xiaomi Cloud is not configured")
+        case .backendNotConfigured(.homeAssistant):
+            return L10n.tr("Home Assistant 未配置", "Home Assistant is not configured")
+        case .backendNotConfigured(.demo):
+            return L10n.tr("当前数据源未配置", "No data source is configured")
         }
     }
 }

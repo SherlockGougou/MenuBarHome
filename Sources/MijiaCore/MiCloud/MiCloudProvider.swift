@@ -567,12 +567,12 @@ public actor MiCloudProvider: HomeProvider {
         } catch MiCloudError.sessionExpired {
             report(MiCloudError.sessionExpired)
             throw MiCloudError.sessionExpired
-        } catch MiCloudError.api(let code, let message) {
+        } catch MiCloudError.deviceError(let code, let message) {
             if case .setLightEffect = command, code == Self.propertyUnsupportedCode {
                 effectsUnsupported.insert(record.did)
                 emitSnapshot()
             }
-            throw MiCloudError.api(code: code, message: message)
+            throw MiCloudError.deviceError(code: code, message: message)
         }
 
         let delay = followUpDelay

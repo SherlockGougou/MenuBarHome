@@ -117,7 +117,10 @@ public enum MiCloudError: LocalizedError, Equatable, Sendable {
     case notLoggedIn
     case sessionExpired
     case http(Int)
+    /// A cloud-envelope error. The code is the server wrapper's code, not a device verdict.
     case api(code: Int, message: String)
+    /// A per-item MIoT result from a write. Negative codes are device or gateway errors.
+    case deviceError(code: Int, message: String)
     case badResponse(String)
 
     public var errorDescription: String? {
@@ -126,7 +129,8 @@ public enum MiCloudError: LocalizedError, Equatable, Sendable {
         case .sessionExpired: return L10n.tr("米家登录已过期，请重新扫码", "Xiaomi Home session expired; please scan again")
         case .http(429): return L10n.tr("米家云提示请求太频繁，已放慢刷新，稍后自动重试", "Xiaomi Cloud is rate limiting; refreshing less often and retrying later")
         case .http(let code): return L10n.tr("米家云服务 HTTP \(code)", "Xiaomi Cloud HTTP \(code)")
-        case .api(let code, let message): return L10n.tr("米家云指令失败 (\(code))：\(message)", "Xiaomi Cloud command failed (\(code)): \(message)")
+        case .api(let code, let message), .deviceError(let code, let message):
+            return L10n.tr("米家云指令失败 (\(code))：\(message)", "Xiaomi Cloud command failed (\(code)): \(message)")
         case .badResponse(let what): return L10n.tr("米家云响应异常：\(what)", "Invalid Xiaomi Cloud response: \(what)")
         }
     }
@@ -552,7 +556,7 @@ public actor MiCloudClient: MiCloudAPI {
         for item in items {
             let code = item["code"]?.intValue ?? 0
             if code < 0 {
-                throw MiCloudError.api(code: code, message: "设备未响应或离线")
+                throw MiCloudError.deviceError(code: code, message: "设备未响应或离线")
             }
         }
     }

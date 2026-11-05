@@ -847,6 +847,19 @@ extension HomeStore {
 
     // MARK: - Internal Dispatch Helpers
 
+    private func showControlFailure(_ error: Error, device: SmartDevice, adjustment: Bool) {
+        guard !ControlFailure.isCancellation(error) else { return }
+        showToast(
+            ControlFailure.userMessage(
+                for: error,
+                deviceName: device.name,
+                isDeviceOnline: device.isOnline,
+                adjustment: adjustment
+            ),
+            isError: true
+        )
+    }
+
     private func dispatchImmediate(
         deviceId: String,
         fallback: SmartDevice,
@@ -865,7 +878,7 @@ extension HomeStore {
                     }
                     self.optimisticLockUntil.removeValue(forKey: deviceId)
                 }
-                self.showToast(L10n.tr("\(fallback.name) 操作未生效", "\(fallback.name) action failed"), isError: true)
+                self.showControlFailure(error, device: fallback, adjustment: false)
             }
         }
     }
@@ -892,7 +905,7 @@ extension HomeStore {
                     }
                     self.optimisticLockUntil.removeValue(forKey: deviceId)
                 }
-                self.showToast(L10n.tr("\(fallback.name) 调节未生效", "\(fallback.name) adjustment failed"), isError: true)
+                self.showControlFailure(error, device: fallback, adjustment: true)
             }
         }
     }

@@ -208,18 +208,12 @@ public actor DualSourceHomeProvider: HomeProvider {
     public func execute(_ command: DeviceCommand) async throws {
         if MiotAddress.parse(command.targetEntityId) != nil {
             guard let xiaomiCloud else {
-                throw HomeProviderError.serviceCallFailed(
-                    503,
-                    L10n.tr("米家云端未配置", "Xiaomi Cloud is not configured")
-                )
+                throw HomeProviderError.backendNotConfigured(.xiaomiCloud)
             }
             try await xiaomiCloud.execute(command)
         } else {
             guard let homeAssistant else {
-                throw HomeProviderError.serviceCallFailed(
-                    503,
-                    L10n.tr("Home Assistant 未配置", "Home Assistant is not configured")
-                )
+                throw HomeProviderError.backendNotConfigured(.homeAssistant)
             }
             try await homeAssistant.execute(command)
         }
