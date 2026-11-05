@@ -28,7 +28,7 @@ Windows 上没有 Swift 工具链：本机跑 `bash scripts/check.sh --lint-only
 
 本仓库的 Swift 与 Rust 没有语言服务器：引用与定义检索用 `grep` 或 `xd://ast_grep`，不要反复尝试 `xd://lsp`。
 
-CI 失败先看 `bash scripts/ci_errors.sh <run-id>`（只打失败 job、错误与失败用例）；盘点未合并分支和工作树用 `bash scripts/pending-work.sh`。
+CI 失败先看 `bash scripts/ci_errors.sh <run-id>`（只打失败 job、错误与失败用例）；盘点未合并分支和工作树用 `bash scripts/pending-work.sh`；挑票用 `bash scripts/issue-frontier.sh`（一次列出所有 `ready-for-agent` 票能不能做：blocker、assignee、`claimed:*` 标签、关联的 open PR 和分支；`--doable` 只输出可做编号）。
 
 ### Commit & PR policy
 

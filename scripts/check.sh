@@ -192,6 +192,8 @@ PY
     python3 scripts/update_manifest.py self-test
     # 发布附件集合（含两端 SBOM）是发版硬门槛，用 fixture 验证严格清单不会悄悄放宽。
     bash scripts/test_check_release.sh
+    # 多个会话靠 issue-frontier.sh 挑票，判定规则放宽会导致重复认领（#338）。
+    bash scripts/test_issue_frontier.sh
 fi
 
 large_files=""
