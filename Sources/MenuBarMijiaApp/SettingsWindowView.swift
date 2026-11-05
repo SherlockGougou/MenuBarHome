@@ -312,7 +312,7 @@ private struct GeneralSettingsTab: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                     SettingsToggleRow(
-                        title: L10n.tr("显示顶部快捷场景栏", "Show Quick Actions Strip"),
+                        title: L10n.tr("输入框里显示快捷场景", "Show Scenes Under the Input"),
                         isOn: Binding(
                             get: { store.showQuickActionsBar },
                             set: { store.showQuickActionsBar = $0 }

@@ -204,17 +204,18 @@ extension View {
 
 // MARK: - Hold-to-Confirm All Off
 
-/// "All Off" control: press and hold 0.6s to fire, with a filling progress sweep.
+/// "All Off" control: press and hold 0.6s to fire, with a filling progress sweep. It wears the
+/// same quiet chip surface as its header neighbours; the sweep is the only accent.
 struct HoldToConfirmButton: View {
     let title: String
     let count: Int
     let onConfirm: () -> Void
     let onTap: () -> Void
 
-    @Environment(\.colorScheme) private var colorScheme
     @State private var holding = false
 
     var body: some View {
+        let capsule = Capsule(style: .continuous)
         HStack(spacing: 4) {
             Image(systemName: "power").font(.system(size: DesignTokens.TypeSize.micro, weight: .bold))
             Text(title).font(.system(size: DesignTokens.TypeSize.control, weight: .semibold))
@@ -223,22 +224,22 @@ struct HoldToConfirmButton: View {
                 .monospacedDigit()
                 .contentTransition(.numericText(value: Double(count)))
         }
-        .foregroundStyle(Color.white)
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+        .foregroundStyle(Color.primary.opacity(0.88))
         .padding(.horizontal, 11)
         .padding(.vertical, 5)
         .background {
-            ZStack(alignment: .leading) {
-                Capsule(style: .continuous).fill(DesignTokens.Brand.allOff)
-                GeometryReader { geo in
-                    Rectangle()
-                        .fill(Color.black.opacity(0.2))
-                        .frame(width: holding ? geo.size.width : 0)
-                }
-                .clipShape(Capsule(style: .continuous))
+            GeometryReader { geo in
+                Rectangle()
+                    .fill(Color.accentColor.opacity(0.28))
+                    .frame(width: holding ? geo.size.width : 0)
             }
+            .clipShape(capsule)
         }
+        .modifier(ChipSurface(shape: capsule, tint: nil, interactive: true, clear: false))
         .scaleEffect(holding ? 0.95 : 1)
-        .contentShape(Capsule(style: .continuous))
+        .contentShape(capsule)
         .onTapGesture(perform: onTap)
         .onLongPressGesture(minimumDuration: 0.6, maximumDistance: 20) {
             holding = false
@@ -258,7 +259,6 @@ struct HoldToConfirmButton: View {
             NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
             onConfirm()
         }
-        .opacity(colorScheme == .dark ? 1 : 0.98)
     }
 }
 

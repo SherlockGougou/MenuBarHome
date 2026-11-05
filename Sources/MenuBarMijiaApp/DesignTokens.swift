@@ -58,11 +58,6 @@ enum DesignTokens {
         static let speedTrackBottom = Color(red: 0.08, green: 0.62, blue: 0.56)
     }
 
-    /// The panel's hold-to-confirm All-Off pill.
-    enum Brand {
-        static let allOff = Color(red: 0.90, green: 0.44, blue: 0.08)
-    }
-
     /// Pinned emotion colours with an appearance-independent black-and-white neutral face.
     enum GrokBall {
         static let neutralBody = GrokBallRGB(r: 0.035, g: 0.035, b: 0.035)

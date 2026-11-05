@@ -318,59 +318,21 @@ public final class SpeechInputController {
     }
 }
 
-// MARK: - AI Command Bar (top of the main dashboard)
+// MARK: - Assistant reply area (under the panel's single input)
 
-struct AssistantCommandBar: View {
-    @Environment(\.colorScheme) private var colorScheme
+/// What the assistant answered: the receipt line, undo hint, consent prompt and timers. The input
+/// itself lives in `ControlCenterPanel.omnibar`, shared with search; suggestions sit in
+/// `AssistantSuggestionsRow`, shown while that input is focused.
+struct AssistantResponseArea: View {
     let store: HomeStore
 
     @Bindable private var speech = SpeechInputController.shared
-    @State private var lastHandledVoiceRequest: Int = 0
     /// Asked once when the first timer is scheduled (#55).
     @State private var asksForTimerNotifications = false
-    @FocusState private var isFieldFocused: Bool
 
     var body: some View {
         let _ = store.effectiveLanguage
-        let shape = RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
         VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 7) {
-                Image(systemName: speech.isListening ? "waveform" : "sparkles")
-                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
-                    .foregroundStyle(speech.isListening ? Color.red : Color.accentColor)
-                    .symbolEffect(.variableColor.iterative, isActive: speech.isListening)
-                    .symbolEffect(.pulse, isActive: store.assistantState == .thinking)
-
-                TextField(
-                    placeholderText,
-                    text: $speech.draft
-                )
-                .textFieldStyle(.plain)
-                .font(.system(size: DesignTokens.TypeSize.body, weight: .medium))
-                .focused($isFieldFocused)
-                .onSubmit {
-                    if speech.isListening {
-                        speech.stop(andSubmit: false, store: store)
-                    }
-                    speech.submit(store: store)
-                }
-
-                micButton
-
-                trailingAccessory
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .adaptiveGlass(in: shape, interactive: true)
-            .overlay(
-                shape.strokeBorder(
-                    speech.isListening
-                        ? Color.red.opacity(0.65)
-                        : Color.accentColor.opacity(isFieldFocused ? 0.55 : 0.18),
-                    lineWidth: DesignTokens.hairline
-                )
-            )
-
             if let reply = replyLine {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Image(systemName: reply.isChoice ? "hand.tap.fill" : (reply.isError ? "xmark.octagon.fill" : "checkmark.circle.fill"))
@@ -426,12 +388,7 @@ struct AssistantCommandBar: View {
                 timerNotificationPromptRow
             }
 
-            suggestionsRow
         }
-        .help(L10n.tr(
-            "长按 ⌥M 或顶部菜单栏图标可按住说话；或点击麦克风说话，打字回车执行",
-            "Hold ⌥M or the menu bar icon for Push-to-Talk, click the mic to speak, or type and press Return"
-        ))
         .animation(AppleMotion.snappySpring, value: store.assistantState)
         .animation(AppleMotion.snappySpring, value: store.assistantSuggestions)
         .animation(AppleMotion.snappySpring, value: store.missedScheduledCommands)
@@ -439,22 +396,17 @@ struct AssistantCommandBar: View {
         .animation(AppleMotion.snappySpring, value: store.scheduledCommands)
         .animation(AppleMotion.snappySpring, value: asksForTimerNotifications)
         .animation(AppleMotion.snappySpring, value: speech.isListening)
-        .onAppear {
-            if store.assistantVoiceRequest != lastHandledVoiceRequest {
-                lastHandledVoiceRequest = store.assistantVoiceRequest
-                Task { await speech.start(holdMode: false, store: store) }
-            } else if !speech.isListening && !speech.isHoldToTalk {
-                isFieldFocused = true
-            }
-        }
-        .onChange(of: store.assistantFocusRequest) { _, _ in
-            if !speech.isListening && !speech.isHoldToTalk {
-                isFieldFocused = true
-            }
-        }
-        .onChange(of: store.assistantVoiceRequest) { _, newValue in
-            lastHandledVoiceRequest = newValue
-            speech.toggle(store: store)
+        // The receipt is a glance, not a log: it folds away unless something still needs the user.
+        .task(id: store.assistantState) {
+            guard case .done = store.assistantState else { return }
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled,
+                  case .done = store.assistantState,
+                  store.pendingCloudConsent == nil,
+                  store.scheduledCommands.isEmpty,
+                  store.missedScheduledCommands.isEmpty,
+                  !asksForTimerNotifications else { return }
+            withAnimation(AppleMotion.snappySpring) { store.dismissAssistantBar() }
         }
         // First timer: explain notifications before macOS ever asks (#55).
         .onChange(of: store.scheduledCommands.count) { oldValue, newValue in
@@ -604,7 +556,30 @@ struct AssistantCommandBar: View {
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
-    private var suggestionsRow: some View {
+    private var replyLine: (text: String, isError: Bool, isChoice: Bool, receipt: AssistantExecutionReceipt?)? {
+        if let speechError = speech.errorMessage {
+            return (speechError, true, false, nil)
+        }
+        switch store.assistantState {
+        case .done(let text):
+            return (
+                text.isEmpty ? L10n.tr("已执行", "Done") : text,
+                false,
+                false,
+                store.lastAssistantReceipt
+            )
+        case .failed(let message): return (message, true, false, nil)
+        case .awaitingChoice(let message): return (message, false, true, nil)
+        case .idle, .thinking: return nil
+        }
+    }
+}
+
+/// "Jev suggests" plus the habit/AI suggestion chips. Shown while the panel's input is focused.
+struct AssistantSuggestionsRow: View {
+    let store: HomeStore
+
+    var body: some View {
         let isJev = ModelIntentResolver.isSystemOneModel(store.assistantConfig.model)
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
@@ -666,88 +641,6 @@ struct AssistantCommandBar: View {
                 }
             }
             .padding(.horizontal, 2)
-        }
-    }
-
-    private var placeholderText: String {
-        if speech.isHoldToTalk {
-            return L10n.tr(
-                "按住快捷键或菜单栏说话，松开立即执行（如：准备写代码、书房灯月光模式）",
-                "Hold shortcut or menu bar to speak, release to run (e.g. turn on study light, moonlight mode)"
-            )
-        }
-        if speech.isListening {
-            return L10n.tr(
-                "正在聆听…说完自动执行（如：准备写代码、书房灯月光模式）",
-                "Listening… auto-runs when done (e.g. turn on study light, moonlight mode)"
-            )
-        }
-        return L10n.tr(
-            "支持模糊情境与习惯（如：准备写代码、有点闷热、书房灯月光模式）",
-            "Type or speak a command (e.g. turn on study light, AC 24 degrees, moonlight mode)"
-        )
-    }
-
-    private var micButton: some View {
-        Button {
-            speech.toggle(store: store)
-        } label: {
-            Image(systemName: speech.isListening ? "stop.circle.fill" : "mic.fill")
-                .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
-                .foregroundStyle(speech.isListening ? Color.red : Color.accentColor)
-                .frame(width: 20, height: 18)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text(speech.isListening
-            ? L10n.tr("停止聆听", "Stop listening")
-            : L10n.tr("语音输入", "Voice input")))
-        .help(speech.isListening
-              ? L10n.tr("停止聆听并执行", "Stop listening and run")
-              : L10n.tr("语音输入（快捷键 V，或长按 ⌥M / 菜单栏图标）", "Voice input (Shortcut V, or hold ⌥M / menu bar icon)"))
-    }
-
-    @ViewBuilder
-    private var trailingAccessory: some View {
-        if store.assistantState == .thinking {
-            ProgressView()
-                .controlSize(.small)
-                .scaleEffect(0.7)
-                .frame(width: 16, height: 16)
-        } else {
-            Button {
-                speech.stop(andSubmit: false, store: store)
-                withAnimation(AppleMotion.snappySpring) {
-                    store.dismissAssistantBar()
-                }
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: DesignTokens.TypeSize.body))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16, height: 16)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text(L10n.tr("关闭 AI 指令栏", "Close AI command bar")))
-            .help(L10n.tr("关闭 (Esc)", "Close (Esc)"))
-        }
-    }
-
-    private var replyLine: (text: String, isError: Bool, isChoice: Bool, receipt: AssistantExecutionReceipt?)? {
-        if let speechError = speech.errorMessage {
-            return (speechError, true, false, nil)
-        }
-        switch store.assistantState {
-        case .done(let text):
-            return (
-                text.isEmpty ? L10n.tr("已执行", "Done") : text,
-                false,
-                false,
-                store.lastAssistantReceipt
-            )
-        case .failed(let message): return (message, true, false, nil)
-        case .awaitingChoice(let message): return (message, false, true, nil)
-        case .idle, .thinking: return nil
         }
     }
 }

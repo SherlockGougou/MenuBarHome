@@ -42,6 +42,11 @@ public struct ControlCenterPanel: View {
     /// (`PanelSearchKeyboard`) has to read and write it before AppKit dispatches the event.
     @State var search = PanelSearchState.shared
     @FocusState private var isSearchFieldFocused: Bool
+    /// The assistant requests already acted on, so a panel built after one still replays it once.
+    @State private var lastHandledVoiceRequest = 0
+    /// The pointer is over the scene/suggestion drawer; the drawer stays open so a click can land.
+    @State private var isDrawerHovered = false
+    @Bindable private var speech = SpeechInputController.shared
     @Environment(\.effectiveReduceMotion) var reduceMotion
     @Environment(\.effectiveReduceTransparency) var reduceTransparency
     /// Opens the ⌘, Settings window; the popover no longer hosts the long form (#42).
@@ -101,6 +106,8 @@ public struct ControlCenterPanel: View {
             .onChange(of: search.isSearching) { _, searching in handleSearching(searching) }
             // #180: typing a query — through the key monitor or the field — ticks the guide's search step.
             .onChange(of: search.query) { _, query in handleSearchQuery(query) }
+            // Scenes and suggestions open with the field; make sure the suggestions are fresh by then.
+            .onChange(of: isSearchFieldFocused) { _, focused in handleSearchFocus(focused) }
             // Mi cloud polls every 6 s only while the panel is on screen (#26).
             .onChange(of: isPresented) { _, visible in store.setPanelVisible(visible) }
             .onDisappear { store.setPanelVisible(false) }
@@ -229,11 +236,13 @@ public struct ControlCenterPanel: View {
 
     private func handleSearching(_ searching: Bool) {
         if searching {
-            // The query bar replaces the room strip; reordering underneath it would be invisible.
+            // Results replace the room strip; reordering underneath them would be invisible.
             layoutUI.commitRoomOrderIfNeeded()
-        } else {
-            isSearchFieldFocused = false
         }
+    }
+
+    private func handleSearchFocus(_ focused: Bool) {
+        if focused { store.refreshProactiveSuggestionCacheIfStale() }
     }
 
     private func handleSearchQuery(_ query: String) {
@@ -267,7 +276,7 @@ public struct ControlCenterPanel: View {
             if store.showsOnboardingChecklistCard, !isRoomOrdering {
                 OnboardingChecklistCard(
                     store: store,
-                    onBeginSearch: { withAnimation(AppleMotion.snappySpring) { search.begin() } }
+                    onBeginSearch: { search.focus() }
                 )
                 .padding(.horizontal, 14)
                 .padding(.bottom, 8)
@@ -276,13 +285,6 @@ public struct ControlCenterPanel: View {
 
             if store.miSessionShowsExpired || store.miSessionExpiringSoonDate != nil {
                 miSessionExpiryBanner
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
-                    .transition(AppleMotion.drawerTransition)
-            }
-
-            if store.isShowingAssistantBar {
-                AssistantCommandBar(store: store)
                     .padding(.horizontal, 14)
                     .padding(.bottom, 8)
                     .transition(AppleMotion.drawerTransition)
@@ -302,35 +304,47 @@ public struct ControlCenterPanel: View {
                     .transition(AppleMotion.drawerTransition)
             }
 
-            if store.showQuickActionsBar, !isRoomOrdering {
-                quickActionsAndScenesBar
+            // One input for search and assistant commands, always on screen (#60). Reordering wants
+            // the height for the list instead.
+            if !isRoomOrdering {
+                omnibar
                     .padding(.horizontal, 14)
                     .padding(.bottom, 8)
-                    .transition(AppleMotion.drawerTransition)
+
+                if showsInputDrawer {
+                    inputDrawer
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 8)
+                        .transition(AppleMotion.drawerTransition)
+                }
+
+                if store.isShowingAssistantBar || speech.errorMessage != nil {
+                    AssistantResponseArea(store: store)
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 8)
+                        .transition(AppleMotion.drawerTransition)
+                }
             }
 
-            // #60: while a search is open the query bar replaces the room pills, so the empty-query
-            // layout is untouched and results are not silently narrowed by the selected room.
+            // While a search is open the results replace the room strip, so the empty-query layout
+            // is untouched and results are not silently narrowed by the selected room.
             // #146: sorting keeps the room strip as a live preview, but drops the kind-filter row.
-            if search.isSearching {
-                searchBar
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
-                    .transition(AppleMotion.drawerTransition)
-            } else if isRoomOrdering {
-                if showsRoomStripPreview {
-                    VStack(alignment: .leading, spacing: 6) {
-                        roomFilterBar
-                        // Ordering kinds previews the chip row under the strip instead.
-                        if layoutUI.orderTarget == .kinds { kindFilterBar }
+            if !search.isSearching {
+                if isRoomOrdering {
+                    if showsRoomStripPreview {
+                        VStack(alignment: .leading, spacing: 6) {
+                            roomFilterBar
+                            // Ordering kinds previews the chip row under the strip instead.
+                            if layoutUI.orderTarget == .kinds { kindFilterBar }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 8)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
+                } else {
+                    listFilterBars
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 8)
                 }
-            } else {
-                listFilterBars
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
             }
 
             Divider()
@@ -426,15 +440,35 @@ public struct ControlCenterPanel: View {
         search.results(store: store)
     }
 
-    private var searchBar: some View {
-        let shape = RoundedRectangle(cornerRadius: DesignTokens.Radius.inset, style: .continuous)
+    /// Scenes and suggestions appear while the input is focused and empty, then fold away.
+    private var showsInputDrawer: Bool {
+        (isSearchFieldFocused || isDrawerHovered) && !search.isSearching && !speech.isListening
+    }
+
+    private var inputDrawer: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            if store.showQuickActionsBar {
+                quickActionsAndScenesBar
+            }
+            AssistantSuggestionsRow(store: store)
+        }
+        .onHover { isDrawerHovered = $0 }
+    }
+
+    /// The single input: typing filters devices, a sentence plus Return runs as an instruction, the
+    /// mic dictates into the same field.
+    private var omnibar: some View {
+        let shape = RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
+        let listening = speech.isListening
         return HStack(spacing: 7) {
-            Image(systemName: "magnifyingglass")
+            Image(systemName: listening ? "waveform" : "magnifyingglass")
                 .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(listening ? Color.red : Color.secondary)
+                .symbolEffect(.variableColor.iterative, isActive: listening)
+                .symbolEffect(.pulse, isActive: store.assistantState == .thinking)
 
             TextField(
-                L10n.tr("搜索设备、房间或拼音首字母（sfd → 书房灯）", "Search devices, rooms or pinyin initials (sfd → 书房灯)"),
+                omnibarPlaceholder,
                 text: Binding(
                     get: { search.query },
                     set: { search.query = $0 }
@@ -447,38 +481,101 @@ public struct ControlCenterPanel: View {
             .onChange(of: isSearchFieldFocused) { _, focused in search.isFieldFocused = focused }
 
             if !search.query.isEmpty {
+                Text(searchCountLabel)
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+
                 Button {
                     withAnimation(AppleMotion.snappySpring) { search.query = "" }
-                    search.focusRequest &+= 1
+                    focusInput()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(Text(L10n.tr("清空搜索", "Clear search")))
+                .accessibilityLabel(Text(L10n.tr("清空输入", "Clear input")))
             }
 
-            Text(searchCountLabel)
-                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
+            if store.assistantState == .thinking {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.7)
+                    .frame(width: 20, height: 18)
+            } else {
+                Button {
+                    withAnimation(AppleMotion.snappySpring) {
+                        store.presentAssistantBar(startVoice: true)
+                    }
+                } label: {
+                    Image(systemName: listening ? "stop.circle.fill" : "mic.fill")
+                        .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
+                        .foregroundStyle(listening ? Color.red : Color.accentColor)
+                        .frame(width: 20, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(listening
+                    ? L10n.tr("停止聆听", "Stop listening")
+                    : L10n.tr("语音输入", "Voice input")))
+                .help(listening
+                    ? L10n.tr("停止聆听并执行", "Stop listening and run")
+                    : L10n.tr("语音输入（快捷键 V，或长按 ⌥M / 菜单栏图标）", "Voice input (Shortcut V, or hold ⌥M / menu bar icon)"))
+            }
         }
-        .padding(.horizontal, 9)
+        .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(shape.fill(Color.primary.opacity(0.06)))
-        .overlay(shape.strokeBorder(Color.accentColor.opacity(isSearchFieldFocused ? 0.55 : 0.16), lineWidth: DesignTokens.hairline))
-        .onChange(of: search.focusRequest) { _, _ in
-            Task { @MainActor in isSearchFieldFocused = true }
+        .adaptiveGlass(in: shape, interactive: true)
+        .overlay(
+            shape.strokeBorder(
+                listening ? Color.red.opacity(0.65) : Color.accentColor.opacity(isSearchFieldFocused ? 0.55 : 0.16),
+                lineWidth: DesignTokens.hairline
+            )
+        )
+        .onChange(of: search.focusRequest) { _, _ in focusInput() }
+        .onChange(of: store.assistantFocusRequest) { _, _ in focusInput() }
+        .onChange(of: store.assistantVoiceRequest) { _, newValue in
+            lastHandledVoiceRequest = newValue
+            speech.toggle(store: store)
+        }
+        // Dictation lands in the same field; once the instruction ran the draft empties and so does it.
+        .onChange(of: speech.draft) { _, draft in
+            if speech.isListening {
+                search.query = draft
+                search.focus()
+            } else if draft.isEmpty {
+                search.end()
+            }
         }
         .onAppear {
-            if search.focusRequest > 0 { Task { @MainActor in isSearchFieldFocused = true } }
+            if store.assistantVoiceRequest != lastHandledVoiceRequest {
+                lastHandledVoiceRequest = store.assistantVoiceRequest
+                Task { await speech.start(holdMode: false, store: store) }
+            } else if search.focusRequest > 0 {
+                focusInput()
+            }
         }
         .accessibilityElement(children: .contain)
         .panelHelp(L10n.tr(
-            "打字即可过滤；⌘F 聚焦搜索框，↑↓ 选择，回车开关，→ 展开详情，Esc 清空后再按 Esc 关闭面板",
-            "Type to filter; ⌘F focuses the field, ↑↓ selects, Return toggles, → expands, Esc clears, then closes"
+            "打字过滤设备，回车开关；整句话（如「书房灯月光模式」）回车交给助手。⌘F 聚焦，↑↓ 选择，→ 展开，Esc 清空，再按 Esc 关闭面板",
+            "Type to filter devices, Return toggles; a whole sentence runs as a command. ⌘F focuses, ↑↓ selects, → expands, Esc clears, then closes"
         ))
+    }
+
+    private func focusInput() {
+        guard !speech.isListening, !speech.isHoldToTalk else { return }
+        Task { @MainActor in isSearchFieldFocused = true }
+    }
+
+    private var omnibarPlaceholder: String {
+        if speech.isHoldToTalk {
+            return L10n.tr("按住说话，松开立即执行", "Hold to speak, release to run")
+        }
+        if speech.isListening {
+            return L10n.tr("正在聆听…说完自动执行", "Listening… runs when you stop")
+        }
+        return L10n.tr("搜索设备，或直接说一句话", "Search devices, or say a command")
     }
 
     private var searchCountLabel: String {
@@ -576,8 +673,6 @@ final class PanelSearchState {
             isExplicitSelection = false
         }
     }
-    /// The bar is on screen: ⌘F opens it without a query.
-    var isActive = false
     /// Bumped to move the caret into the field; the panel focuses on every change.
     var focusRequest = 0
     /// The search field itself is first responder, so AppKit inserts text instead of the monitor.
@@ -587,10 +682,11 @@ final class PanelSearchState {
     /// The user moved the highlight, so Return acts on it even when the text reads like a command.
     private(set) var isExplicitSelection = false
 
-    var isSearching: Bool { isActive || !query.isEmpty }
+    /// Results replace the grid only while something is typed; a focused empty field changes nothing.
+    var isSearching: Bool { !query.isEmpty }
 
-    func begin() {
-        isActive = true
+    /// Puts the caret in the field. The page stays as is until something is typed.
+    func focus() {
         focusRequest &+= 1
     }
 
@@ -603,7 +699,6 @@ final class PanelSearchState {
         query = ""
         selectionId = nil
         isExplicitSelection = false
-        isActive = false
         isFieldFocused = false
     }
 
@@ -715,12 +810,12 @@ enum PanelSearchKeyboard {
 
         case .appendQuery(let text):
             state.query += text
-            state.begin()
+            state.focus()
             return true
 
         case .deleteBackward:
             if !state.query.isEmpty { state.query.removeLast() }
-            state.begin()
+            state.focus()
             return true
 
         case .clearQuery:
@@ -731,7 +826,7 @@ enum PanelSearchKeyboard {
             return true
 
         case .focusField:
-            state.begin()
+            state.focus()
             return true
 
         case .moveSelection(let delta):

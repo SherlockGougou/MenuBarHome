@@ -946,6 +946,9 @@ struct MenuBarPanelControllerTests {
 
     @Test("Listening shows the waveform icon and the transcript instead of the store text")
     func listeningLabelMirrorsSpeech() async throws {
+        let (store, suite) = try await makeStore()
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+
         let speech = SpeechInputController.shared
         let previousDraft = speech.draft
         let wasListening = speech.isListening
@@ -953,8 +956,6 @@ struct MenuBarPanelControllerTests {
         speech.setPreviewState(isListening: true, isHoldToTalk: true, draft: draft)
         defer { speech.setPreviewState(isListening: wasListening, isHoldToTalk: false, draft: previousDraft) }
 
-        let (store, suite) = try await makeStore()
-        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
         let controller = makeController(store: store)
         defer { controller.uninstall() }
 

@@ -111,66 +111,10 @@ extension ControlCenterPanel {
                         }
                     }
 
-                    Text(statusSummaryText)
-                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                        .lineLimit(1)
+                    statusSubtitle
                 }
 
                 Spacer(minLength: 6)
-
-                Button {
-                    withAnimation(AppleMotion.snappySpring) {
-                        store.presentAssistantBar(startVoice: true)
-                    }
-                } label: {
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
-                        .foregroundStyle(Color.primary.opacity(0.78))
-                        .frame(width: 26, height: 24)
-                        .adaptiveGlass(in: Capsule(style: .continuous), interactive: true)
-                        .listeningPulse(SpeechInputController.shared.isListening, color: .accentColor)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(L10n.tr("语音指令", "Voice command")))
-                .accessibilityHint(Text(L10n.tr("点击后直接说话控制设备", "Click, then speak to control devices")))
-                .panelHelp(L10n.tr("语音指令：点击直接说话控制设备（快捷键 V）", "Voice command: click to speak (shortcut V)"))
-
-                Button {
-                    withAnimation(AppleMotion.snappySpring) {
-                        if store.isShowingAssistantBar {
-                            store.dismissAssistantBar()
-                        } else {
-                            store.presentAssistantBar()
-                        }
-                    }
-                } label: {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
-                        .foregroundStyle(store.isShowingAssistantBar ? Color.white : Color.primary.opacity(0.78))
-                        .frame(width: 26, height: 24)
-                        .background {
-                            if store.isShowingAssistantBar {
-                                Capsule(style: .continuous)
-                                    .fill(Color.accentColor)
-                                    .shadow(color: Color.accentColor.opacity(0.35), radius: 4, y: 1.5)
-                            }
-                        }
-                        .modifier(
-                            ChipSurface(
-                                shape: Capsule(style: .continuous),
-                                tint: nil,
-                                interactive: true,
-                                clear: false,
-                                isHidden: store.isShowingAssistantBar
-                            )
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(L10n.tr("AI 指令", "AI command")))
-                .accessibilityHint(Text(L10n.tr("用一句话控制设备", "Control devices with natural language")))
-                .panelHelp(L10n.tr("AI 指令：用一句话控制设备（快捷键 /）", "AI command: control devices with natural language (shortcut /)"))
 
                 if isEditing {
                     if isRoomOrdering {
@@ -199,8 +143,6 @@ extension ControlCenterPanel {
                     .transition(.scale(scale: 0.8).combined(with: .opacity))
                 }
             }
-
-            environmentStatusLine
         }
     }
 
@@ -274,71 +216,6 @@ extension ControlCenterPanel {
         return store.homeName
     }
 
-    /// One quiet line instead of a row of capsules: 客厅 25.5°C · 52% ⚡ 18W.
-    @ViewBuilder
-    var environmentStatusLine: some View {
-        // One representative reading keeps the line quiet: the selected room's reading first,
-        // then the user's preferred menu-bar temperature source (#103).
-        let selectedRoomId = store.selectedRoomId
-        let selectedRoomName = store.panelRoomName
-        let roomDeviceIds = selectedRoomId.map { roomId in
-            Set(store.devices.filter { $0.roomId == roomId }.map(\.id))
-        }
-        let reading = store.environmentReadings.first { env in
-            roomDeviceIds?.contains(env.id) == true
-        } ?? store.environmentReadings.first { env in
-            selectedRoomName != nil && env.roomName == selectedRoomName
-        } ?? store.preferredEnvironmentReading
-        let watts = store.totalPowerWatts
-
-        if store.deviceValuesAreStale {
-            Text(L10n.tr("可能过期", "Possibly stale"))
-                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
-                .foregroundStyle(.secondary)
-        } else if let reading, reading.temperature != nil || reading.humidity != nil || watts >= 1 {
-            HStack(spacing: 6) {
-                Button {
-                    handleEnvironmentChipTap(reading)
-                } label: {
-                    HStack(spacing: 5) {
-                        Text(L10n.displayRoomName(reading.label))
-                            .foregroundStyle(.secondary)
-                        if let t = reading.temperature {
-                            Text(L10n.temperatureValue(t, fractionDigits: 1) + "°")
-                                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
-                                .foregroundStyle(.primary)
-                        }
-                        if let h = reading.humidity {
-                            Text(String(format: "%.0f%%", h))
-                                .foregroundStyle(DesignTokens.Orb.climate)
-                        }
-                    }
-                    .font(.system(size: DesignTokens.TypeSize.caption))
-                    .monospacedDigit()
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .panelHelp(L10n.tr("点击定位并展开温湿度折线", "Click to locate and expand sensor chart"))
-
-                if watts >= 1 {
-                    Text("·").foregroundStyle(.secondary.opacity(0.6))
-                    HStack(spacing: 3) {
-                        Image(systemName: "bolt.fill")
-                            .font(.system(size: DesignTokens.TypeSize.micro, weight: .semibold))
-                            .foregroundStyle(DesignTokens.Orb.plug)
-                        Text(String(format: "%.0fW", watts))
-                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(DesignTokens.Orb.plug)
-                    }
-                }
-
-                Spacer(minLength: 0)
-            }
-            .lineLimit(1)
-        }
-    }
-
     func handleEnvironmentChipTap(_ env: EnvironmentReading) {
         withAnimation(AppleMotion.snappySpring) {
             if search.isSearching {
@@ -365,7 +242,8 @@ extension ControlCenterPanel {
         }
     }
 
-    var statusSummaryText: String {
+    /// Edit hints replace the live status while a drag mode is open.
+    private var editingHint: String? {
         if isRoomOrdering {
             // Short on purpose: the long explanation lives under the list title, and a sentence
             // this wide used to be clipped inside the 166 pt status column (§5.9).
@@ -376,16 +254,58 @@ extension ControlCenterPanel {
         if isEditingLayout {
             return L10n.tr("拖动卡片排序，点右下角圆弧手柄改大小", "Drag to reorder, drag or tap the corner handle to resize")
         }
-        if store.activeDeviceCount > 0 {
-            return L10n.tr(
-                "\(store.activeDeviceCount) 台设备开启， \(store.onlineDeviceCount) 台在线",
-                "\(store.activeDeviceCount) active, \(store.onlineDeviceCount) online"
-            )
+        return nil
+    }
+
+    /// One line under the home title. The reading is the menu-bar title's primary sensor; tapping it
+    /// locates that sensor's card, which is the only way back to the chart the old strip opened.
+    /// The header row is narrow, so the reading sheds detail, then drops out, before the count truncates.
+    var statusSubtitle: some View {
+        Group {
+            if let hint = editingHint {
+                Text(hint)
+            } else {
+                let line = PanelStatusLine.make(
+                    activeDeviceCount: store.activeDeviceCount,
+                    reading: store.preferredEnvironmentReading,
+                    valuesAreStale: store.deviceValuesAreStale
+                )
+                ViewThatFits(in: .horizontal) {
+                    ForEach(0..<line.candidateCount, id: \.self) { index in
+                        statusLineContent(line, candidate: index)
+                    }
+                    Text(line.summary)
+                }
+            }
         }
-        return L10n.tr(
-            "全屋设备待机， \(store.onlineDeviceCount) 台实时在线",
-            "All standby, \(store.onlineDeviceCount) online"
-        )
+        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+        .lineLimit(1)
+    }
+
+    @ViewBuilder
+    private func statusLineContent(_ line: PanelStatusLine, candidate: Int) -> some View {
+        HStack(spacing: 0) {
+            Text(line.summary)
+            switch line.trailing {
+            case .stale:
+                Text(" · " + L10n.tr("可能过期", "Possibly stale"))
+            case .sensor(let candidates):
+                Text(" · ")
+                Button {
+                    if let reading = store.preferredEnvironmentReading {
+                        handleEnvironmentChipTap(reading)
+                    }
+                } label: {
+                    Text(candidates[candidate]).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .panelHelp(L10n.tr("点击定位并展开温湿度折线", "Click to locate and expand sensor chart"))
+            case nil:
+                EmptyView()
+            }
+        }
     }
 
     // MARK: - 1B. Quick Actions & HA Scenes Strip
@@ -1210,22 +1130,6 @@ extension ControlCenterPanel {
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(L10n.tr("撤销上一步", "Undo last action")))
                 .panelHelp(L10n.tr("撤销上一步（10 分钟内有效）", "Undo the last assistant action (valid for 10 minutes)"))
-            }
-
-            // #60: the panel has no visible search field until you type, so the footer advertises it.
-            if !search.isSearching {
-                Button {
-                    search.begin()
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
-                        .foregroundStyle(.primary.opacity(0.72))
-                        .frame(width: 24, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(L10n.tr("搜索设备", "Search devices")))
-                .panelHelp(L10n.tr("搜索设备、房间或拼音首字母（⌘F）", "Search devices, rooms or pinyin initials (⌘F)"))
             }
 
             Button {

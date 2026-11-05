@@ -27,7 +27,7 @@ extension HomeStore {
 
     /// Zero delay: re-ranks the cache locally from habits, favorites, environment, and running
     /// devices when it is empty or stale, then lets a configured model refresh it in the background (#113).
-    func refreshProactiveSuggestionCacheIfStale() {
+    public func refreshProactiveSuggestionCacheIfStale() {
         if !assistantState.isUserActive,
            assistantSuggestions.isEmpty || proactiveRefreshSignature() != lastProactiveRefreshSignature {
             if proactiveRefreshSignature() == lastProactiveRefreshSignature,

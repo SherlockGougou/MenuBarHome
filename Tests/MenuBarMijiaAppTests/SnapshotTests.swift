@@ -361,6 +361,19 @@ struct SnapshotTests {
         // before offscreen windows and hosting views can be created.
         _ = NSApplication.shared
 
+        let speech = SpeechInputController.shared
+        let savedListening = speech.isListening
+        let savedHoldToTalk = speech.isHoldToTalk
+        let savedDraft = speech.draft
+        speech.setPreviewState(isListening: false, isHoldToTalk: false, draft: "")
+        defer {
+            speech.setPreviewState(
+                isListening: savedListening,
+                isHoldToTalk: savedHoldToTalk,
+                draft: savedDraft
+            )
+        }
+
         // A control that holds focus must not draw its ring into the bitmap (#323).
         let hosting = NSHostingView(rootView: view.focusEffectDisabled())
         hosting.frame = NSRect(origin: .zero, size: size)
