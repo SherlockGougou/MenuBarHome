@@ -7,7 +7,9 @@ extension HomeStore {
 
     /// This week's report from the devices on screen and the local histories.
     public func weeklyHealthReport(now: Date = Date()) -> WeeklyHealthReport {
-        WeeklyHealthReport.build(devices: devices, energy: energyHistory, sensors: sensorHistory, now: now)
+        WeeklyHealthReport.build(
+            devices: devices, energy: energyHistory, sensors: sensorHistory, offline: offlineHistory, now: now
+        )
     }
 
     /// The report to notify about now, if the weekly report is on and this week's has not gone out.

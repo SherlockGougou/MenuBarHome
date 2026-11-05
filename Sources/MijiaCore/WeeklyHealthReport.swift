@@ -62,6 +62,17 @@ public struct WeeklyHealthReport: Equatable, Sendable {
     public struct OfflineDevice: Equatable, Sendable {
         public let deviceName: String
         public let roomName: String
+        /// Days this week the device was seen offline; `nil` when there is no history for it.
+        public let daysOffline: Int?
+        /// Offline when the report was built, as opposed to back online after dropping out.
+        public let isOfflineNow: Bool
+
+        public init(deviceName: String, roomName: String, daysOffline: Int? = nil, isOfflineNow: Bool = true) {
+            self.deviceName = deviceName
+            self.roomName = roomName
+            self.daysOffline = daysOffline
+            self.isOfflineNow = isOfflineNow
+        }
     }
 
     public let energy: Energy?
@@ -76,16 +87,20 @@ public struct WeeklyHealthReport: Equatable, Sendable {
     static let batteryThreshold = 20
     static let filterThreshold = 10
     static let topConsumerCount = 3
+    /// A device back online still counts as unreliable after dropping out on this many days.
+    static let frequentOfflineDays = 2
 
     /// - Parameters:
     ///   - dailyEnergy: 14 daily totals ending today, oldest first (`EnergyHistory.dailyTotals(dayCount: 14)`).
     ///   - energyByDevice: this week's per-device totals, highest first (`EnergyHistory.deviceTotals(dayCount: 7)`).
     ///   - climate: weekly sensor ranges keyed by device id.
+    ///   - offlineDays: days this week each device was seen offline (`OfflineHistory.offlineDays`).
     public static func build(
         devices: [SmartDevice],
         dailyEnergy: [EnergyDayTotal],
         energyByDevice: [EnergyDeviceTotal],
         climate: [String: ClimateRange],
+        offlineDays: [String: Int] = [:],
         now: Date = Date()
     ) -> WeeklyHealthReport {
         WeeklyHealthReport(
@@ -97,7 +112,11 @@ public struct WeeklyHealthReport: Equatable, Sendable {
             maintenance: devices.flatMap(maintenanceItems).enumerated()
                 .sorted { ($0.element.item.percent, $0.offset) < ($1.element.item.percent, $1.offset) }
                 .map(\.element),
-            offlineDevices: devices.filter { !$0.isOnline }.map { OfflineDevice(deviceName: $0.name, roomName: $0.roomName) }
+            offlineDevices: devices.compactMap { dev in
+                let days = offlineDays[dev.id]
+                guard !dev.isOnline || (days ?? 0) >= frequentOfflineDays else { return nil }
+                return OfflineDevice(deviceName: dev.name, roomName: dev.roomName, daysOffline: days, isOfflineNow: !dev.isOnline)
+            }
         )
     }
 
@@ -212,7 +231,16 @@ extension WeeklyHealthReport {
 
         if !offlineDevices.isEmpty {
             lines.append(zh ? "## 离线设备" : "## Offline Devices")
-            lines += offlineDevices.map { "- \($0.roomName) · \($0.deviceName)" }
+            lines += offlineDevices.map { device in
+                let note: String
+                if device.isOfflineNow {
+                    note = zh ? "（现在离线）" : " (offline now)"
+                } else {
+                    let days = device.daysOffline ?? 0
+                    note = zh ? "（本周 \(days) 天出现离线）" : " (dropped offline on \(days) days)"
+                }
+                return "- \(device.roomName) · \(device.deviceName)\(note)"
+            }
             lines.append("")
         }
 
@@ -254,6 +282,7 @@ extension WeeklyHealthReport {
         devices: [SmartDevice],
         energy: EnergyHistory,
         sensors: SensorHistory,
+        offline: OfflineHistory? = nil,
         now: Date = Date()
     ) -> WeeklyHealthReport {
         var climate: [String: ClimateRange] = [:]
@@ -270,6 +299,7 @@ extension WeeklyHealthReport {
             dailyEnergy: energy.dailyTotals(dayCount: 14, now: now),
             energyByDevice: energy.deviceTotals(dayCount: 7, now: now),
             climate: climate,
+            offlineDays: offline?.offlineDays(dayCount: 7, now: now) ?? [:],
             now: now
         )
     }

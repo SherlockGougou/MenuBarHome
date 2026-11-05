@@ -286,6 +286,7 @@ extension HomeStore {
             let sampleNow = Date()
             energyHistory.record(devices: devices, now: sampleNow)
             sensorHistory.record(devices: devices, now: sampleNow)
+            offlineHistory.record(devices: devices, now: sampleNow)
 
             if enableSafetyAlerts, let handler = onSafetyAlert {
                 for alert in evaluateSafetyAlerts(now: Date()) {

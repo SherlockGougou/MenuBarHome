@@ -538,6 +538,8 @@ public final class HomeStore {
     public var updater: AppUpdater
     /// Local energy history fed by provider snapshots (#62).
     public let energyHistory: EnergyHistory
+    /// Days each device was seen offline, for the weekly report (#182).
+    public let offlineHistory: OfflineHistory
     /// Local + cloud merged history for temperature and humidity sensors.
     public let sensorHistory: SensorHistory
     var updateTask: Task<Void, Never>?
@@ -598,6 +600,7 @@ public final class HomeStore {
         self.isTestEnvironment = isTestEnvironment
         self.updater = updater ?? AppUpdater()
         self.energyHistory = EnergyHistory(defaults: ud)
+        self.offlineHistory = OfflineHistory(defaults: ud)
         self.sensorHistory = SensorHistory(defaults: ud)
         // ≤1.0.6 mirrored credentials into plain `UserDefaults`; move them into the Keychain before any read (#16).
         if !isTestEnvironment && ud === UserDefaults.standard {
