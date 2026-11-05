@@ -118,7 +118,7 @@ public struct PendingCloudConsent: Equatable, Sendable {
 // MARK: - Device Category Used by Both Resolvers
 
 public enum IntentDeviceCategory: String, Equatable, Sendable, CaseIterable {
-    case light, climate, heater, fan, airPurifier, dehumidifier, diffuser, plug, vacuum, speaker, tv, fridge, camera, sensor, cover
+    case light, climate, heater, fan, airPurifier, dehumidifier, diffuser, plug, vacuum, speaker, tv, fridge, camera, sensor, cover, appliance
     private static let heaterNameHints = ["电暖", "暖气", "取暖", "暖风"]
     private static let airPurifierNameHints = ["净化", "空净", "新风", "加湿"]
 
@@ -149,6 +149,7 @@ public enum IntentDeviceCategory: String, Equatable, Sendable, CaseIterable {
         case .camera: self = .camera
         case .sensor: self = .sensor
         case .cover: self = .cover
+        case .appliance: self = .appliance
         }
     }
 
@@ -156,7 +157,7 @@ public enum IntentDeviceCategory: String, Equatable, Sendable, CaseIterable {
     public var isAssistantControllable: Bool {
         switch self {
         case .light, .climate, .heater, .fan, .airPurifier, .dehumidifier, .diffuser, .plug, .vacuum, .tv, .camera: return true
-        case .speaker, .fridge, .sensor, .cover: return false
+        case .speaker, .fridge, .sensor, .cover, .appliance: return false
         }
     }
 }
@@ -731,6 +732,16 @@ public struct IntentCatalog: Sendable {
         case .cover(let s):
             if let pos = s.positionPercent { return "开\(pos)%" }
             return "未知"
+        case .appliance(let s):
+            var parts: [String] = [s.isOn ? "开" : "关"]
+            if let current = s.currentTemperature {
+                parts.append("\(IntentReply.formatTemperature(current))°C")
+            }
+            if let target = s.targetTemperature {
+                parts.append("目标\(IntentReply.formatTemperature(target))°C")
+            }
+            if let mode = s.currentMode, !mode.isEmpty { parts.append(mode) }
+            return parts.joined(separator: " ")
         }
     }
 }

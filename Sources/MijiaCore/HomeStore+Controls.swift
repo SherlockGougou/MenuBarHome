@@ -137,6 +137,11 @@ extension HomeStore {
                 updated.kind = .cover(s)
                 command = .setSelectOption(entityId: s.entityId, option: action)
             }
+        case .appliance(var s):
+            s.isOn.toggle()
+            updated.kind = .appliance(s)
+            command = .setSwitch(entityId: s.entityId, isOn: s.isOn)
+
         case .speaker, .fridge, .sensor:
             toggleExpanded(device.id)
             return nil
@@ -421,6 +426,61 @@ extension HomeStore {
             fallback: previous,
             command: .setClimateMode(entityId: s.entityId, hvacMode: mode),
             habitIntents: [.init(targetId: deviceId, operation: .hvacMode(mode))]
+        )
+    }
+
+    public func setApplianceMode(_ deviceId: String, mode: String) {
+        guard !rejectControlWhileLocked() else { return }
+        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
+              case .appliance(var s) = devices[idx].kind,
+              s.modeWritable, s.availableModes.contains(mode) else { return }
+        let previous = devices[idx]
+        s.currentMode = mode
+        devices[idx].kind = .appliance(s)
+        lockOptimistic(deviceId, duration: .seconds(2.2))
+
+        dispatchImmediate(
+            deviceId: deviceId,
+            fallback: previous,
+            command: .setSelectOption(entityId: s.entityId, option: mode)
+        )
+    }
+
+    public func stepApplianceTemperature(_ deviceId: String, delta: Double) {
+        guard !rejectControlWhileLocked() else { return }
+        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
+              case .appliance(var s) = devices[idx].kind,
+              s.temperatureWritable, let target = s.targetTemperature else { return }
+        let previous = devices[idx]
+        let step = s.step > 0 ? s.step : 1
+        let raw = max(s.minTemp, min(s.maxTemp, target + delta))
+        let stepped = s.minTemp + ((raw - s.minTemp) / step).rounded() * step
+        let nextTemp = max(s.minTemp, min(s.maxTemp, stepped))
+        guard nextTemp != target, allowManualControl(.targetTemperature(nextTemp), for: previous) else { return }
+        s.targetTemperature = nextTemp
+        devices[idx].kind = .appliance(s)
+        lockOptimistic(deviceId, duration: .seconds(2.5))
+
+        dispatchDebounced(
+            key: "\(deviceId).appliance-temp",
+            deviceId: deviceId,
+            fallback: previous,
+            command: .setClimateTemperature(entityId: s.entityId, temperature: nextTemp)
+        )
+    }
+
+    public func runApplianceAction(_ deviceId: String, action: ApplianceAction) {
+        guard !rejectControlWhileLocked() else { return }
+        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
+              case .appliance(let s) = devices[idx].kind,
+              s.startAction == action || s.pauseAction == action else { return }
+        let previous = devices[idx]
+        let operation: IntentOperation = action.kind == .start ? .power(true) : .power(false)
+        guard allowManualControl(operation, for: previous) else { return }
+        dispatchImmediate(
+            deviceId: deviceId,
+            fallback: previous,
+            command: .pressButton(entityId: action.entityId)
         )
     }
 

@@ -697,6 +697,110 @@ public struct CoverSpec: Equatable, Sendable {
     }
 }
 
+/// The two no-argument actions the shared appliance card can run. The aliases are the MIoT action
+/// short names each action may use across appliance families (#300).
+public enum ApplianceActionKind: String, Equatable, Sendable, CaseIterable {
+    case start
+    case pause
+
+    public var aliases: Set<String> {
+        switch self {
+        case .start:
+            return ["start", "start-heating", "开始"]
+        case .pause:
+            return ["pause", "stop", "暂停"]
+        }
+    }
+
+    public var title: String {
+        switch self {
+        case .start: return L10n.tr("开始", "Start")
+        case .pause: return L10n.tr("暂停", "Pause")
+        }
+    }
+
+    static func matching(_ shortName: String) -> ApplianceActionKind? {
+        allCases.first { $0.aliases.contains(shortName.lowercased()) }
+    }
+}
+
+/// One no-argument appliance action addressed on the MIoT service that declares it.
+public struct ApplianceAction: Equatable, Sendable {
+    public var kind: ApplianceActionKind
+    public var entityId: String
+
+    public init(kind: ApplianceActionKind, entityId: String) {
+        self.kind = kind
+        self.entityId = entityId
+    }
+
+    public var title: String { kind.title }
+}
+
+/// A shared appliance card (GLOSSARY `ApplianceDevice`). Every control is optional and driven by
+/// what the spec publishes: power, mode, target temperature, status, fault, remaining time and
+/// no-argument start/pause actions. Nothing here is hard-coded for one appliance family.
+public struct ApplianceSpec: Equatable, Sendable {
+    public var entityId: String
+    public var isOn: Bool
+    public var powerPresent: Bool
+    public var powerWritable: Bool
+    public var currentMode: String?
+    public var availableModes: [String]
+    public var modeWritable: Bool
+    public var targetTemperature: Double?
+    public var currentTemperature: Double?
+    public var minTemp: Double
+    public var maxTemp: Double
+    public var step: Double
+    public var temperatureWritable: Bool
+    public var statusText: String?
+    public var faultText: String?
+    public var remainingMinutes: Int?
+    public var startAction: ApplianceAction?
+    public var pauseAction: ApplianceAction?
+
+    public init(
+        entityId: String,
+        isOn: Bool = false,
+        powerPresent: Bool = false,
+        powerWritable: Bool = false,
+        currentMode: String? = nil,
+        availableModes: [String] = [],
+        modeWritable: Bool = false,
+        targetTemperature: Double? = nil,
+        currentTemperature: Double? = nil,
+        minTemp: Double = 0,
+        maxTemp: Double = 100,
+        step: Double = 1,
+        temperatureWritable: Bool = false,
+        statusText: String? = nil,
+        faultText: String? = nil,
+        remainingMinutes: Int? = nil,
+        startAction: ApplianceAction? = nil,
+        pauseAction: ApplianceAction? = nil
+    ) {
+        self.entityId = entityId
+        self.isOn = isOn
+        self.powerPresent = powerPresent
+        self.powerWritable = powerWritable
+        self.currentMode = currentMode
+        self.availableModes = availableModes
+        self.modeWritable = modeWritable
+        self.targetTemperature = targetTemperature
+        self.currentTemperature = currentTemperature
+        self.minTemp = minTemp
+        self.maxTemp = maxTemp
+        self.step = step
+        self.temperatureWritable = temperatureWritable
+        self.statusText = statusText
+        self.faultText = faultText
+        self.remainingMinutes = remainingMinutes
+        self.startAction = startAction
+        self.pauseAction = pauseAction
+    }
+}
+
 public enum DeviceKind: Equatable, Sendable {
     case light(LightSpec)
     case climate(ClimateSpec)
@@ -709,6 +813,7 @@ public enum DeviceKind: Equatable, Sendable {
     case camera(CameraSpec)
     case sensor(SensorSpec)
     case cover(CoverSpec)
+    case appliance(ApplianceSpec)
 
     /// Dedicated sensors sort ahead of air purifiers and AC return-air thermistors (#103).
     public var environmentReadingPriority: Int {
@@ -736,6 +841,7 @@ public enum DeviceKind: Equatable, Sendable {
         case .tv: return true
         case .speaker, .fridge, .sensor: return false
         case .cover(let spec): return spec.canMove
+        case .appliance(let spec): return spec.powerPresent && spec.powerWritable
         }
     }
 
@@ -763,6 +869,9 @@ public enum DeviceKind: Equatable, Sendable {
             return false
         case .cover(let spec):
             return spec.canMove || spec.positionWritable
+        case .appliance(let spec):
+            return spec.powerWritable || spec.modeWritable || spec.temperatureWritable
+                || spec.startAction != nil || spec.pauseAction != nil
         }
     }
 }
@@ -830,6 +939,7 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
         case .camera(let s): [s.entityId, s.motionDetectionEntityId, s.streamEntityId]
         case .sensor: []
         case .cover(let s): [s.entityId]
+        case .appliance(let s): [s.entityId, s.startAction?.entityId, s.pauseAction?.entityId]
         }
         return entityIds.compactMap { id in
             guard let id else { return nil }
@@ -859,6 +969,7 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
         case .camera(let s): return s.isOn
         case .fridge, .sensor: return false
         case .cover(let s): return (s.positionPercent ?? 0) > 0
+        case .appliance(let s): return s.isOn
         }
     }
 
@@ -901,6 +1012,9 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
             spec.state = want.state
             spec.isScreenOff = want.isScreenOff
             next.kind = .tv(spec)
+        case (.appliance(var spec), .appliance(let want)):
+            spec.isOn = want.isOn
+            next.kind = .appliance(spec)
         default:
             return requested
         }
@@ -934,6 +1048,10 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
         case .cover(let spec):
             return spec.positionWritable || spec.canMove || spec.pauseDescription != nil
                 || spec.batteryPercent != nil || spec.faultText != nil
+        case .appliance(let spec):
+            return spec.temperatureWritable || spec.modeWritable
+                || spec.statusText != nil || spec.faultText != nil || spec.remainingMinutes != nil
+                || spec.startAction != nil || spec.pauseAction != nil
         }
     }
 
@@ -1052,6 +1170,8 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
             return "sensor.fill"
         case .cover(let s):
             return (s.positionPercent ?? 0) > 0 ? "window.vertical.open" : "window.vertical.closed"
+        case .appliance:
+            return "water.waves"
         }
     }
 
@@ -1214,6 +1334,29 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
                 return L10n.tr("开 \(pos)%", "Open \(pos)%")
             }
             return L10n.tr("可控制", "Ready")
+
+        case .appliance(let s):
+            var parts: [String] = []
+            if let current = s.currentTemperature {
+                parts.append(L10n.temperature(current, fractionDigits: 1))
+            }
+            if let target = s.targetTemperature {
+                parts.append(L10n.format("目标 %@", "Target %@", L10n.temperature(target)))
+            }
+            if let mode = s.currentMode, !mode.isEmpty {
+                parts.append(Self.localizeApplianceMode(mode))
+            }
+            if let status = s.statusText, !status.isEmpty {
+                parts.append(status)
+            }
+            if let remaining = s.remainingMinutes {
+                parts.append(L10n.tr("剩余 \(remaining) 分", "\(remaining) min left"))
+            }
+            if let fault = s.faultText, !fault.isEmpty {
+                parts.append(L10n.format("故障 %@", "Fault %@", fault))
+            }
+            return parts.isEmpty ? (s.isOn ? L10n.tr("运行中", "Running") : L10n.tr("已关闭", "Off"))
+                : parts.joined(separator: " · ")
         }
     }
 
@@ -1256,6 +1399,20 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
         case "favorite", "favourite": return L10n.tr("最爱", "Favorite")
         case "manual", "none": return L10n.tr("手动", "Manual")
         case "silent": return L10n.tr("静音", "Silent")
+        default: return mode
+        }
+    }
+
+    public static func localizeApplianceMode(_ mode: String) -> String {
+        switch mode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "standard", "normal", "标准": return L10n.tr("标准", "Standard")
+        case "energy1", "eco", "节能": return L10n.tr("节能①", "Energy 1")
+        case "energy2": return L10n.tr("节能②", "Energy 2")
+        case "quick", "fast", "快速": return L10n.tr("快速", "Quick")
+        case "electricheating", "electric heating", "电加热": return L10n.tr("电加热", "Electric Heating")
+        case "auto", "automatic", "自动": return L10n.tr("自动", "Auto")
+        case "manual", "手动": return L10n.tr("手动", "Manual")
+        case "off", "关闭": return L10n.tr("关闭", "Off")
         default: return mode
         }
     }

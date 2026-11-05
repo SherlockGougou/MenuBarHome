@@ -189,6 +189,7 @@ extension IntentDeviceCategory {
         case .camera: return L10n.tr("摄像机", "cameras")
         case .sensor: return L10n.tr("传感器", "sensors")
         case .cover: return L10n.tr("窗帘", "covers")
+        case .appliance: return L10n.tr("家电", "appliances")
         }
     }
 }

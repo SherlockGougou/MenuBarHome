@@ -1,7 +1,7 @@
 import Foundation
 
 public enum DeviceKindTag: String, Equatable, Sendable {
-    case climate, light, plug, fan, vacuum, fridge, speaker, tv, camera, sensor, cover
+    case climate, light, plug, fan, vacuum, fridge, speaker, tv, camera, sensor, cover, appliance
 
     public var rank: Int {
         switch self {
@@ -16,6 +16,7 @@ public enum DeviceKindTag: String, Equatable, Sendable {
         case .camera: return 9
         case .sensor: return 10
         case .cover: return 11
+        case .appliance: return 12
         }
     }
 
@@ -32,6 +33,7 @@ public enum DeviceKindTag: String, Equatable, Sendable {
         case .camera: return L10n.tr("摄像机", "Camera")
         case .sensor: return L10n.tr("传感器", "Sensors")
         case .cover: return L10n.tr("门窗", "Windows")
+        case .appliance: return L10n.tr("家电", "Appliances")
         }
     }
 
@@ -57,6 +59,8 @@ public enum DeviceKindTag: String, Equatable, Sendable {
                 "也包括没有开关的小家电",
                 "Also small appliances that have no power switch"
             )
+        case .appliance:
+            return L10n.tr("目前包括热水器", "Currently includes water heaters")
         case .light, .fridge, .vacuum, .speaker, .tv, .camera, .cover:
             return nil
         }
@@ -77,6 +81,7 @@ extension DeviceKind {
         case .camera: return .camera
         case .sensor: return .sensor
         case .cover: return .cover
+        case .appliance: return .appliance
         }
     }
 }

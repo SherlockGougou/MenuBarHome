@@ -142,6 +142,16 @@
       ]
     },
     {
+      "id": "water-heaters",
+      "en": "Water Heaters",
+      "zh": "热水器",
+      "macos": "supported",
+      "windows": "unsupported",
+      "miotTypes": [
+        "water-heater"
+      ]
+    },
+    {
       "id": "dehumidifiers-blankets-diffusers-speakers",
       "en": "Dehumidifiers, Blankets, Diffusers & Speakers",
       "zh": "除湿机 / 水暖毯 / 香氛机 / 音箱",

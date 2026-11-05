@@ -142,8 +142,10 @@
       "unexposedWritable" : 9
     },
     "aden.waterheater.ash200" : {
-      "category" : "droppedControllable",
-      "deviceType" : "water-heater"
+      "category" : "matched",
+      "deviceType" : "water-heater",
+      "service" : "water-heater",
+      "unexposedWritable" : 18
     },
     "adp.fitting.adgw" : {
       "category" : "droppedControllable",
@@ -689,8 +691,10 @@
       "deviceType" : "vibration-sensor"
     },
     "macro.boiler.combgl" : {
-      "category" : "droppedControllable",
-      "deviceType" : "boiler"
+      "category" : "matched",
+      "deviceType" : "boiler",
+      "service" : "water-heater",
+      "unexposedWritable" : 3
     },
     "maijia.ajh.mj9001" : {
       "category" : "noUsableProperties",
@@ -865,8 +869,10 @@
       "deviceType" : "hood"
     },
     "viomi.waterheater.u3" : {
-      "category" : "droppedControllable",
-      "deviceType" : "water-heater"
+      "category" : "matched",
+      "deviceType" : "water-heater",
+      "service" : "water-heater",
+      "unexposedWritable" : 0
     },
     "xiaomi.abwheel.jfl001" : {
       "category" : "noUsableProperties",
@@ -939,15 +945,28 @@
   },
   "summary" : {
     "categories" : {
-      "droppedControllable" : 95,
+      "droppedControllable" : 92,
       "droppedReadOnly" : 13,
-      "matched" : 50,
+      "matched" : 53,
       "misclaimed" : 16,
       "noUsableProperties" : 31
     },
     "deviceTypes" : 177,
     "specs" : 205,
-    "unexposedWritableTotal" : 352
+    "unexposedWritableTotal" : 373
   },
-  "windowsDivergences" : {}
+  "windowsDivergences" : {
+    "aden.waterheater.ash200" : {
+      "category" : "droppedControllable",
+      "deviceType" : "water-heater"
+    },
+    "macro.boiler.combgl" : {
+      "category" : "droppedControllable",
+      "deviceType" : "boiler"
+    },
+    "viomi.waterheater.u3" : {
+      "category" : "droppedControllable",
+      "deviceType" : "water-heater"
+    }
+  }
 }

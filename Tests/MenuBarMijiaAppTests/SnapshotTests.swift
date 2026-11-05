@@ -193,6 +193,79 @@ struct SnapshotTests {
         )
     }
 
+    @Test("Appliance card shows the water heater controls the spec publishes")
+    func applianceCardSnapshots() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+        let device = Self.waterHeater
+
+        assertRendered(
+            snapshotReady(
+                DeviceCardView(device: device, store: fixture.store, showRoomBadge: true)
+                    .padding(8)
+                    .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 140),
+            named: "card-appliance-zh-light"
+        )
+
+        fixture.store.expandedDeviceId = device.id
+        assertRendered(
+            snapshotReady(
+                DeviceCardView(device: device, store: fixture.store, showRoomBadge: true)
+                    .padding(8)
+                    .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 320),
+            named: "expanded-appliance-zh-light"
+        )
+
+        var faulty = device
+        if case .appliance(var spec) = faulty.kind {
+            spec.faultText = "E3"
+            faulty.kind = .appliance(spec)
+        }
+        assertRendered(
+            snapshotReady(
+                DeviceCardView(device: faulty, store: fixture.store, showRoomBadge: true)
+                    .padding(8)
+                    .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 320),
+            named: "expanded-appliance-fault-zh-light"
+        )
+    }
+
+    private static var waterHeater: SmartDevice {
+        SmartDevice(
+            id: "snapshot-water-heater",
+            name: "浴室热水器",
+            roomId: "bath",
+            roomName: "浴室",
+            model: "viomi.waterheater.u3",
+            isOnline: true,
+            kind: .appliance(ApplianceSpec(
+                entityId: "miot:snapshot-water-heater:2",
+                isOn: true,
+                powerPresent: true,
+                powerWritable: true,
+                currentMode: "Standard",
+                availableModes: ["Standard", "Energy1", "Quick"],
+                modeWritable: true,
+                targetTemperature: 60,
+                currentTemperature: 52,
+                minTemp: 35,
+                maxTemp: 75,
+                step: 0.5,
+                temperatureWritable: true,
+                statusText: L10n.tr("加热中", "Heating"),
+                remainingMinutes: 18,
+                startAction: ApplianceAction(kind: .start, entityId: "miot-action:snapshot-water-heater:2:1"),
+                pauseAction: ApplianceAction(kind: .pause, entityId: "miot-action:snapshot-water-heater:2:2")
+            ))
+        )
+    }
+
     @Test("Climate card wears its tinted platter when on")
     func climateOnCardSnapshot() async throws {
         let fixture = try await SnapshotFixture()

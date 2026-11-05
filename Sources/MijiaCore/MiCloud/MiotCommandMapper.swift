@@ -41,7 +41,9 @@ public enum MiotCommandMapper {
             }
             let inputs: [JSONValue]
             switch command {
-            case .pressButton where ["play-music", "stop-alarm"].contains(action.shortName) && action.inputProperties.isEmpty:
+            case .pressButton where action.inputProperties.isEmpty
+                && (["play-music", "stop-alarm"].contains(action.shortName)
+                    || ApplianceActionKind.matching(action.shortName) != nil):
                 inputs = []
             case .sendNotifyMessage(_, let text):
                 let expected = action.shortName == "play-text" ? ["text-content"]
@@ -92,7 +94,11 @@ public enum MiotCommandMapper {
             return .setProps(writes)
 
         case .setClimateTemperature(_, let temperature):
-            return .setProps([try ctx.write("target-temperature", .number(temperature))])
+            if let target = ctx.property("target-temperature")
+                ?? ctx.writableProperty("target-temperature", in: ["boiler", "water-heater"]) {
+                return .setProps([ctx.write(target, .number(temperature))])
+            }
+            throw MiotCommandError.unsupported("target-temperature")
 
         case .setClimateFanMode(_, let fanMode):
             return .setProps([try ctx.writeListValue("fan-level", description: fanMode, searchDevice: true)])
@@ -115,10 +121,14 @@ public enum MiotCommandMapper {
             return .setProps([try ctx.write("horizontal-swing", .bool(oscillating))])
 
         case .setSwitch(_, let isOn):
+            // A gas water heater publishes its power switch on the companion `boiler` service
+            // while the card addresses the `water-heater` service (#300).
+            if let power = ctx.property("on")
+                ?? ctx.writableProperty("on", in: ["boiler", "water-heater"]) {
+                return .setProps([ctx.write(power, .bool(isOn))])
+            }
             let name: String
-            if ctx.property("on") != nil {
-                name = "on"
-            } else if service.shortName == "speaker", ctx.property("mute") != nil {
+            if service.shortName == "speaker", ctx.property("mute") != nil {
                 name = "mute"
             } else if service.shortName == "intelligent-speaker", ctx.property("sleep-mode") != nil {
                 name = "sleep-mode"
@@ -141,6 +151,9 @@ public enum MiotCommandMapper {
             }
             if let w = try? ctx.writeListValue("mode", description: option) {
                 return .setProps([w])
+            }
+            if let match = ctx.listValue("mode", description: option, in: ["boiler", "water-heater"]) {
+                return .setProps([ctx.write(match.found, .number(Double(match.item.value)))])
             }
             return .setProps([try ctx.writeListValue("night-shot", description: option)])
 
@@ -191,6 +204,37 @@ public enum MiotCommandMapper {
             for s in others {
                 if let p = s.properties.first(where: { $0.shortName == name && $0.isWritable }) {
                     return Found(service: s, property: p)
+                }
+            }
+            return nil
+        }
+
+        func writableProperty(_ name: String, in serviceNames: [String]) -> Found? {
+            for serviceName in serviceNames {
+                for candidate in spec.services(named: serviceName) {
+                    if let p = candidate.properties.first(where: { $0.shortName == name && $0.isWritable }) {
+                        return Found(service: candidate, property: p)
+                    }
+                }
+            }
+            return nil
+        }
+
+        func listValue(
+            _ name: String,
+            description: String,
+            in serviceNames: [String]
+        ) -> (found: Found, item: MiotValueListItem)? {
+            for serviceName in serviceNames {
+                for candidate in spec.services(named: serviceName) {
+                    for property in candidate.properties
+                    where property.shortName == name && property.isWritable {
+                        if let item = property.valueList?.first(where: {
+                            $0.description.caseInsensitiveCompare(description) == .orderedSame
+                        }) {
+                            return (Found(service: candidate, property: property), item)
+                        }
+                    }
                 }
             }
             return nil

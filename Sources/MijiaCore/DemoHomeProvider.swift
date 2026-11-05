@@ -522,6 +522,22 @@ public actor DemoHomeProvider: HomeProvider {
                     continue
                 }
                 next.devices[idx].kind = .camera(spec)
+            case .appliance(var spec):
+                switch command {
+                case .setSwitch(let entityId, let isOn) where entityId == spec.entityId:
+                    spec.isOn = isOn
+                case .setSelectOption(let entityId, let option) where entityId == spec.entityId:
+                    spec.currentMode = option
+                case .setClimateTemperature(let entityId, let temperature) where entityId == spec.entityId:
+                    spec.targetTemperature = temperature
+                case .pressButton(let entityId) where entityId == spec.startAction?.entityId:
+                    spec.isOn = true
+                case .pressButton(let entityId) where entityId == spec.pauseAction?.entityId:
+                    spec.isOn = false
+                default:
+                    continue
+                }
+                next.devices[idx].kind = .appliance(spec)
             default:
                 continue
             }

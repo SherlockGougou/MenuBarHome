@@ -55,14 +55,16 @@ public enum MiotSynthesizer {
         ("outlet", buildPlug),
         ("switch", buildPlug),
         ("electronic-valve", buildBreaker),
-        ("kettle", buildAppliance),
-        ("ble-kettle", buildAppliance),
-        ("water-dispenser", buildAppliance),
-        ("cooker", buildAppliance),
-        ("air-fryer", buildAppliance),
-        ("oven", buildAppliance),
-        ("microwave-oven", buildAppliance),
-        ("health-pot", buildAppliance),
+        ("kettle", buildKitchenAppliance),
+        ("ble-kettle", buildKitchenAppliance),
+        ("water-dispenser", buildKitchenAppliance),
+        ("cooker", buildKitchenAppliance),
+        ("air-fryer", buildKitchenAppliance),
+        ("oven", buildKitchenAppliance),
+        ("microwave-oven", buildKitchenAppliance),
+        ("health-pot", buildKitchenAppliance),
+        ("water-heater", buildApplianceCard),
+        ("boiler", buildApplianceCard),
         ("lock", buildSensor),
         ("motion-sensor", buildSensor),
         ("occupancy-sensor", buildSensor),
@@ -228,6 +230,7 @@ public enum MiotSynthesizer {
         case "outlet": ["outlet", "switch"]
         case "camera", "cateye", "video-doorbell": ["camera-control", "video-doorbell"]
         case "kettle", "ble-kettle": ["kettle", "ble-kettle", "water-dispenser"]
+        case "boiler": ["water-heater", "boiler"]
         default: [deviceType]
         }
     }
@@ -539,7 +542,7 @@ public enum MiotSynthesizer {
             target: targetPosition
         )
         let faultCode = fault?.value?.intValue
-        let faultText = coverFaultText(
+        let faultText = faultDescription(
             code: faultCode,
             description: faultCode.flatMap { fault?.property.description(forValue: $0) }
         )
@@ -564,8 +567,8 @@ public enum MiotSynthesizer {
         ))
     }
 
-    /// Some curtain specs use `fault`, and some publish a healthy code of 1 named "No Fault".
-    static func coverFaultText(code: Int?, description: String?) -> String? {
+    /// Some specs use `fault`, and some publish a healthy code of 1 named "No Fault".
+    static func faultDescription(code: Int?, description: String?) -> String? {
         guard let code, code != 0 else { return nil }
         if let description, description.lowercased().contains("no fault") { return nil }
         return description ?? "\(code)"
@@ -709,7 +712,7 @@ public enum MiotSynthesizer {
         ))
     }
 
-    static func buildAppliance(_ r: MiotReader, _ s: MiotService) -> DeviceKind {
+    static func buildKitchenAppliance(_ r: MiotReader, _ s: MiotService) -> DeviceKind {
         if s.properties.contains(where: { $0.shortName == "on" && $0.isWritable }) {
             return buildPlug(r, s)
         }
@@ -753,6 +756,70 @@ public enum MiotSynthesizer {
             battery: nil,
             statusText: parts.isEmpty ? fallbackText : parts.joined(separator: " · ")
         ))
+    }
+
+    /// The shared appliance card (#300). Power, mode, target temperature, status, fault, remaining
+    /// time and start/pause actions are each exposed only when the spec publishes them. This first
+    /// cut registers it for water heaters and boilers; the generic shape engine is #303.
+    static func buildApplianceCard(_ r: MiotReader, _ s: MiotService) -> DeviceKind {
+        let companions = r.spec.services(named: "water-heater") + r.spec.services(named: "boiler")
+        let services = [s] + companions
+        // A companion service can carry the only writable copy of a property while the primary
+        // service publishes the same name read-only. Prefer the writable copy so the card exposes
+        // the control and the command mapper can address that service (#300 review).
+        let on = r.first("on", in: services, where: { $0.isWritable })
+            ?? r.first("on", in: services)
+        let mode = r.first("mode", in: services, where: { $0.isWritable && $0.valueList?.isEmpty == false })
+            ?? r.first("mode", in: services, where: { $0.valueList?.isEmpty == false })
+        let target = r.first("target-temperature", in: services, where: { $0.isWritable })
+            ?? r.first("target-temperature", in: services)
+        let current = r.first("temperature", in: services + r.spec.services(named: "environment"))
+        let status = r.first("status", in: services)
+        let fault = r.first("fault", in: services) ?? r.first("device-fault", in: services)
+        let remaining = r.first("left-time", in: services)
+        let faultCode = fault?.value?.intValue
+
+        return .appliance(ApplianceSpec(
+            entityId: MiotAddress.make(did: r.did, siid: s.iid),
+            isOn: on?.value?.miotBool ?? false,
+            powerPresent: on != nil,
+            powerWritable: on?.property.isWritable == true,
+            currentMode: mode?.valueDescription,
+            availableModes: mode?.property.valueList?.map(\.description) ?? [],
+            modeWritable: mode?.property.isWritable == true,
+            targetTemperature: target.map { $0.value?.doubleValue ?? $0.property.rangeMin ?? 0 },
+            currentTemperature: current?.value?.doubleValue,
+            minTemp: target?.property.rangeMin ?? 0,
+            maxTemp: target?.property.rangeMax ?? 100,
+            step: target?.property.rangeStep ?? 1,
+            temperatureWritable: target?.property.isWritable == true,
+            statusText: status?.valueDescription.map(applianceStatusText(forDescription:)),
+            faultText: faultDescription(
+                code: faultCode,
+                description: faultCode.flatMap { fault?.property.description(forValue: $0) }
+            ),
+            remainingMinutes: remaining?.value?.intValue.flatMap { $0 > 0 ? $0 : nil },
+            startAction: applianceAction(.start, services: services, reader: r),
+            pauseAction: applianceAction(.pause, services: services, reader: r)
+        ))
+    }
+
+    static func applianceAction(
+        _ kind: ApplianceActionKind,
+        services: [MiotService],
+        reader r: MiotReader
+    ) -> ApplianceAction? {
+        var seen: Set<Int> = []
+        for service in services where seen.insert(service.iid).inserted {
+            for action in service.actions
+            where action.inputProperties.isEmpty && kind.aliases.contains(action.shortName.lowercased()) {
+                return ApplianceAction(
+                    kind: kind,
+                    entityId: MiotAddress.makeAction(did: r.did, siid: service.iid, aiid: action.iid)
+                )
+            }
+        }
+        return nil
     }
 
     static func buildSensor(_ r: MiotReader, _ s: MiotService) -> DeviceKind {
@@ -1026,9 +1093,12 @@ public enum MiotSynthesizer {
 
     static func applianceStatusText(forDescription description: String) -> String {
         let lower = description.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        if lower.contains("idle") || lower.contains("standby") || lower.contains("off") || lower.contains("shutdown") {
+        if lower.contains("idle") || lower.contains("standby") || lower.contains("off") || lower.contains("shutdown")
+            || lower.contains("close") {
             return L10n.tr("待机", "Standby")
         }
+        if lower == "open" { return L10n.tr("已开启", "On") }
+        if lower.contains("wash") { return L10n.tr("洗浴中", "Washing") }
         if lower.contains("keep warm") || lower.contains("keep-warm") || lower.contains("warm") || lower.contains("insulation") {
             return L10n.tr("保温中", "Keep Warm")
         }

@@ -725,6 +725,14 @@ public struct DeviceCardView: View {
                 accent: accent,
                 statusColor: statusColor
             )
+        case .appliance(let spec):
+            ApplianceDetailDrawer(
+                device: device,
+                spec: spec,
+                store: store,
+                accent: accent,
+                statusColor: statusColor
+            )
         }
     }
 
