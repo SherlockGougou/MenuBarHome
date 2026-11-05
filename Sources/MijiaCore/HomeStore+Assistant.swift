@@ -320,11 +320,23 @@ extension HomeStore {
         return nil
     }
 
+    /// The manual hazard rule for a command the user issued. A local plan has no confirmation chips
+    /// of its own, so a high-risk device asks here before it changes (#143, #274 review). Low-risk
+    /// devices pass through untouched.
+    private func hazardApprovedIntents(_ intents: [DeviceIntent]) -> [DeviceIntent] {
+        intents.filter { intent in
+            !ManualControlPolicy.requiresConfirmation(intent, devices: devices)
+                || allowManualControl(intent)
+        }
+    }
+
     /// Runs a tapped suggestion. `offersUndoBanner` shows the 撤销 banner even for one device (GrokBall pills, #114).
     public func applyAssistantSuggestion(_ suggestion: AssistantSuggestion, offersUndoBanner: Bool = false) async {
         assistantSuggestions.removeAll { $0.id == suggestion.id }
-        let reply = IntentReply.describe(suggestion.intents, devices: devices, scenes: scenes)
-        let plan = IntentPlan(intents: suggestion.intents, reply: reply, source: .model)
+        let intents = hazardApprovedIntents(suggestion.intents)
+        guard !intents.isEmpty else { return }
+        let reply = IntentReply.describe(intents, devices: devices, scenes: scenes)
+        let plan = IntentPlan(intents: intents, reply: reply, source: .model)
         _ = await executeIntentPlan(plan, recordedUtterance: nil, origin: .userInitiated, offersUndoBanner: offersUndoBanner)
     }
 
@@ -352,7 +364,7 @@ extension HomeStore {
         let utterance = delayed?.remainder ?? spoken
         setAssistantState(.thinking)
 
-        let plan: IntentPlan
+        var plan: IntentPlan
         var habitSummary: String?
         if let local = LocalIntentParser.parse(
             utterance,
@@ -403,6 +415,26 @@ extension HomeStore {
             }
         }
         guard controlContext == controlContextID else { return nil }
+        if !plan.intents.isEmpty {
+            let approved = hazardApprovedIntents(plan.intents)
+            guard !approved.isEmpty else {
+                let cancelled = IntentPlan(
+                    intents: [],
+                    reply: L10n.tr("已取消", "Cancelled"),
+                    source: plan.source
+                )
+                setAssistantState(.done(cancelled.reply))
+                return cancelled
+            }
+            if approved.count != plan.intents.count {
+                plan = IntentPlan(
+                    intents: approved,
+                    reply: IntentReply.describe(approved, devices: devices, scenes: scenes),
+                    source: plan.source,
+                    suggestions: plan.suggestions
+                )
+            }
+        }
         guard !plan.intents.isEmpty else {
             if delayed != nil, plan.source == .local {
                 // A timer never fires an unresolved choice; ask for the room or device now.

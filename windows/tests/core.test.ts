@@ -13,6 +13,7 @@ import {
   DelayPhrase,
   GROK_BALL_RADIAL_SLOTS,
   LocalIntentParser,
+  ManualControlPolicy,
   ModelActionPolicy,
   ModelIntentResolver,
   UndoPhrase,
@@ -1824,6 +1825,121 @@ describe("LocalIntentParser, DelayPhrase, UndoPhrase, and ModelIntentResolver", 
     );
     assert.equal(plan.suggestions[4]?.intents.length, 6);
   });
+
+  it("caps bare category open candidates at three plus one 全部打开 (#274)", () => {
+    const dark = (index: number): SmartDevice => ({
+      id: `light.${index}`,
+      name: `测试灯${index}`,
+      roomId: `room_${index}`,
+      roomName: `房间${index}`,
+      model: "yeelink.light.lamp4",
+      isOnline: true,
+      kind: {
+        kind: "light",
+        entityId: `light.${index}`,
+        isOn: false,
+        brightnessPercent: 60,
+        colorTempKelvin: 4000,
+        minKelvin: 2700,
+        maxKelvin: 6500,
+        currentEffect: null,
+        availableEffects: [],
+      },
+    });
+    const plan = LocalIntentParser.parse("开灯", Array.from({ length: 5 }, (_, index) => dark(index)), []);
+    assert.ok(plan);
+    assert.equal(plan.intents.length, 0);
+    assert.equal(plan.reply, "关着：测试灯0、测试灯1、测试灯2、测试灯3、测试灯4。请说出房间或设备名");
+    assert.deepEqual(
+      plan.suggestions.map((suggestion) => suggestion.id),
+      ["bare:on:light.0", "bare:on:light.1", "bare:on:light.2", "bare:on:all"],
+    );
+    assert.deepEqual(
+      plan.suggestions.map((suggestion) => suggestion.title),
+      ["打开测试灯0", "打开测试灯1", "打开测试灯2", "全部打开"],
+    );
+    // 全部打开 changes every dark light, not just the three the chips could show.
+    assert.deepEqual(
+      plan.suggestions.at(-1)?.intents.map((intent) => intent.targetId),
+      ["light.0", "light.1", "light.2", "light.3", "light.4"],
+    );
+  });
+
+  it("orders bare category open candidates by the habit order of the current time slot (#274)", () => {
+    const dark = (index: number): SmartDevice => ({
+      id: `light.${index}`,
+      name: `测试灯${index}`,
+      roomId: `room_${index}`,
+      roomName: `房间${index}`,
+      model: "yeelink.light.lamp4",
+      isOnline: true,
+      kind: {
+        kind: "light",
+        entityId: `light.${index}`,
+        isOn: false,
+        brightnessPercent: 60,
+        colorTempKelvin: 4000,
+        minKelvin: 2700,
+        maxKelvin: 6500,
+        currentEffect: null,
+        availableEffects: [],
+      },
+    });
+    const plan = LocalIntentParser.parse(
+      "开灯",
+      Array.from({ length: 4 }, (_, index) => dark(index)),
+      [],
+      { usageOrder: ["light.2", "light.0"] },
+    );
+    assert.ok(plan);
+    assert.deepEqual(
+      plan.suggestions.map((suggestion) => suggestion.title),
+      ["打开测试灯2", "打开测试灯0", "打开测试灯1", "全部打开"],
+    );
+    // The bulk chip follows the same order, so it matches what the row looked like.
+    assert.deepEqual(
+      plan.suggestions.at(-1)?.intents.map((intent) => intent.targetId),
+      ["light.2", "light.0", "light.1", "light.3"],
+    );
+  });
+
+  it("runs the only dark light a bare 开灯 names and answers when every light is on (#274)", () => {
+    const light = (id: string, isOn: boolean): SmartDevice => ({
+      id,
+      name: "书房台灯",
+      roomId: "study",
+      roomName: "书房",
+      model: "yeelink.light.lamp4",
+      isOnline: true,
+      kind: {
+        kind: "light",
+        entityId: `light.${id}`,
+        isOn,
+        brightnessPercent: 60,
+        colorTempKelvin: 4000,
+        minKelvin: 2700,
+        maxKelvin: 6500,
+        currentEffect: null,
+        availableEffects: [],
+      },
+    });
+
+    const single = LocalIntentParser.parse("开灯", [light("light.solo", false)], []);
+    assert.ok(single);
+    assert.deepEqual(single.intents, [{ targetId: "light.solo", operation: { kind: "power", isOn: true } }]);
+    assert.equal(single.reply, "已打开书房台灯");
+    assert.equal(single.suggestions.length, 0);
+
+    const everyLit = LocalIntentParser.parse(
+      "开灯",
+      [light("light.a", true), light("light.b", true)],
+      [],
+    );
+    assert.ok(everyLit);
+    assert.deepEqual(everyLit.intents, []);
+    assert.equal(everyLit.reply, "灯都开着");
+    assert.equal(everyLit.suggestions.length, 0);
+  });
 });
 
 type ConfirmationDeviceKind = "light" | "climate" | "fan" | "plug" | "vacuum" | "camera" | "sensor";
@@ -2103,6 +2219,55 @@ it("matches the shared confirmation table in confirmation_golden.json", () => {
     assert.deepEqual(decision.intents, row.expectAutoRun ? [intent] : [], row.id);
     if (!row.expectAutoRun) assert.ok(decision.suggestions.length > 0, row.id);
   }
+});
+
+it("manual controls stay direct when they end a hazard (#143, #274)", () => {
+  const plug: SmartDevice = {
+    id: "dev_plug",
+    name: "书房插座",
+    roomId: "study",
+    roomName: "书房",
+    model: "cuco.plug.v3",
+    isOnline: true,
+    kind: {
+      kind: "plug",
+      switchEntityId: "switch.plug",
+      isOn: true,
+      powerWatts: null,
+      childLockEntityId: null,
+      isChildLocked: false,
+    },
+  };
+  const heater: SmartDevice = {
+    id: "dev_heater",
+    name: "书房电暖器",
+    roomId: "study",
+    roomName: "书房",
+    model: "zhimi.heater.za2",
+    isOnline: true,
+    kind: {
+      kind: "climate",
+      entityId: "climate.heater",
+      isOn: true,
+      hvacMode: "heat",
+      availableModes: ["off", "heat"],
+      targetTemperature: 20,
+      currentTemperature: null,
+      minTemp: 18,
+      maxTemp: 28,
+      step: 1,
+      fanMode: null,
+      availableFanModes: [],
+    },
+  };
+  const devices = [plug, heater];
+  const confirm = (device: SmartDevice, operation: DeviceIntent["operation"]): boolean =>
+    ManualControlPolicy.requiresConfirmation({ targetId: device.id, operation }, devices);
+
+  assert.equal(confirm(plug, { kind: "power", isOn: true }), true);
+  assert.equal(confirm(plug, { kind: "power", isOn: false }), false);
+  assert.equal(confirm(heater, { kind: "power", isOn: true }), true);
+  assert.equal(confirm(heater, { kind: "hvacMode", mode: "off" }), false);
 });
 
 describe("AI provider detection and key transport (#19)", () => {
