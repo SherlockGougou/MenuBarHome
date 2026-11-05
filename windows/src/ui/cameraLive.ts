@@ -48,6 +48,9 @@ export class CameraLiveController {
   public static readonly CAMERA_KEEP_ALIVE_MS = 120_000;
   /** Tests pin this short to watch the teardown without waiting two minutes. */
   cameraKeepAliveMs = CameraLiveController.CAMERA_KEEP_ALIVE_MS;
+  public static readonly CAMERA_FRAME_GIVE_UP_MS = 20_000;
+  cameraFrameGiveUpMs = CameraLiveController.CAMERA_FRAME_GIVE_UP_MS;
+  cameraFrameRetryMs = 800;
   public liveCameraStreamURL: string | null = null;
   public liveCameraLoading = false;
   public liveCameraError: string | null = null;
@@ -68,8 +71,16 @@ export class CameraLiveController {
     const dev = this.host.devices.find((d) => d.id === deviceId);
     if (!dev || dev.kind.kind !== "camera") return;
     // Hot resume: the modal was only hidden, so the bridge, relay and P2P
-    // session are still alive — just reveal it again.
-    if (this.activeLiveCameraId === deviceId && this.liveCameraHidden && this.liveCameraImgEl) {
+    // session are still alive — just reveal it again. While the frame pump is
+    // still waiting for its first JPEG there is no <img> to reuse yet, but the
+    // transport is running; renegotiating would stop the session it is using.
+    const frameTransportActive =
+      this.liveCameraAbort !== null && !this.liveCameraAbort.signal.aborted;
+    if (
+      this.activeLiveCameraId === deviceId &&
+      this.liveCameraHidden &&
+      (this.liveCameraImgEl !== null || frameTransportActive)
+    ) {
       this.liveCameraHidden = false;
       this.clearCameraKeepAlive();
       invokeTauriVoid("set_pin_popover", { pin: true });
@@ -221,20 +232,16 @@ export class CameraLiveController {
 
   public startMjpegTransport(name: string): void {
     this.liveCameraAbort?.abort();
+    this.liveCameraImgEl?.remove();
+    this.liveCameraImgEl = null;
+    this.liveCameraMode = null;
+    this.liveCameraLoading = true;
     const img = document.createElement("img");
     img.id = "cc-camera-live-img";
     img.alt = "";
     img.style.cssText = "max-width:100%;border-radius:10px;";
-    let retried = false;
-    img.addEventListener("error", () => {
-      if (retried) return;
-      retried = true;
-      window.setTimeout(() => this.reconnectCameraLiveView(), 1200);
-    });
     const abort = new AbortController();
     this.liveCameraAbort = abort;
-    this.liveCameraImgEl = img;
-    this.liveCameraMode = "mjpeg";
     void this.pumpAuthenticatedMjpeg(name, img, this.liveCameraToken, abort.signal);
   }
 
@@ -264,20 +271,48 @@ export class CameraLiveController {
   ): Promise<void> {
     const invoke = window.__TAURI_INTERNALS__?.invoke;
     if (!invoke) return;
+    let failureStarted: number | null = null;
     while (token === this.liveCameraToken && !signal.aborted) {
       try {
         const jpeg = await invoke<string>("go2rtc_jpeg_frame", { src: name });
         if (token !== this.liveCameraToken || signal.aborted) return;
-        if (!jpeg) throw new Error("empty frame");
+        if (!jpeg) throw new Error(t("go2rtc 未返回画面"));
         img.src = `data:image/jpeg;base64,${jpeg}`;
-      } catch {
-        if (token === this.liveCameraToken && !signal.aborted) {
-          img.dispatchEvent(new Event("error"));
+        failureStarted = null;
+        if (this.liveCameraImgEl !== img) {
+          this.liveCameraImgEl = img;
+          this.liveCameraMode = "mjpeg";
+          this.liveCameraLoading = false;
+          this.liveCameraError = null;
+          this.host.render();
+          this.attachLiveMedia();
         }
-        return;
+      } catch (err) {
+        if (token !== this.liveCameraToken || signal.aborted) return;
+        failureStarted ??= Date.now();
+        if (Date.now() - failureStarted >= this.cameraFrameGiveUpMs) {
+          this.failLivePicture(token, liveFrameFailureText(err));
+          return;
+        }
+        await waitForCameraFrameGap(signal, this.cameraFrameRetryMs);
+        continue;
       }
       await waitForCameraFrameGap(signal, 200);
     }
+  }
+
+  public failLivePicture(token: number, reason: string): void {
+    if (token !== this.liveCameraToken || this.activeLiveCameraId === null) return;
+    this.liveCameraAbort?.abort();
+    this.liveCameraAbort = null;
+    this.liveCameraImgEl?.remove();
+    this.liveCameraImgEl = null;
+    this.liveCameraMode = null;
+    this.liveCameraLoading = false;
+    const lead = t("实时画面连接失败，请点右上角重新连接");
+    const detail = reason.trim();
+    this.liveCameraError = detail.length > 0 && detail !== lead ? `${lead} ${detail}` : lead;
+    this.host.render();
   }
 
   /**
@@ -476,10 +511,11 @@ export class CameraLiveController {
             if (urlMatch?.[0]) {
               const playable = this.normalizeWindowsCameraStreamUrl(urlMatch[0]);
               if (this.needsHlsTranscodeBridge(playable)) {
+                this.liveCameraQualityApplies = false;
                 if (await this.bridgeHlsStreamToMjpeg(dev.id, playable)) {
-                  this.liveCameraQualityApplies = false;
                   return;
                 }
+                this.liveCameraQualityApplies = true;
                 // Bridging failed: fall through to P2P below instead of assigning an unplayable .m3u8.
                 break;
               }
@@ -874,4 +910,10 @@ export class CameraLiveController {
     });
   }
 
+}
+
+function liveFrameFailureText(err: unknown): string {
+  const text = typeof err === "string" ? err : err instanceof Error ? err.message : "";
+  const trimmed = text.trim();
+  return trimmed || t("go2rtc 未返回画面");
 }
