@@ -5,9 +5,7 @@ public struct DeviceCardView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.isEditingLayout) private var isEditingLayout
     @AppStorage(PanelPrefs.climatePanelKey) private var climatePanelModule: Bool = true
-    @AppStorage(DeviceLayoutPrefs.storageKey) private var tileSizesRaw: String = "{}"
     @AppStorage(GroupPrefs.groupsKey) private var groupsRaw: String = "[]"
-    @AppStorage(GroupPrefs.mapKey) private var groupMapRaw: String = "{}"
     /// Observed so a temperature-unit change in Settings re-renders open cards (#52).
     @AppStorage(TemperatureUnitPreference.storageKey) private var temperatureUnitRaw = TemperatureUnitPreference.system.rawValue
 
@@ -46,22 +44,20 @@ public struct DeviceCardView: View {
         return false
     }
 
-    private var chosenSize: TileSize { DeviceLayoutPrefs.cachedSize(raw: tileSizesRaw, id: device.id, scope: layoutScope) }
+    private var panelLayout: PanelLayoutStore { PanelLayoutStore.shared(for: store.userDefaults) }
+
+    private var chosenSize: TileSize { panelLayout.size(of: device.id, scope: layoutScope) }
 
     private var resolvedSize: TileSize {
         DeviceLayoutPrefs.resolved(chosenSize, device: device, compactGrid: store.isCompactGridMode, climatePanel: climatePanelModule)
     }
 
     private func setSize(_ size: TileSize) {
-        var sizes = DeviceLayoutPrefs.decode(tileSizesRaw)
-        sizes[DeviceLayoutPrefs.scopedKey(id: device.id, scope: layoutScope)] = size
-        withAnimation(AppleMotion.snappySpring) { tileSizesRaw = DeviceLayoutPrefs.encode(sizes) }
+        withAnimation(AppleMotion.snappySpring) { panelLayout.setSize(size, of: device.id, scope: layoutScope) }
     }
 
     private func assignGroup(_ groupId: String?) {
-        var map = GroupPrefs.map(groupMapRaw)
-        map[device.id] = groupId
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { groupMapRaw = GroupPrefs.encode(map) }
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { panelLayout.assign(device.id, toGroup: groupId) }
     }
 
     private var isExpanded: Bool {
@@ -265,7 +261,7 @@ public struct DeviceCardView: View {
 
             Menu {
                 let groups = GroupPrefs.groups(groupsRaw)
-                let current = GroupPrefs.map(groupMapRaw)[device.id]
+                let current = panelLayout.groupMap[device.id]
                 ForEach(groups) { group in
                     Button {
                         assignGroup(group.id)
