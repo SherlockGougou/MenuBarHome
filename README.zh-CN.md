@@ -34,7 +34,6 @@
 </p>
 
 <p align="center">
-  <a href="https://jryang1997.gitlab.io/menubarmijia-web/">项目官网</a> ·
   <a href="https://gitlab.com/jryang1997/MenuBarMijia/-/releases">下载最新版本</a> ·
   <a href="#快速开始">安装与连接</a> ·
   <a href="#功能概览与双端对照">平台能力对照</a> ·

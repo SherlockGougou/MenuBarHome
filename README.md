@@ -34,7 +34,6 @@ English | [简体中文](README.zh-CN.md)
 </p>
 
 <p align="center">
-  <a href="https://jryang1997.gitlab.io/menubarmijia-web/">Project website</a> ·
   <a href="https://gitlab.com/jryang1997/MenuBarMijia/-/releases">Download latest</a> ·
   <a href="#quick-start">Install & Connect</a> ·
   <a href="#features--platform-matrix">Platform Comparison</a> ·
