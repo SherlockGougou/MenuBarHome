@@ -1,8 +1,7 @@
 # GitLab CI for MenuBarMijia. Jobs run on the maintainer's Mac (project runner, shell executor,
 # tag `macos`); see docs/agents/issue-tracker.md. GitHub Actions under .github/workflows are not run.
 #
-# Snapshot comparison stays off: the baselines were recorded on GitHub's macos-26 runner and this
-# Mac's renderer never matches them (AGENTS.md). Re-recording them here is a separate decision.
+# Snapshots are compared: the baselines are recorded on this same Mac (scripts/record_snapshots.sh).
 
 workflow:
   rules:
@@ -27,4 +26,4 @@ check:
   timeout: 45m
   script:
     - (cd windows && npm ci --no-audit --no-fund)
-    - bash scripts/check.sh --skip-snapshots
+    - bash scripts/check.sh

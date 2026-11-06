@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Local commit gate. This machine's macOS renderer never matches the CI-recorded snapshot
-# baselines, so the hook skips only SnapshotTests; CI still records and compares them.
+# Local commit gate: the same `scripts/check.sh` CI runs, snapshots included (this Mac records the
+# baselines and is also the CI runner).
 #
 # The full gate prints every test line (~180 KB). A commit only needs the verdict, so the run goes
 # to a log file: success prints the summary lines, failure prints the failing cases plus the log's
@@ -9,10 +9,6 @@ set -euo pipefail
 
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 CHECK=(bash "$ROOT_DIR/scripts/check.sh")
-# A worktree checked out before `--skip-snapshots` existed still gets a runnable hook.
-if grep -q -- '--skip-snapshots' "$ROOT_DIR/scripts/check.sh" 2>/dev/null; then
-    CHECK+=(--skip-snapshots)
-fi
 
 if [ "${MMB_HOOK_VERBOSE:-0}" = "1" ]; then
     exec "${CHECK[@]}"

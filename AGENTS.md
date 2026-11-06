@@ -18,9 +18,9 @@ Read `CODING_STANDARDS.md` when reviewing diffs (`/code-review`) or modifying sy
 
 ### Build & verification
 
-Run `bash scripts/check.sh` for secret scan, mechanical lints, and `swift test`. On this Mac the renderer never matches the CI-recorded snapshot baselines, so use `bash scripts/check.sh --skip-snapshots` for a green local gate; CI still records and compares them. The pre-commit hook runs the same snapshot-skipping gate. Run `bash scripts/install_local_app.sh` to build, verify, and install into the bundle the user launches (it keeps the previous version for rollback); `bash scripts/build_app.sh` only packages the bundle inside the worktree. Run `swift scripts/generate_app_icon.swift` when modifying `Resources/AppIcon/AppIcon-*.svg` to regenerate macOS `.icns`, `Assets.car`, README logos, and Windows Tauri icons.
+Run `bash scripts/check.sh` for secret scan, mechanical lints, and `swift test`, snapshots included. The pre-commit hook and GitLab CI run the same gate. `--skip-snapshots` is only for a Mac other than the maintainer's, whose renderer is not the reference. Run `bash scripts/install_local_app.sh` to build, verify, and install into the bundle the user launches (it keeps the previous version for rollback); `bash scripts/build_app.sh` only packages the bundle inside the worktree. Run `swift scripts/generate_app_icon.swift` when modifying `Resources/AppIcon/AppIcon-*.svg` to regenerate macOS `.icns`, `Assets.car`, README logos, and Windows Tauri icons.
 
-CI 的快照比对以 CI 录制的结果为准。本机渲染漂移时，用 `bash scripts/snapshot-drift-check.sh` 判断是否**新增**了失配（输出为空即只有既有漂移）。漂移甄别回答不了「这次 UI 改动是否欠一批新基线」：改到 `Sources/MenuBarMijiaApp/` 就要按 `bash scripts/check_snapshot_baselines.sh` 的提示重录快照，CI 的 `snapshot-baselines` 工作流守这一条。`check.sh` 会跑完 Swift 与 Windows 两端再汇总失败。
+快照基线以维护者这台 Mac 的渲染为准；它同时是 GitLab CI 的 runner，所以本地与 CI 比对的是同一份基线。改到 `Sources/MenuBarMijiaApp/` 而界面有变化时，`bash scripts/record_snapshots.sh` 重录，审阅变化的 PNG 后随改动一起提交（`--dry-run` 只列出会变的图）。`check.sh` 会跑完 Swift 与 Windows 两端再汇总失败。
 
 Windows 上没有 Swift 工具链：本机跑 `bash scripts/check.sh --lint-only`，Swift 测试交给 CI 或局域网 Mac（`bash scripts/remote-swift-test.sh --host <user>@<mac>`，一次配置见脚本头）。
 
@@ -39,7 +39,7 @@ CI 失败先看 `bash scripts/ci_errors.sh <pipeline-id|log-file>`（只打失�
 - 检查失败原因尚未确认时，走 PR 排查，解决后再合并。已复现并确认与本轮无关的既有失败，需记录证据及例外原因；跳过检查不是默认流程。
 - 一个完整问题对应一次提交或一个 PR；同一问题的后续调整继续使用原 PR。
 - 直接 push 后，有 runner 时确认云端检查的最终结果；交付时区分“已推送”与“检查已通过”。直接 push 不等于发布新版本。
-- 合并请求（MR，即本文的 PR）用 `python3 scripts/forge.py pr create` 开，`pr checks <n>` 看流水线。`.gitlab-ci.yml` 在维护者 Mac 上的项目 runner（shell executor，标签 `macos`）跑 `bash scripts/check.sh --skip-snapshots`，含 Windows 前端测试；不跑快照比对和 Rust 测试。首次查询为空时按退避重试。`.github/workflows`、Codex 审查与 `pr-wait`/babysit 一类依赖 GitHub 的技能都已不可用。
+- 合并请求（MR，即本文的 PR）用 `python3 scripts/forge.py pr create` 开，`pr checks <n>` 看流水线。`.gitlab-ci.yml` 在维护者 Mac 上的项目 runner（shell executor，标签 `macos`）跑 `bash scripts/check.sh`，含快照比对与 Windows 前端测试；不跑 Rust 测试。首次查询为空时按退避重试。`.github/workflows`、Codex 审查与 `pr-wait`/babysit 一类依赖 GitHub 的技能都已不可用。
 
 ### Worktrees
 
