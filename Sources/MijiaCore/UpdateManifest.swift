@@ -119,7 +119,9 @@ public enum UpdateManifest {
               isReleaseVersionText(minFrom),
               let keyID = object["key_id"] as? String,
               let rawFiles = object["files"] as? [[String: Any]],
-              rawFiles.count == 3,
+              // 3 files: a full release. 1 file: a macOS-only release (no Windows build machine since
+              // the move off GitHub). Order is fixed either way, so the DMG is always first.
+              rawFiles.count == 3 || rawFiles.count == 1,
               let signedVersion = AppVersion(version),
               let floor = AppVersion(minFrom),
               floor <= signedVersion else {

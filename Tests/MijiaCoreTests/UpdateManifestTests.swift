@@ -160,6 +160,19 @@ struct UpdateManifestTests {
         #expect(verified.version == AppVersion("1.1.7"))
     }
 
+    @Test("A macOS-only manifest (DMG alone) is accepted; a partial Windows list is not")
+    func macOSOnlyManifestIsAcceptedButPartialWindowsListIsNot() throws {
+        let macOSOnly = try signedUpdateManifest(version: "1.1.8", windowsEntries: 0)
+        guard case .success(let verified) = accept(macOSOnly, releaseVersion: "1.1.8", runningVersion: "1.1.7") else {
+            Issue.record("expected a macOS-only manifest to verify")
+            return
+        }
+        #expect(verified.packageName == "MenuBarMijia-1.1.8.dmg")
+
+        let exeOnly = try signedUpdateManifest(version: "1.1.8", windowsEntries: 1)
+        #expect(accept(exeOnly, releaseVersion: "1.1.8", runningVersion: "1.1.7") == .failure(.malformed))
+    }
+
     @Test("1.0.10 is newer than 1.0.9")
     func numericCompareTreatsOneZeroTenAsNewer() throws {
         let signed = try signedUpdateManifest(version: "1.0.10")
@@ -186,6 +199,7 @@ func signedUpdateManifest(
     package: Data = Data("dmg-bytes".utf8),
     exeDigest: String = String(repeating: "b", count: 64),
     msiDigest: String = String(repeating: "c", count: 64),
+    windowsEntries: Int = 2,
     keyID: String? = nil,
     dmgFile: String? = nil,
     signingKey: Curve25519.Signing.PrivateKey? = nil
@@ -193,10 +207,13 @@ func signedUpdateManifest(
     let key = signingKey ?? Curve25519.Signing.PrivateKey()
     let publicKey = key.publicKey.rawRepresentation.base64EncodedString()
     let dmgName = dmgFile ?? "MenuBarMijia-\(version).dmg"
+    let entries = [
+        "{\"platform\":\"macos\",\"file\":\"\(dmgName)\",\"sha256\":\"\(SHA256Digest.hash(package).hex)\"}",
+        "{\"platform\":\"windows\",\"file\":\"MenuBarMijia-\(version)-windows-x64-setup.exe\",\"sha256\":\"\(exeDigest)\"}",
+        "{\"platform\":\"windows\",\"file\":\"MenuBarMijia-\(version)-windows-x64.msi\",\"sha256\":\"\(msiDigest)\"}",
+    ].prefix(1 + windowsEntries)
     let body = "{\"version\":\"\(version)\",\"min_from\":\"\(minFrom)\",\"key_id\":\"\(keyID ?? publicKey)\",\"files\":["
-        + "{\"platform\":\"macos\",\"file\":\"\(dmgName)\",\"sha256\":\"\(SHA256Digest.hash(package).hex)\"},"
-        + "{\"platform\":\"windows\",\"file\":\"MenuBarMijia-\(version)-windows-x64-setup.exe\",\"sha256\":\"\(exeDigest)\"},"
-        + "{\"platform\":\"windows\",\"file\":\"MenuBarMijia-\(version)-windows-x64.msi\",\"sha256\":\"\(msiDigest)\"}]}\n"
+        + entries.joined(separator: ",") + "]}\n"
     let bytes = Data(body.utf8)
     let signatureText = try key.signature(for: bytes).base64EncodedString() + "\n"
     return SignedUpdateManifest(

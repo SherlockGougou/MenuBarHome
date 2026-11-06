@@ -27,7 +27,10 @@ def version_key(text: str) -> tuple[int, int, int]:
     return int(major), int(minor), int(patch)
 
 
-def canonical_bytes(version: str, min_from: str, key_id: str, digests: tuple[str, str, str]) -> bytes:
+def canonical_bytes(version: str, min_from: str, key_id: str, digests: tuple[str, ...]) -> bytes:
+    """Three digests (DMG, EXE, MSI) for a full release, one (DMG) for a macOS-only release."""
+    if len(digests) not in (1, 3):
+        raise SystemExit("清单只能是 3 个安装包（完整发布）或 1 个 DMG（仅 macOS）")
     if not VERSION_RE.fullmatch(version) or not VERSION_RE.fullmatch(min_from):
         raise SystemExit("版本必须是 x.y.z")
     if version_key(min_from) > version_key(version):
@@ -39,16 +42,17 @@ def canonical_bytes(version: str, min_from: str, key_id: str, digests: tuple[str
         "version": version,
         "min_from": min_from,
         "key_id": key_id,
-        "files": [
-            {"platform": "macos", "file": f"MenuBarMijia-{version}.dmg", "sha256": digests[0]},
+        "files": [{"platform": "macos", "file": f"MenuBarMijia-{version}.dmg", "sha256": digests[0]}],
+    }
+    if len(digests) == 3:
+        document["files"] += [
             {
                 "platform": "windows",
                 "file": f"MenuBarMijia-{version}-windows-x64-setup.exe",
                 "sha256": digests[1],
             },
             {"platform": "windows", "file": f"MenuBarMijia-{version}-windows-x64.msi", "sha256": digests[2]},
-        ],
-    }
+        ]
     return (json.dumps(document, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
 
 
@@ -99,19 +103,20 @@ def read_sidecar(package: pathlib.Path) -> str:
     return actual
 
 
-def encode(min_from: str, dmg: pathlib.Path, exe: pathlib.Path, msi: pathlib.Path) -> None:
+def encode(min_from: str, dmg: pathlib.Path, exe: pathlib.Path | None, msi: pathlib.Path | None) -> None:
+    """Without EXE and MSI the manifest covers the DMG only (a macOS-only release)."""
     if not VERSION_RE.fullmatch(min_from):
         raise SystemExit("min-from 必须是 x.y.z")
     version = version_from_dmg(dmg)
-    _, exe_name, msi_name = package_names(version)
-    if exe.name != exe_name or msi.name != msi_name:
-        raise SystemExit("EXE 与 MSI 必须带上与 DMG 相同的版本")
-    body = canonical_bytes(
-        version,
-        min_from,
-        public_key(),
-        (read_sidecar(dmg), read_sidecar(exe), read_sidecar(msi)),
-    )
+    if (exe is None) != (msi is None):
+        raise SystemExit("EXE 与 MSI 要么都给，要么都不给（仅 macOS 发布）")
+    packages = [dmg]
+    if exe is not None and msi is not None:
+        _, exe_name, msi_name = package_names(version)
+        if exe.name != exe_name or msi.name != msi_name:
+            raise SystemExit("EXE 与 MSI 必须带上与 DMG 相同的版本")
+        packages += [exe, msi]
+    body = canonical_bytes(version, min_from, public_key(), tuple(read_sidecar(path) for path in packages))
     dmg.with_name(f"MenuBarMijia-{version}.update.json").write_bytes(body)
 
 
@@ -127,7 +132,9 @@ def check_fields(version: str, directory: pathlib.Path) -> None:
     min_from = parsed.get("min_from") if isinstance(parsed, dict) else None
     if not isinstance(min_from, str):
         raise SystemExit("清单缺少 min_from")
-    packages = [directory / name for name in package_names(version)]
+    files = parsed.get("files")
+    count = len(files) if isinstance(files, list) else 0
+    packages = [directory / name for name in package_names(version)][: 1 if count == 1 else 3]
     expected = canonical_bytes(version, min_from, public_key(), tuple(read_sidecar(path) for path in packages))
     if raw != expected:
         raise SystemExit("更新清单与安装包和校验文件不一致")
@@ -172,8 +179,21 @@ def self_test() -> None:
         try:
             check_fields(version, directory)
         except SystemExit:
-            return
-        raise SystemExit("改动安装包字节后 check-fields 仍成功")
+            pass
+        else:
+            raise SystemExit("改动安装包字节后 check-fields 仍成功")
+    # macOS-only release: the manifest lists the DMG alone, and check-fields ignores absent Windows files.
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = pathlib.Path(tmp)
+        dmg = directory / "MenuBarMijia-1.2.4.dmg"
+        dmg.write_bytes(b"dmg-only")
+        digest = hashlib.sha256(b"dmg-only").hexdigest()
+        pathlib.Path(str(dmg) + ".sha256").write_text(f"{digest}  {dmg.name}\n", encoding="utf-8")
+        encode("1.0.0", dmg, None, None)
+        manifest = json.loads((directory / "MenuBarMijia-1.2.4.update.json").read_text(encoding="utf-8"))
+        if [entry["platform"] for entry in manifest["files"]] != ["macos"]:
+            raise SystemExit("仅 macOS 清单应只含 DMG 一项")
+        check_fields("1.2.4", directory)
 
 
 def main() -> None:
@@ -182,8 +202,8 @@ def main() -> None:
     encode_parser = sub.add_parser("encode")
     encode_parser.add_argument("--min-from", required=True)
     encode_parser.add_argument("--dmg", required=True, type=pathlib.Path)
-    encode_parser.add_argument("--exe", required=True, type=pathlib.Path)
-    encode_parser.add_argument("--msi", required=True, type=pathlib.Path)
+    encode_parser.add_argument("--exe", type=pathlib.Path, help="省略 --exe 与 --msi 即仅 macOS 发布")
+    encode_parser.add_argument("--msi", type=pathlib.Path)
     check_parser = sub.add_parser("check-fields")
     check_parser.add_argument("version")
     check_parser.add_argument("directory", type=pathlib.Path)

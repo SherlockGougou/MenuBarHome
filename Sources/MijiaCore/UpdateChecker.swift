@@ -246,8 +246,13 @@ public struct UpdateChecker: Sendable {
         }
     }
 
-    public static let latestReleaseURL = URL(string: "https://api.github.com/repos/jryang1997/MenuBarMijia/releases/latest")!
-    public static let releasesPage = URL(string: "https://github.com/jryang1997/MenuBarMijia/releases")!
+    /// Numeric id of gitlab.com/jryang1997/MenuBarMijia; unlike the path it survives a project rename.
+    /// Releases moved here from GitHub after the GitHub account was suspended (2026-11).
+    public static let gitLabProjectID = "88577673"
+    public static let latestReleaseURL = URL(
+        string: "https://gitlab.com/api/v4/projects/\(gitLabProjectID)/releases/permalink/latest"
+    )!
+    public static let releasesPage = URL(string: "https://gitlab.com/jryang1997/MenuBarMijia/-/releases")!
 
     /// Ed25519 public key (32-byte raw, base64) that release tooling signs with.
     public static let updateSigningPublicKeyBase64 = "rLwWXuP0sOZvgd/KusLTTmBXN9DAZ9EzPBNhFSn9yUo="
@@ -276,7 +281,7 @@ public struct UpdateChecker: Sendable {
 
     public func checkRelease() async throws -> AppRelease? {
         var request = URLRequest(url: Self.latestReleaseURL, timeoutInterval: 10)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (data, response) = try await transport(request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 200
         if status == 404 { return nil }
@@ -290,15 +295,21 @@ public struct UpdateChecker: Sendable {
         guard let current = AppVersion(currentVersion), latest > current else {
             return nil
         }
-        let url = (object["html_url"] as? String).flatMap(URL.init(string:)) ?? Self.releasesPage
+        // GitLab release JSON: `_links.self` is the release page, `description` the notes, and
+        // `assets.links` the attached files (no sizes). Only a gitlab.com page is opened.
+        let selfLink = (object["_links"] as? [String: Any])?["self"] as? String
+        let url = selfLink
+            .flatMap(URL.init(string:))
+            .flatMap { $0.scheme == "https" && $0.host == "gitlab.com" ? $0 : nil } ?? Self.releasesPage
         let shown = tag.lowercased().hasPrefix("v") ? String(tag.dropFirst()) : tag
-        let notes = object["body"] as? String ?? ""
-        let rawAssets = object["assets"] as? [[String: Any]] ?? []
+        let notes = object["description"] as? String ?? ""
+        let rawAssets = (object["assets"] as? [String: Any])?["links"] as? [[String: Any]] ?? []
         let packageAsset = Self.selectPackageAsset(version: shown, from: rawAssets)
         return AppRelease(version: shown, pageURL: url, notes: notes, packageAsset: packageAsset)
     }
 
-    /// GitHub release URL for one of the eight publish names. `browser_download_url` is not used.
+    /// Generic-package URL on gitlab.com for one of the eight publish names. The link URLs in the
+    /// release JSON are not used, so a tampered release entry cannot point the download elsewhere.
     public static func releaseAssetURL(version: String, fileName: String) -> URL? {
         guard UpdateManifest.isReleaseVersionText(version) else { return nil }
         let allowed: Set<String> = [
@@ -312,7 +323,9 @@ public struct UpdateChecker: Sendable {
             "MenuBarMijia-\(version).update.json.ed25519.sig",
         ]
         guard allowed.contains(fileName) else { return nil }
-        return URL(string: "https://github.com/jryang1997/MenuBarMijia/releases/download/v\(version)/\(fileName)")
+        return URL(
+            string: "https://gitlab.com/api/v4/projects/\(gitLabProjectID)/packages/generic/MenuBarMijia/\(version)/\(fileName)"
+        )
     }
 
     private static func selectPackageAsset(version: String, from rawAssets: [[String: Any]]) -> AppRelease.PackageAsset? {
