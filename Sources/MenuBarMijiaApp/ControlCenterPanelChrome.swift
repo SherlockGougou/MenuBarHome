@@ -806,21 +806,6 @@ extension ControlCenterPanel {
         }
     }
 
-    func sectionHeader(_ title: String, count: Int) -> some View {
-        HStack {
-            Text(title)
-                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Text("\(count)")
-                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
-                .foregroundStyle(.secondary.opacity(0.80))
-                .monospacedDigit()
-            Spacer()
-        }
-        .padding(.horizontal, 3)
-        .padding(.bottom, -3)
-    }
-
     var disconnectedEmptyBackend: HomeBackend {
         if store.hasMiSource && !store.hasHASource { return .xiaomiCloud }
         if store.hasHASource && !store.hasMiSource { return .homeAssistant }

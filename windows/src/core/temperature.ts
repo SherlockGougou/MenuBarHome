@@ -36,10 +36,6 @@ export function getTemperatureUnit(): TemperatureUnit {
   return currentUnit;
 }
 
-export function setTemperatureUnit(unit: TemperatureUnit): void {
-  currentUnit = unit;
-}
-
 /** Resolves and applies the unit from the saved preference plus the OS locale. */
 export function applyTemperatureUnit(localeIdentifier: string, preference: TemperatureUnitPreference): TemperatureUnit {
   const unit = resolveTemperatureUnit(localeIdentifier, preference);
@@ -90,9 +86,4 @@ export function stepCelsius(providerStep: number, unit: TemperatureUnit = curren
 /** How far one tap moves the visible number: 1 in Fahrenheit, the provider step in Celsius. */
 export function displayStep(providerStep: number, unit: TemperatureUnit = currentUnit): number {
   return unit === "fahrenheit" ? 1 : providerStep;
-}
-
-/** A user-entered value in display units, converted for rounding to the thermostat's own step. */
-export function celsiusFromDisplay(value: number, unit: TemperatureUnit = currentUnit): number {
-  return toCelsius(value, unit);
 }

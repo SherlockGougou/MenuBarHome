@@ -746,10 +746,6 @@ extension ControlCenterPanel {
         .panelHelp(L10n.tr("取消并恢复排序前的房间顺序（Esc）", "Cancel and restore the previous room order (Esc)"))
     }
 
-    func usesClimatePanel(_ device: SmartDevice) -> Bool {
-        tileSize(device) != .half
-    }
-
     /// The device's card size with `.auto` resolved; full and panel sizes take a whole row.
     func tileSize(_ device: SmartDevice) -> TileSize {
         DeviceLayoutPrefs.resolved(
