@@ -70,12 +70,7 @@ public enum MiotCommandMapper {
         case .setLightBrightness(_, let percent):
             if percent <= 0 { return .setProps([try ctx.write("on", .bool(false))]) }
             let bri = try ctx.require("brightness")
-            let raw: Double
-            if let max = bri.property.rangeMax, max > 0, max != 100 {
-                raw = Double(percent) / 100 * max
-            } else {
-                raw = Double(percent)
-            }
+            let raw = MiotPercentScale.raw(fromPercent: Double(percent), property: bri.property, curve: .proportional)
             // HA's light.turn_on(brightness) also powers the light on; MIoT needs an explicit `on`.
             return .setProps(ctx.powerOnPrefix() + [ctx.write(bri, .number(raw))])
 
@@ -169,17 +164,15 @@ public enum MiotCommandMapper {
         case .mediaSetVolume(_, let level):
             guard service.shortName == "speaker", level.isFinite else { throw MiotCommandError.unsupported("volume") }
             let volume = try ctx.require("volume")
-            let max = volume.property.rangeMax ?? 100
-            let min = volume.property.rangeMin ?? 0
-            return .setProps([ctx.write(volume, .number(min + Swift.max(0, Swift.min(1, level)) * (max - min)))])
+            let raw = MiotPercentScale.raw(fromPercent: level * 100, property: volume.property, curve: .proportional)
+            return .setProps([ctx.write(volume, .number(raw))])
 
         case .setNumberValue(_, let value):
             if let target = ctx.property("target-position") {
-                // The card speaks 0…100; mirror `MiotSynthesizer.percent(fromRaw:)` back to the raw
-                // range, and flip for an airer whose raw position is distance lowered (#299).
+                // The card speaks 0…100; flip for an airer whose raw position is distance lowered (#299).
                 let subtype = CoverSubtype(miotServiceShortName: ctx.service.shortName)
                 let percent = subtype.invertsMiotPosition ? 100 - value : value
-                let raw = target.property.rangeMax.map { $0 > 0 && $0 != 100 ? percent / 100 * $0 : percent } ?? percent
+                let raw = MiotPercentScale.raw(fromPercent: percent, property: target.property, curve: .proportional)
                 return .setProps([ctx.write(target, .number(raw))])
             }
             return .setProps([try ctx.write("target-temperature", .number(value))])
@@ -303,27 +296,7 @@ public enum MiotCommandMapper {
         }
 
         func writePercentage(_ found: Found, percent: Int) -> MiotPropWrite {
-            let clamped = Double(Swift.max(0, Swift.min(100, percent)))
-            if let lo = found.property.rangeMin, let hi = found.property.rangeMax, hi > lo {
-                let raw = lo > 1 ? lo + (clamped / 100.0) * (hi - lo) : (hi != 100 ? (clamped / 100.0) * hi : clamped)
-                return write(found, .number(raw))
-            }
-            if let list = found.property.valueList, !list.isEmpty {
-                let vals = list.map(\.value)
-                let lo = vals.min() ?? 0
-                let hi = vals.max() ?? 0
-                let target: Double
-                if lo == 0, hi > 0 {
-                    target = (clamped / 100.0) * Double(hi)
-                } else if hi > lo {
-                    target = Double(lo) + (clamped / 100.0) * Double(hi - lo)
-                } else {
-                    target = Double(lo)
-                }
-                let best = list.min(by: { abs(Double($0.value) - target) < abs(Double($1.value) - target) }) ?? list[0]
-                return write(found, .number(Double(best.value)))
-            }
-            return write(found, .number(clamped))
+            write(found, .number(MiotPercentScale.raw(fromPercent: Double(percent), property: found.property, curve: .speed)))
         }
 
         func action(_ candidates: [String], requireEmptyInputs: Bool = false) throws -> MiotActionCall {
