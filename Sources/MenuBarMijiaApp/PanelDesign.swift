@@ -148,28 +148,6 @@ public struct TileSurface: Equatable, Sendable {
 
 // MARK: - Motion Helpers
 
-/// Repeating halo used for the microphone while listening.
-struct ListeningPulse: ViewModifier {
-    let active: Bool
-    let color: Color
-    @State private var phase = false
-
-    func body(content: Content) -> some View {
-        content
-            .background {
-                if active {
-                    Capsule(style: .continuous)
-                        .stroke(color.opacity(phase ? 0 : 0.7), lineWidth: 2)
-                        .scaleEffect(phase ? 1.6 : 1)
-                        .onAppear {
-                            phase = false
-                            withAnimation(.easeOut(duration: 1.2).repeatForever(autoreverses: false)) { phase = true }
-                        }
-                }
-            }
-    }
-}
-
 /// Status dot that breathes slowly while connected.
 struct BreathingDot: View {
     @Environment(\.effectiveReduceMotion) private var reduceMotion
@@ -195,8 +173,6 @@ extension View {
     func shadowIf(_ active: Bool, color: Color, radius: CGFloat, x: CGFloat = 0, y: CGFloat = 0) -> some View {
         if active { self.shadow(color: color, radius: radius, x: x, y: y) } else { self }
     }
-
-    func listeningPulse(_ active: Bool, color: Color) -> some View { modifier(ListeningPulse(active: active, color: color)) }
 
     /// System tooltip. Kept as one wrapper so the panel can drop tooltips in one place.
     func panelHelp(_ text: String) -> some View { help(text) }

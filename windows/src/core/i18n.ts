@@ -543,9 +543,6 @@ const CATALOG: Readonly<Record<string, readonly [string, string]>> = {
   "冷冻 --": ["冷冻 --", "Freezer --"],
 };
 
-export const LANGUAGE_STORAGE_KEY = "menumijia.windows.language";
-export const TEMPERATURE_STORAGE_KEY = "menumijia.windows.temperatureUnit";
-
 /** Every catalog key, for tests and tooling. */
 export function catalogKeys(): string[] {
   return Object.keys(CATALOG);
@@ -556,10 +553,6 @@ export function catalogEntry(key: string): readonly [string, string] | undefined
 }
 
 let current: AppLanguage = "zh-Hans";
-
-export function getLanguage(): AppLanguage {
-  return current;
-}
 
 export function setLanguage(language: AppLanguage): void {
   current = language;

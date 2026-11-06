@@ -49,17 +49,6 @@ final class SettingsWindowOpener {
         return false
     }
 
-    func settingsMenuItem() -> NSMenuItem? {
-        guard let mainMenu = NSApp.mainMenu else { return nil }
-        let menus = [mainMenu] + mainMenu.items.compactMap(\.submenu)
-        for menu in menus {
-            if let item = menu.items.first(where: Self.isSettingsItem) {
-                return item
-            }
-        }
-        return nil
-    }
-
     private static func isSettingsItem(_ item: NSMenuItem) -> Bool {
         guard !item.isSeparatorItem, item.keyEquivalent == "," else { return false }
         return item.keyEquivalentModifierMask.contains(.command)

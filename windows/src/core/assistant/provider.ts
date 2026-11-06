@@ -256,12 +256,6 @@ export interface AssistantConfig {
   readonly apiKey: string;
 }
 
-export const DEFAULT_ASSISTANT_CONFIG: AssistantConfig = {
-  baseURL: "https://openrouter.ai/api/v1",
-  model: "~typesafe/jev-latest",
-  apiKey: "",
-};
-
 /** Shown when a plain-http public endpoint would receive the API key and the user's words unencrypted (#19). */
 export const INSECURE_ENDPOINT_MESSAGE =
   "AI 服务地址不是 https。为保护 API Key，只有本机或局域网地址可以用 http。";
