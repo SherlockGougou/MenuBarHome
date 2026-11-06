@@ -590,6 +590,10 @@
       "category" : "noUsableProperties",
       "deviceType" : "vacuum-cleaner"
     },
+    "hfjh.fishbowl.m100" : {
+      "category" : "genericControllable",
+      "deviceType" : "fish-tank"
+    },
     "hhcc.bleflowerpot.v2" : {
       "category" : "genericReadOnly",
       "deviceType" : "plant-monitor"
@@ -918,7 +922,15 @@
       "category" : "genericControllable",
       "deviceType" : "electric-steamer"
     },
+    "xiaomi.feeder.iv2002" : {
+      "category" : "genericControllable",
+      "deviceType" : "pet-feeder"
+    },
     "xiaomi.fishbowl.m200" : {
+      "category" : "genericControllable",
+      "deviceType" : "fish-tank"
+    },
+    "xiaomi.fishbowl.m300" : {
       "category" : "genericControllable",
       "deviceType" : "fish-tank"
     },
@@ -963,14 +975,14 @@
     "categories" : {
       "droppedControllable" : 0,
       "droppedReadOnly" : 0,
-      "genericControllable" : 91,
+      "genericControllable" : 94,
       "genericReadOnly" : 14,
       "matched" : 69,
       "misclaimed" : 0,
       "noUsableProperties" : 31
     },
     "deviceTypes" : 177,
-    "specs" : 205,
+    "specs" : 208,
     "unexposedWritableTotal" : 470
   },
   "windowsDivergences" : {

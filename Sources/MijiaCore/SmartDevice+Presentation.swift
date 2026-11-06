@@ -286,7 +286,9 @@ extension SmartDevice {
                 : parts.joined(separator: " · ")
 
         case .generic(let s):
-            let readings = s.readouts.map(\.value).joined(separator: " · ")
+            var parts = s.alerts
+            parts.append(contentsOf: s.readouts.map(\.value))
+            let readings = parts.joined(separator: " · ")
             if !readings.isEmpty { return readings }
             if s.isReadOnly {
                 return L10n.format("只读 · %@", "Read only · %@", s.typeTitle)

@@ -40,6 +40,15 @@ public struct FacetControl: Identifiable, Equatable, Sendable {
     public var writesByDefault: Bool
     public var isHighValue: Bool
     public var target: FacetTarget?
+    /// The action's input properties, in spec order (#7). Empty for properties and no-argument
+    /// actions.
+    public var arguments: [MiotFacetArgument]
+    /// Index in `arguments` the drawer asks the user for; non-nil only for a feeding action.
+    public var portionArgumentIndex: Int?
+    /// Portions already dispensed today, ready to show beside the button and in the confirmation.
+    public var fedToday: String?
+    /// Enabled without the advanced-writes opt-in because the policy always confirms it first.
+    public var isConfirmedWrite: Bool
 
     public init(
         id: String,
@@ -55,7 +64,11 @@ public struct FacetControl: Identifiable, Equatable, Sendable {
         isWritable: Bool,
         writesByDefault: Bool,
         isHighValue: Bool,
-        target: FacetTarget? = nil
+        target: FacetTarget? = nil,
+        arguments: [MiotFacetArgument] = [],
+        portionArgumentIndex: Int? = nil,
+        fedToday: String? = nil,
+        isConfirmedWrite: Bool = false
     ) {
         self.id = id
         self.kind = kind
@@ -71,6 +84,10 @@ public struct FacetControl: Identifiable, Equatable, Sendable {
         self.writesByDefault = writesByDefault
         self.isHighValue = isHighValue
         self.target = target
+        self.arguments = arguments
+        self.portionArgumentIndex = portionArgumentIndex
+        self.fedToday = fedToday
+        self.isConfirmedWrite = isConfirmedWrite
     }
 
     /// MIoT booleans occasionally arrive as 0/1.
@@ -81,5 +98,26 @@ public struct FacetControl: Identifiable, Equatable, Sendable {
     public var selectedOption: MiotFacetOption? {
         guard let raw = value?.intValue else { return nil }
         return options.first { $0.value == raw }
+    }
+}
+
+/// The portion input of a feeding action, shared by the drawer, the confirmation and the command
+/// builder so all three accept and clamp the same counts (#7 review).
+public extension FacetControl {
+    /// The spec range of the portion input, or nil for an action that takes no portion.
+    var portionRange: MiotFacetRange? {
+        guard let index = portionArgumentIndex, arguments.indices.contains(index) else { return nil }
+        return arguments[index].range
+    }
+
+    /// Whole portions the feeding action offers; empty when the spec's range is unusable.
+    var portionOptions: [Int] {
+        portionRange?.validPortionOptions() ?? []
+    }
+
+    /// The portion the action will send, clamped to the spec's range. Falls back to `requested`
+    /// (or one portion) when the spec's range is missing or unusable.
+    func clampedPortion(_ requested: Int?) -> Int {
+        portionRange?.clampedPortion(requested) ?? requested ?? 1
     }
 }

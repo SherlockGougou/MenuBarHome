@@ -46,7 +46,7 @@ struct MiotFacetsTests {
         let specs = try coverageSpecs()
         for modelCase in fixture.models {
             let spec = try #require(specs[modelCase.model], "\(modelCase.model)")
-            let facets = MiotFacetEngine.facets(for: spec)
+            let facets = MiotFacetEngine.facets(for: spec, model: modelCase.model)
             #expect(facets == modelCase.expected, "\(modelCase.model)")
             let highValue = facets.filter(\.highValue)
             #expect(highValue.count <= 8, "\(modelCase.model)")
@@ -158,13 +158,16 @@ struct MiotFacetsTests {
         for (model, spec) in try coverageSpecs() {
             for facet in MiotFacetEngine.facets(for: spec, profiles: profiles) {
                 #expect(
-                    !MiotFacetEngine.matches(facet.serviceName, anyOf: profiles.noise.services),
-                    "\(model) service \(facet.serviceName)"
-                )
-                #expect(
                     !MiotFacetEngine.matches(facet.name, anyOf: profiles.noise.properties),
                     "\(model) property \(facet.name)"
                 )
+                if MiotFacetEngine.matches(facet.serviceName, anyOf: profiles.noise.services) {
+                    // A noisy vendor service only survives through the named exceptions (#7).
+                    #expect(
+                        MiotFacetEngine.matches(facet.name, anyOf: profiles.noise.keepInNoisyServices),
+                        "\(model) service \(facet.serviceName) property \(facet.name)"
+                    )
+                }
             }
         }
     }
@@ -173,7 +176,7 @@ struct MiotFacetsTests {
     func coverageFacetsAreWellFormed() throws {
         for (model, spec) in try coverageSpecs() {
             var ids: Set<String> = []
-            for facet in MiotFacetEngine.facets(for: spec) {
+            for facet in MiotFacetEngine.facets(for: spec, model: model) {
                 #expect(ids.insert(facet.id).inserted, "\(model) duplicate \(facet.id)")
                 switch facet.kind {
                 case .toggle:
@@ -241,7 +244,7 @@ struct MiotFacetsTests {
     private func measureCoverage() throws -> CoverageGolden {
         var models: [String: CoverageEntry] = [:]
         for (model, spec) in try coverageSpecs() {
-            let facets = MiotFacetEngine.facets(for: spec)
+            let facets = MiotFacetEngine.facets(for: spec, model: model)
             models[model] = CoverageEntry(
                 ids: facets.map(\.id),
                 highValue: facets.filter(\.highValue).map(\.id)

@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "noise": {
     "services": [
       "device-information",
@@ -14,7 +14,43 @@
       "*-timestamp",
       "*-list",
       "*-code",
-      "*-result*"
+      "*-result*",
+      "scenario-*"
+    ],
+    "keepInNoisyServices": [
+      "temp-warn-*",
+      "temperature-warn-*",
+      "today-feeded-num"
+    ]
+  },
+  "alerts": {
+    "words": [
+      "low",
+      "low1",
+      "blocked",
+      "blockage",
+      "bockage",
+      "fault",
+      "error",
+      "exception",
+      "abnormal",
+      "not inserted",
+      "stuck",
+      "empty",
+      "timeout",
+      "change",
+      "offline",
+      "alarm",
+      "堵塞",
+      "故障",
+      "异常",
+      "未插入",
+      "缺水",
+      "缺粮",
+      "超时",
+      "更换",
+      "不足",
+      "低水位"
     ]
   },
   "facets": {
@@ -80,6 +116,64 @@
       "fan-level"
     ]
   },
+  "overrides": [
+    {
+      "models": [
+        "*.fishbowl.*",
+        "*.fish-tank.*"
+      ],
+      "deviceTypes": [
+        "fish-tank"
+      ],
+      "highlight": [
+        "fish-tank.water-pump",
+        "pump-flux",
+        "pet-food-out",
+        "light.on",
+        "light.mode",
+        "light.brightness",
+        "*filter*",
+        "*warn*",
+        "upper-temperature"
+      ],
+      "readouts": [
+        "temperature"
+      ],
+      "feeding": {
+        "action": "pet-food-out",
+        "fedToday": [
+          "today-feeded-num",
+          "sum-fed-measure",
+          "feeding-quantity"
+        ]
+      }
+    },
+    {
+      "models": [
+        "*.feeder.*"
+      ],
+      "deviceTypes": [
+        "pet-feeder"
+      ],
+      "highlight": [
+        "pet-food-out",
+        "target-feeding-measure",
+        "pet-food-left-level",
+        "fault"
+      ],
+      "readouts": [
+        "pet-food-left-level"
+      ],
+      "feeding": {
+        "action": "pet-food-out",
+        "fedToday": [
+          "today-feeded-num",
+          "sum-fed-measure",
+          "feeding-quantity"
+        ]
+      }
+    }
+  ],
   "fallbackClaims": {
     "air-condition-outlet": [
       "air-conditioner"

@@ -1023,7 +1023,7 @@
           "isWritable": true,
           "risk": "high",
           "writesByDefault": false,
-          "highValue": false
+          "highValue": true
         },
         {
           "id": "2.3",
@@ -1040,7 +1040,7 @@
           "isWritable": true,
           "risk": "high",
           "writesByDefault": false,
-          "highValue": false
+          "highValue": true
         },
         {
           "id": "2.4",
@@ -1096,7 +1096,7 @@
           "isWritable": true,
           "risk": "high",
           "writesByDefault": false,
-          "highValue": false
+          "highValue": true
         },
         {
           "id": "3.1",
@@ -1109,7 +1109,7 @@
           "isWritable": true,
           "risk": "low",
           "writesByDefault": true,
-          "highValue": false
+          "highValue": true
         },
         {
           "id": "3.2",
@@ -1166,7 +1166,7 @@
           "isWritable": true,
           "risk": "high",
           "writesByDefault": false,
-          "highValue": true
+          "highValue": false
         },
         {
           "id": "3.a1",
@@ -1327,6 +1327,46 @@
           ],
           "isWritable": false,
           "risk": "low",
+          "writesByDefault": false,
+          "highValue": false
+        },
+        {
+          "id": "13.2",
+          "kind": "toggle",
+          "serviceId": 13,
+          "serviceName": "temp-custom",
+          "propertyId": 2,
+          "name": "temp-warn-switch",
+          "isWritable": true,
+          "risk": "high",
+          "writesByDefault": false,
+          "highValue": true
+        },
+        {
+          "id": "13.3",
+          "kind": "slider",
+          "serviceId": 13,
+          "serviceName": "temp-custom",
+          "propertyId": 3,
+          "name": "temp-warn-min",
+          "unit": "celsius",
+          "range": { "min": 0, "max": 40, "step": 1 },
+          "isWritable": true,
+          "risk": "high",
+          "writesByDefault": false,
+          "highValue": false
+        },
+        {
+          "id": "13.4",
+          "kind": "slider",
+          "serviceId": 13,
+          "serviceName": "temp-custom",
+          "propertyId": 4,
+          "name": "temp-warn-max",
+          "unit": "celsius",
+          "range": { "min": 0, "max": 40, "step": 1 },
+          "isWritable": true,
+          "risk": "high",
           "writesByDefault": false,
           "highValue": false
         }

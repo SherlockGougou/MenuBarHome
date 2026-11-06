@@ -219,6 +219,13 @@
       "windows": "unsupported"
     },
     {
+      "id": "fish-tanks-pet-feeders",
+      "en": "Fish Tanks & Pet Feeders",
+      "zh": "智能鱼缸与宠物喂食器",
+      "macos": "supported",
+      "windows": "unsupported"
+    },
+    {
       "id": "camera-live",
       "en": "Camera Live View",
       "zh": "摄像机实时画面",
