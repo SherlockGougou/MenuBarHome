@@ -26,10 +26,16 @@ case "$GIT_COMMON_DIR" in
     *) GIT_COMMON_DIR="$ROOT_DIR/$GIT_COMMON_DIR" ;;
 esac
 if [ -n "$GIT_COMMON_DIR" ] && [ -d "$GIT_COMMON_DIR/hooks" ]; then
+    # Every worktree shares this hook, so it must not point at one worktree's copy: a symlink to a
+    # worktree that was later removed dangles, and git then skips the hook without a word. The
+    # wrapper runs the committing worktree's own scripts/hooks/pre-commit.
     HOOK_PATH="$GIT_COMMON_DIR/hooks/pre-commit"
-    HOOK_SOURCE="$ROOT_DIR/scripts/hooks/pre-commit"
-    if [ -f "$HOOK_SOURCE" ] && [ "$(readlink "$HOOK_PATH" 2>/dev/null || true)" != "$HOOK_SOURCE" ]; then
-        ln -sfn "$HOOK_SOURCE" "$HOOK_PATH" 2>/dev/null || true
+    HOOK_WRAPPER='#!/usr/bin/env bash
+# Installed by scripts/check.sh: run the committing worktree'"'"'s own gate.
+exec bash "$(git rev-parse --show-toplevel)/scripts/hooks/pre-commit" "$@"'
+    if [ -L "$HOOK_PATH" ] || [ "$(cat "$HOOK_PATH" 2>/dev/null || true)" != "$HOOK_WRAPPER" ]; then
+        rm -f "$HOOK_PATH"
+        printf '%s\n' "$HOOK_WRAPPER" > "$HOOK_PATH" && chmod +x "$HOOK_PATH" 2>/dev/null || true
     fi
 fi
 
@@ -230,8 +236,8 @@ elif ! command -v swift >/dev/null 2>&1; then
     swift_skipped=1
     echo "⏭️  跳过 Swift 门槛：未找到 swift"
 elif [ "$SKIP_SNAPSHOTS" = "1" ]; then
-    # The local macOS renderer drifts from the CI-recorded baselines on every run, so a local gate
-    # that includes SnapshotTests can never pass. CI still records and compares the baselines.
+    # For a machine whose renderer is not the reference (any Mac other than the one that records the
+    # baselines and runs CI). The default gate compares snapshots.
     echo "🧪 [3/4] 运行 Swift 单元测试（跳过快照）与双端黄金语料校验..."
     swift test --skip SnapshotTests || swift_status=$?
 else
