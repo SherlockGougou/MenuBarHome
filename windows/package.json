@@ -8,14 +8,13 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/core.test.ts tests/ui.test.ts tests/panelPrefs.test.ts tests/i18n.test.ts tests/listCut.test.ts tests/fallbackSpecs.test.ts tests/miotCoverage.test.ts tests/miotFacets.test.ts tests/speakerOpener.test.ts",
+    "test": "node --import ./tests/tsLoader.mjs --test tests/tsLoader.test.ts tests/core.test.ts tests/ui.test.ts tests/panelPrefs.test.ts tests/i18n.test.ts tests/listCut.test.ts tests/fallbackSpecs.test.ts tests/miotCoverage.test.ts tests/miotFacets.test.ts tests/speakerOpener.test.ts",
     "tauri": "tauri"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.2.0",
     "@types/node": "^22.10.0",
     "happy-dom": "^21.0.3",
-    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
   }

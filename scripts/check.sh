@@ -247,7 +247,7 @@ fi
 
 echo "🧪 [4/4] 运行 Windows 前端测试与类型检查..."
 windows_status=0
-if [ -x "windows/node_modules/.bin/tsx" ]; then
+if [ -x "windows/node_modules/.bin/tsc" ]; then
     (cd windows && npm test && npm run typecheck) || windows_status=$?
 else
     echo "⏭️  跳过 Windows 门槛：未找到 windows/node_modules（先 cd windows && npm ci）"

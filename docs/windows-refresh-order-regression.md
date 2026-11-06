@@ -11,7 +11,7 @@ Windows 面板每约 6 秒拉取米家设备列表。此前 `refreshXiaomiDevice
 在 `windows/` 运行：
 
 ```sh
-npx tsx --test --test-name-pattern="permutes" tests/ui.test.ts
+node --import ./tests/tsLoader.mjs --test --test-name-pattern="permutes" tests/ui.test.ts
 ```
 
 测试通过真实面板计时器、米家响应解析和设备合成路径，在模拟的原生 HTTP 边界反转设备、房间返回顺序。修复前输出：
