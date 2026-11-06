@@ -202,6 +202,13 @@
       "windows": "supported"
     },
     {
+      "id": "covers-curtains",
+      "en": "Curtains & Window Openers",
+      "zh": "窗帘与开窗器",
+      "macos": "supported",
+      "windows": "partial"
+    },
+    {
       "id": "code-signing",
       "en": "Code Signing & Integrity",
       "zh": "安装签名与更新机制",

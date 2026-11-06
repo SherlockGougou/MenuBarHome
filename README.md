@@ -132,6 +132,7 @@ The macOS version is built natively in Swift 6, while the Windows 11 client is a
 | **Camera Live View** | ✅ Supported | ✅ Supported | Click a card for a pinned live window: macOS uses HLS / HA snapshots; Windows ships a private P2P bridge (bundled helpers, SD/HD/Ultra quality) |
 | **Layout Editing Resize** | ✅ Supported | ✅ Supported | Edit mode shows an iOS Control Center-style corner arc handle on each card's bottom-right: drag out/in to step half ↔ full ↔ panel, or tap it to cycle sizes |
 | **Visual Look** | ✅ One system look + 4 heights | ✅ Control Center design | macOS keeps system materials only: a device that is on takes the loudest surface its appearance allows — a bright platter in light mode, a lifted well one step above the off glass in dark mode — everything else stays quiet glass. |
+| **Curtains & Window Openers** | ✅ Travel state + 2% end snap | ⚠️ Basic cards & stop | macOS shows real opening/closing travel, snaps parked positions within 2% of either end, and stops a moving card. Windows shows cover cards and stops a moving card, but its MIoT synthesis still lacks the expanded status words, target-based travel inference, and end snapping; parity is tracked in #310 |
 | **Code Signing & Integrity** | ⚠️ Self-signed + Ed25519 updates | ⚠️ Unsigned package | macOS requires manual Gatekeeper approval; Windows shows SmartScreen prompt |
 
 ---

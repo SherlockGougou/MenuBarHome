@@ -273,6 +273,73 @@ struct CoverMovingStateTests {
         #expect(store.devices.first?.statusSubtitle == "正在打开")
     }
 
+    @Test("An expired cover lock drops its pre-command origin before a later pause")
+    @MainActor
+    func expiredCoverLockDropsOrigin() async throws {
+        let parked = try coverDevice(current: 0, target: 0, status: 0)
+        let (store, mock) = try await makeStore([parked])
+        let card = try #require(store.devices.first)
+        #expect(await store.togglePrimary(card)?.value == true)
+        let id = parked.id
+        // The mock echoes a snapshot while the command is in flight. Pin the state the command
+        // owns so this test exercises lock expiry rather than echo timing.
+        store.coverCommandOrigins[id] = 0
+        store.optimisticLockUntil[id] = ContinuousClock.now.advanced(by: .seconds(60))
+        #expect(store.coverCommandOrigins[id] == 0)
+        let optimistic = try #require(store.devices.first?.coverSpec)
+        #expect(optimistic.positionPercent == 100)
+        #expect(optimistic.motion == .opening)
+
+        // The command never gets a confirming snapshot, so its lock expires. A later external
+        // movement still carries the old origin, which equals the position the motor stops at.
+        store.optimisticLockUntil[id] = ContinuousClock.now.advanced(by: .seconds(-1))
+        let moving = try coverDevice(current: 0, target: 100, status: 1)
+        let beforeMoving = store.snapshotGeneration
+        await mock.updateSnapshot(SynthesizedHome(devices: [moving]))
+        await waitUntil { store.snapshotGeneration > beforeMoving }
+        #expect(store.coverCommandOrigins[id] == nil, "an expired lock must drop its origin")
+
+        #expect(await store.togglePrimary(try #require(store.devices.first))?.value == true)
+        let stopped = try coverDevice(current: 0, target: 0, status: 0)
+        await mock.updateSnapshot(SynthesizedHome(devices: [stopped]))
+        await waitUntil { store.devices.first?.coverSpec?.positionPercent == 0 }
+        let settled = try #require(store.devices.first?.coverSpec)
+        #expect(settled.positionPercent == 0, "the real stop at the old origin must not be hidden")
+        #expect(settled.motion == .stopped)
+    }
+
+    @Test("An expired cover lock drops its origin before a pause, even with no snapshot in between")
+    @MainActor
+    func expiredCoverLockDropsOriginBeforePause() async throws {
+        let parked = try coverDevice(current: 0, target: 0, status: 0)
+        let (store, mock) = try await makeStore([parked])
+        let id = parked.id
+        #expect(await store.togglePrimary(try #require(store.devices.first))?.value == true)
+        // The command is still opening from 0 and its lock runs out without a confirming
+        // snapshot. Pin that state so no merge path clears the origin first.
+        store.coverCommandOrigins[id] = 0
+        store.optimisticLockUntil[id] = ContinuousClock.now.advanced(by: .seconds(-1))
+        #expect(store.devices.first?.coverSpec?.motion == .opening)
+
+        // The pause runs synchronously, so the origin it records is observable before the
+        // command echo can reach the merge path.
+        let pause = store.togglePrimary(try #require(store.devices.first))
+        #expect(pause != nil, "the moving cover accepts a pause")
+        #expect(store.coverCommandOrigins[id] != 0, "a pause must not inherit the expired origin")
+        #expect(await pause?.value == true)
+        #expect(store.devices.first?.coverSpec?.motion == .stopped)
+
+        // The motor really stopped at 0, the expired origin. Reading that stop as the stale
+        // pre-command snapshot would hide it behind the optimistic 100 until the pause lock runs
+        // out, so the card must settle on 0.
+        let stopped = try coverDevice(current: 0, target: 0, status: 0)
+        await mock.updateSnapshot(SynthesizedHome(devices: [stopped]))
+        await waitUntil { store.devices.first?.coverSpec?.positionPercent == 0 }
+        let settled = try #require(store.devices.first?.coverSpec)
+        #expect(settled.positionPercent == 0, "the real stop at the expired origin must reach the card")
+        #expect(settled.motion == .stopped)
+    }
+
     @Test("A travel status cannot unlock before the reported position leaves the origin")
     @MainActor
     func travelStatusWithoutReportedMovementKeepsLock() async throws {
