@@ -507,13 +507,14 @@ extension HomeStore {
             expectedRevisions[item.deviceId] = item.lockRevision
         }
         for failedId in failedDeviceIds {
-            guard optimisticLockRevision[failedId] == expectedRevisions[failedId] else { continue }
-            if let pre = preUndoById[failedId],
-               let idx = devices.firstIndex(where: { $0.id == failedId }) {
-                devices[idx] = pre
-            }
-            optimisticLockUntil.removeValue(forKey: failedId)
-            coverCommandOrigins.removeValue(forKey: failedId)
+            guard let current = devices.first(where: { $0.id == failedId }) else { continue }
+            let write = OptimisticWrite(
+                deviceId: failedId,
+                previous: preUndoById[failedId] ?? current,
+                revision: expectedRevisions[failedId],
+                isShown: true
+            )
+            revert(write)
         }
     }
 

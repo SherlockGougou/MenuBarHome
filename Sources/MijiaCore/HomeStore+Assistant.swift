@@ -895,34 +895,24 @@ extension HomeStore {
             }
         }
 
-        guard let idx = devices.firstIndex(where: { $0.id == intent.targetId }) else { return .skipped }
-        let previous = devices[idx]
+        guard let previous = devices.first(where: { $0.id == intent.targetId }) else { return .skipped }
         guard previous.isOnline else { return .offline(previous.name) }
         // Appliance cards are not assistant-controllable in this cut. Their `.power` effect exists
         // only so All Off undo can restore them; direct assistant plans still skip them (#300).
         guard IntentDeviceCategory(previous).isAssistantControllable else { return .skipped }
         guard let effect = Self.assistantEffect(of: intent.operation, on: previous) else { return .skipped }
 
-        let lockRevision: UInt64?
-        if !previous.isMomentaryButton {
-            devices[idx] = effect.updated
-            lockRevision = lockOptimistic(previous.id, duration: .seconds(3.0))
-        } else {
-            lockRevision = nil
-        }
+        let write = beginOptimisticWrite(
+            from: previous,
+            to: previous.isMomentaryButton ? nil : effect.updated,
+            lock: .seconds(3.0)
+        )
         do {
-            try await executeDeviceCommand(effect.command)
+            try await send(effect.command, for: write, context: context)
             guard context == controlContextID else { return .skipped }
             return .applied(intent: intent, deviceId: previous.isMomentaryButton ? nil : previous.id, restore: effect.restore)
         } catch {
             guard context == controlContextID else { return .skipped }
-            if !previous.isMomentaryButton, optimisticLockRevision[previous.id] == lockRevision {
-                if let revertIdx = devices.firstIndex(where: { $0.id == previous.id }) {
-                    devices[revertIdx] = previous
-                }
-                optimisticLockUntil.removeValue(forKey: previous.id)
-                coverCommandOrigins.removeValue(forKey: previous.id)
-            }
             return .failed(previous.name)
         }
     }

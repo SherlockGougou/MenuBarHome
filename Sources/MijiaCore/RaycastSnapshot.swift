@@ -1029,21 +1029,64 @@ extension HomeStore {
         return nil
     }
 
-    private func executeDirectLightMoonlight(at idx: Int) async -> (handled: Bool, message: String, isError: Bool) {
+    typealias RaycastDirectResult = (handled: Bool, message: String, isError: Bool)
+
+    /// The lock-screen and offline checks every direct Raycast command runs first, with the
+    /// message Raycast shows when one refuses. Returns the device when control may proceed.
+    private func raycastControllable(at idx: Int) -> (device: SmartDevice?, refusal: RaycastDirectResult?) {
         let previousToastId = toastNotice?.id
         guard !rejectControlWhileLocked() else {
             let msg = (toastNotice?.id != previousToastId ? toastNotice?.message : nil)
                 ?? L10n.tr("屏幕已锁定，已拒绝控制", "Screen is locked; control rejected")
-            return (true, msg, true)
+            return (nil, (true, msg, true))
         }
         let device = devices[idx]
         guard device.isOnline else {
-            return (true, L10n.format("%@ 当前离线", "%@ is offline", device.name), true)
+            return (nil, (true, L10n.format("%@ 当前离线", "%@ is offline", device.name), true))
         }
+        return (device, nil)
+    }
+
+    /// The hazard confirmation, reporting a refusal the way Raycast shows it.
+    private func raycastConfirm(_ operation: IntentOperation, for device: SmartDevice) -> RaycastDirectResult? {
+        let preConfirmToastId = toastNotice?.id
+        guard allowManualControl(operation, for: device) else {
+            let msg = (toastNotice?.id != preConfirmToastId ? toastNotice?.message : nil)
+                ?? L10n.format("已取消「%@」的操作", "Cancelled the action for \"%@\"", device.name)
+            return (true, msg, true)
+        }
+        return nil
+    }
+
+    /// Shows `updated`, sends `commands`, and reports the outcome as a toast and a Raycast reply.
+    /// A failure rolls the row back through the control-write module.
+    private func raycastWrite(
+        from device: SmartDevice,
+        to updated: SmartDevice,
+        commands: [DeviceCommand],
+        lock: Duration,
+        habitIntents: [DeviceIntent] = [],
+        success: String
+    ) async -> RaycastDirectResult {
+        let write = beginOptimisticWrite(from: device, to: updated, lock: lock)
+        do {
+            try await send(commands, for: write)
+            if !habitIntents.isEmpty { confirmManualControl(intents: habitIntents) }
+            showToast(success, isError: false)
+            return (true, success, false)
+        } catch {
+            let msg = L10n.format("%@ 响应失败", "%@ failed to respond", device.name)
+            showToast(msg, isError: true)
+            return (true, msg, true)
+        }
+    }
+
+    private func executeDirectLightMoonlight(at idx: Int) async -> RaycastDirectResult {
+        let check = raycastControllable(at: idx)
+        guard let device = check.device else { return check.refusal ?? (false, "", false) }
         guard case .light(var spec) = device.kind else {
             return (false, "", false)
         }
-        let fallback = device
         var commands: [DeviceCommand] = []
         spec.isOn = true
         if spec.brightnessWritable {
@@ -1069,49 +1112,24 @@ extension HomeStore {
         guard !commands.isEmpty else {
             return (true, L10n.format("%@ 不支持柔和月光调节", "%@ does not support Moonlight mode", device.name), true)
         }
-        devices[idx].kind = .light(spec)
+        var updated = device
+        updated.kind = .light(spec)
         recordManualLightUse(device.id)
-        lockOptimistic(device.id, duration: .seconds(2.5))
-        do {
-            for cmd in commands {
-                try await executeDeviceCommand(cmd)
-            }
-            confirmManualControl(intents: [.init(targetId: device.id, operation: .brightness(15))])
-            let msg = L10n.tr("已将\(device.name)设为柔和月光（15% · 2700K）", "Set \(device.name) to Moonlight (15% · 2700K)")
-            showToast(msg, isError: false)
-            return (true, msg, false)
-        } catch {
-            if let restoreIdx = devices.firstIndex(where: { $0.id == device.id }) {
-                devices[restoreIdx] = fallback
-            }
-            optimisticLockUntil.removeValue(forKey: device.id)
-            let msg = L10n.format("%@ 响应失败", "%@ failed to respond", device.name)
-            showToast(msg, isError: true)
-            return (true, msg, true)
-        }
+        return await raycastWrite(
+            from: device, to: updated, commands: commands, lock: .seconds(2.5),
+            habitIntents: [.init(targetId: device.id, operation: .brightness(15))],
+            success: L10n.tr("已将\(device.name)设为柔和月光（15% · 2700K）", "Set \(device.name) to Moonlight (15% · 2700K)")
+        )
     }
 
-    private func executeDirectCoverPosition(at idx: Int, percent: Int) async -> (handled: Bool, message: String, isError: Bool) {
-        let previousToastId = toastNotice?.id
-        guard !rejectControlWhileLocked() else {
-            let msg = (toastNotice?.id != previousToastId ? toastNotice?.message : nil)
-                ?? L10n.tr("屏幕已锁定，已拒绝控制", "Screen is locked; control rejected")
-            return (true, msg, true)
-        }
-        let device = devices[idx]
-        guard device.isOnline else {
-            return (true, L10n.format("%@ 当前离线", "%@ is offline", device.name), true)
-        }
+    private func executeDirectCoverPosition(at idx: Int, percent: Int) async -> RaycastDirectResult {
+        let check = raycastControllable(at: idx)
+        guard let device = check.device else { return check.refusal ?? (false, "", false) }
         guard case .cover(var spec) = device.kind else {
             return (false, "", false)
         }
         let clamped = max(0, min(100, percent))
-        let preConfirmToastId = toastNotice?.id
-        guard allowManualControl(clamped > 0 ? .power(true) : .power(false), for: device) else {
-            let msg = (toastNotice?.id != preConfirmToastId ? toastNotice?.message : nil)
-                ?? L10n.format("已取消「%@」的操作", "Cancelled the action for \"%@\"", device.name)
-            return (true, msg, true)
-        }
+        if let refusal = raycastConfirm(clamped > 0 ? .power(true) : .power(false), for: device) { return refusal }
         let command: DeviceCommand?
         if clamped == 100 {
             if !spec.positionWritable, let open = spec.openDescription {
@@ -1141,83 +1159,37 @@ extension HomeStore {
         guard let cmd = command else {
             return (true, L10n.format("%@ 不支持该位置调节", "%@ does not support that position", device.name), true)
         }
-        let fallback = device
         spec.positionPercent = clamped
-        devices[idx].kind = .cover(spec)
-        lockOptimistic(device.id, duration: .seconds(8))
-        do {
-            try await executeDeviceCommand(cmd)
-            let msg: String
-            if clamped == 100 {
-                msg = L10n.tr("已打开\(device.name)", "Opened \(device.name)")
-            } else if clamped == 0 {
-                msg = L10n.tr("已关闭\(device.name)", "Closed \(device.name)")
-            } else {
-                msg = L10n.tr("已将\(device.name)开到 \(clamped)%", "Set \(device.name) to \(clamped)%")
-            }
-            showToast(msg, isError: false)
-            return (true, msg, false)
-        } catch {
-            if let restoreIdx = devices.firstIndex(where: { $0.id == device.id }) {
-                devices[restoreIdx] = fallback
-            }
-            optimisticLockUntil.removeValue(forKey: device.id)
-            let msg = L10n.format("%@ 响应失败", "%@ failed to respond", device.name)
-            showToast(msg, isError: true)
-            return (true, msg, true)
+        var updated = device
+        updated.kind = .cover(spec)
+        let success: String
+        if clamped == 100 {
+            success = L10n.tr("已打开\(device.name)", "Opened \(device.name)")
+        } else if clamped == 0 {
+            success = L10n.tr("已关闭\(device.name)", "Closed \(device.name)")
+        } else {
+            success = L10n.tr("已将\(device.name)开到 \(clamped)%", "Set \(device.name) to \(clamped)%")
         }
+        return await raycastWrite(from: device, to: updated, commands: [cmd], lock: .seconds(8), success: success)
     }
 
-    private func executeDirectFanPercentage(at idx: Int, percent: Int) async -> (handled: Bool, message: String, isError: Bool) {
-        let previousToastId = toastNotice?.id
-        guard !rejectControlWhileLocked() else {
-            let msg = (toastNotice?.id != previousToastId ? toastNotice?.message : nil)
-                ?? L10n.tr("屏幕已锁定，已拒绝控制", "Screen is locked; control rejected")
-            return (true, msg, true)
-        }
-        let device = devices[idx]
-        guard device.isOnline else {
-            return (true, L10n.format("%@ 当前离线", "%@ is offline", device.name), true)
-        }
-        guard case .fan(var spec) = device.kind, spec.speedWritable else {
+    private func executeDirectFanPercentage(at idx: Int, percent: Int) async -> RaycastDirectResult {
+        let check = raycastControllable(at: idx)
+        guard let device = check.device else { return check.refusal ?? (false, "", false) }
+        guard case .fan(let spec) = device.kind, spec.speedWritable,
+              let change = Self.fanPercentageChange(device, percent: percent) else {
             return (true, L10n.format("%@ 不支持风速百分比调节", "%@ does not support fan speed percentage", device.name), true)
         }
         let clamped = max(1, min(100, percent))
-        let fallback = device
-        spec.isOn = true
-        spec.percentage = clamped
-        if let favMode = spec.availablePresetModes.first(where: { $0.caseInsensitiveCompare("Favorite") == .orderedSame }) {
-            spec.presetMode = favMode
-        }
-        devices[idx].kind = .fan(spec)
-        lockOptimistic(device.id, duration: .seconds(2.5))
-        do {
-            try await executeDeviceCommand(.setFanPercentage(entityId: spec.entityId, percent: clamped))
-            let msg = L10n.tr("已将\(device.name)风速调到 \(clamped)%", "Set \(device.name) fan speed to \(clamped)%")
-            showToast(msg, isError: false)
-            return (true, msg, false)
-        } catch {
-            if let restoreIdx = devices.firstIndex(where: { $0.id == device.id }) {
-                devices[restoreIdx] = fallback
-            }
-            optimisticLockUntil.removeValue(forKey: device.id)
-            let msg = L10n.format("%@ 响应失败", "%@ failed to respond", device.name)
-            showToast(msg, isError: true)
-            return (true, msg, true)
-        }
+        return await raycastWrite(
+            from: device, to: change.updated, commands: [change.command], lock: .seconds(2.5),
+            success: L10n.tr("已将\(device.name)风速调到 \(clamped)%", "Set \(device.name) fan speed to \(clamped)%")
+        )
     }
 
-    private func executeDirectFanPreset(at idx: Int, modeWord: String) async -> (handled: Bool, message: String, isError: Bool) {
-        let previousToastId = toastNotice?.id
-        guard !rejectControlWhileLocked() else {
-            let msg = (toastNotice?.id != previousToastId ? toastNotice?.message : nil)
-                ?? L10n.tr("屏幕已锁定，已拒绝控制", "Screen is locked; control rejected")
-            return (true, msg, true)
-        }
-        let device = devices[idx]
-        guard device.isOnline else {
-            return (true, L10n.format("%@ 当前离线", "%@ is offline", device.name), true)
-        }
+    private func executeDirectFanPreset(at idx: Int, modeWord: String) async -> RaycastDirectResult {
+        let check = raycastControllable(at: idx)
+        guard let device = check.device else { return check.refusal ?? (false, "", false) }
         guard case .fan(var spec) = device.kind else {
             return (false, "", false)
         }
@@ -1232,78 +1204,37 @@ extension HomeStore {
             ?? (canonical == "sleep" ? FanSpeedMatcher.match("silent", in: spec.availablePresetModes) : nil)
             ?? spec.availablePresetModes.first(where: { $0.localizedCaseInsensitiveContains(canonical) })
             ?? (canonical == "auto" ? "Auto" : canonical == "sleep" ? "Sleep" : "Favorite")
-        let fallback = device
         spec.isOn = true
         spec.presetMode = matchedPreset
-        devices[idx].kind = .fan(spec)
-        lockOptimistic(device.id, duration: .seconds(2.2))
-        do {
-            try await executeDeviceCommand(.setFanPresetMode(entityId: spec.entityId, presetMode: matchedPreset))
-            confirmManualControl(intents: [.init(targetId: device.id, operation: .fanSpeed(matchedPreset))])
-            let msg = L10n.tr("已将\(device.name)设为\(modeWord)模式", "Set \(device.name) to \(matchedPreset) mode")
-            showToast(msg, isError: false)
-            return (true, msg, false)
-        } catch {
-            if let restoreIdx = devices.firstIndex(where: { $0.id == device.id }) {
-                devices[restoreIdx] = fallback
-            }
-            optimisticLockUntil.removeValue(forKey: device.id)
-            let msg = L10n.format("%@ 响应失败", "%@ failed to respond", device.name)
-            showToast(msg, isError: true)
-            return (true, msg, true)
-        }
+        var updated = device
+        updated.kind = .fan(spec)
+        return await raycastWrite(
+            from: device, to: updated,
+            commands: [.setFanPresetMode(entityId: spec.entityId, presetMode: matchedPreset)],
+            lock: .seconds(2.2),
+            habitIntents: [.init(targetId: device.id, operation: .fanSpeed(matchedPreset))],
+            success: L10n.tr("已将\(device.name)设为\(modeWord)模式", "Set \(device.name) to \(matchedPreset) mode")
+        )
     }
 
-    private func executeDirectVacuumAction(at idx: Int, action: VacuumAction) async -> (handled: Bool, message: String, isError: Bool) {
-        let previousToastId = toastNotice?.id
-        guard !rejectControlWhileLocked() else {
-            let msg = (toastNotice?.id != previousToastId ? toastNotice?.message : nil)
-                ?? L10n.tr("屏幕已锁定，已拒绝控制", "Screen is locked; control rejected")
-            return (true, msg, true)
-        }
-        let device = devices[idx]
-        guard device.isOnline else {
-            return (true, L10n.format("%@ 当前离线", "%@ is offline", device.name), true)
-        }
-        guard case .vacuum(var spec) = device.kind, spec.actionsWritable else {
+    private func executeDirectVacuumAction(at idx: Int, action: VacuumAction) async -> RaycastDirectResult {
+        let check = raycastControllable(at: idx)
+        guard let device = check.device else { return check.refusal ?? (false, "", false) }
+        guard case .vacuum(let spec) = device.kind, spec.actionsWritable,
+              let change = Self.vacuumActionChange(device, action: action) else {
             return (true, L10n.format("%@ 不支持该清扫动作", "%@ does not support that vacuum action", device.name), true)
         }
-        let preConfirmToastId = toastNotice?.id
-        guard allowManualControl(action == .start ? .power(true) : .power(false), for: device) else {
-            let msg = (toastNotice?.id != preConfirmToastId ? toastNotice?.message : nil)
-                ?? L10n.format("已取消「%@」的操作", "Cancelled the action for \"%@\"", device.name)
-            return (true, msg, true)
-        }
-        let fallback = device
+        if let refusal = raycastConfirm(action == .start ? .power(true) : .power(false), for: device) { return refusal }
+        let success: String
         switch action {
-        case .start: spec.status = "cleaning"
-        case .pause: spec.status = "paused"
-        case .returnToBase: spec.status = "returning"
+        case .start:
+            success = L10n.tr("已启动\(device.name)清扫", "Started \(device.name)")
+        case .pause:
+            success = L10n.tr("已暂停\(device.name)", "Paused \(device.name)")
+        case .returnToBase:
+            success = L10n.tr("已让\(device.name)返回基站回充", "Sent \(device.name) back to dock")
         }
-        devices[idx].kind = .vacuum(spec)
-        lockOptimistic(device.id, duration: .seconds(2.5))
-        do {
-            try await executeDeviceCommand(.vacuumAction(entityId: spec.entityId, action: action))
-            let msg: String
-            switch action {
-            case .start:
-                msg = L10n.tr("已启动\(device.name)清扫", "Started \(device.name)")
-            case .pause:
-                msg = L10n.tr("已暂停\(device.name)", "Paused \(device.name)")
-            case .returnToBase:
-                msg = L10n.tr("已让\(device.name)返回基站回充", "Sent \(device.name) back to dock")
-            }
-            showToast(msg, isError: false)
-            return (true, msg, false)
-        } catch {
-            if let restoreIdx = devices.firstIndex(where: { $0.id == device.id }) {
-                devices[restoreIdx] = fallback
-            }
-            optimisticLockUntil.removeValue(forKey: device.id)
-            let msg = L10n.format("%@ 响应失败", "%@ failed to respond", device.name)
-            showToast(msg, isError: true)
-            return (true, msg, true)
-        }
+        return await raycastWrite(from: device, to: change.updated, commands: [change.command], lock: .seconds(2.5), success: success)
     }
 
     private static func firstCapture(in text: String, patterns: [String]) -> String? {
