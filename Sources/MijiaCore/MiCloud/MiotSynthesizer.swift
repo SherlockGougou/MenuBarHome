@@ -177,7 +177,8 @@ public enum MiotSynthesizer {
                     did: record.miotDid,
                     values: values,
                     primaryServiceId: service.iid,
-                    excluding: reader.consumed
+                    excluding: reader.consumed,
+                    model: record.model
                 )
                 if !facets.isEmpty {
                     facetsByDevice[device.id] = facets
@@ -220,7 +221,7 @@ public enum MiotSynthesizer {
             // state: readings and the main switch both arrive with the same poll (#6).
             var keys: [MiotPropKey] = []
             var seen: Set<MiotPropKey> = []
-            for facet in MiotFacetEngine.facets(for: scopedSpec) {
+            for facet in MiotFacetEngine.facets(for: scopedSpec, model: device.model) {
                 guard let piid = facet.propertyId,
                       let property = scopedSpec.service(iid: facet.serviceId)?
                           .properties.first(where: { $0.iid == piid }),
@@ -239,7 +240,7 @@ public enum MiotSynthesizer {
             let facetSpec = plans.count > 1
                 ? MiotDeviceSpec(type: spec.type, services: spec.services.filter { $0.iid == service.iid })
                 : scopedSpec
-            for facet in MiotFacetEngine.facets(for: facetSpec) {
+            for facet in MiotFacetEngine.facets(for: facetSpec, model: device.model) {
                 guard let piid = facet.propertyId,
                       let property = facetSpec.service(iid: facet.serviceId)?
                           .properties.first(where: { $0.iid == piid }),
@@ -288,7 +289,8 @@ public enum MiotSynthesizer {
             for: spec,
             did: record.miotDid,
             values: values,
-            primaryServiceId: nil
+            primaryServiceId: nil,
+            model: record.model
         )
         guard !controls.isEmpty else { return nil }
         let power = controls.enumerated()
@@ -314,6 +316,7 @@ public enum MiotSynthesizer {
         if let power, let index = drawerFacets.firstIndex(where: { $0.id == power.id }) {
             drawerFacets.remove(at: index)
         }
+        let override = MiotFacetEngine.profileOverride(for: spec, model: record.model)
         return (
             GenericSpec(
                 deviceType: spec.shortName,
@@ -321,7 +324,8 @@ public enum MiotSynthesizer {
                 isOn: power?.isOn == true,
                 powerControl: power,
                 isReadOnly: !controls.contains { $0.isWritable },
-                readouts: genericReadouts(controls),
+                readouts: genericReadouts(controls, preferred: override?.readouts ?? []),
+                alerts: genericAlerts(controls),
                 symbolName: genericSymbolName(for: spec.shortName)
             ),
             drawerFacets
@@ -342,18 +346,60 @@ public enum MiotSynthesizer {
         return false
     }
 
-    /// At most two readings, high-value facets first and spec order as the tie-break.
-    static func genericReadouts(_ controls: [FacetControl]) -> [GenericSpec.Readout] {
-        controls.enumerated()
-            .filter { $0.element.kind == .reading && $0.element.value != nil }
-            .sorted { lhs, rhs in
-                if lhs.element.isHighValue != rhs.element.isHighValue {
-                    return lhs.element.isHighValue
-                }
-                return lhs.offset < rhs.offset
-            }
-            .prefix(2)
-            .map { _, control in GenericSpec.Readout(value: MiotFacetText.value(control)) }
+    /// At most two readings. A family's preferred names come first (water temperature for a fish
+    /// tank, food level for a feeder), then high-value facets and spec order fill any free slot.
+    static func genericReadouts(
+        _ controls: [FacetControl],
+        preferred: [String] = []
+    ) -> [GenericSpec.Readout] {
+        var picked: [FacetControl] = []
+        for pattern in preferred {
+            guard picked.count < 2 else { break }
+            guard let match = controls.first(where: { control in
+                control.kind == .reading
+                    && control.value != nil
+                    && MiotFacetEngine.matches(control.name, pattern: pattern)
+                    && !picked.contains { $0.id == control.id }
+            }) else { continue }
+            picked.append(match)
+        }
+        if picked.isEmpty {
+            picked = Array(
+                controls.enumerated()
+                    .filter { $0.element.kind == .reading && $0.element.value != nil }
+                    .sorted { lhs, rhs in
+                        if lhs.element.isHighValue != rhs.element.isHighValue {
+                            return lhs.element.isHighValue
+                        }
+                        return lhs.offset < rhs.offset
+                    }
+                    .prefix(2)
+                    .map(\.element)
+            )
+        }
+        return picked.map { GenericSpec.Readout(value: MiotFacetText.value($0)) }
+    }
+
+    /// Readings whose current option says something is wrong: a pump on low water, a blocked or
+    /// faulted pump, an empty food bin, a filter that needs changing (#7). The card and the drawer
+    /// show these instead of leaving the only trace inside 更多设置.
+    static func genericAlerts(_ controls: [FacetControl]) -> [String] {
+        var alerts: [String] = []
+        var seen: Set<String> = []
+        for control in controls {
+            guard control.kind == .reading,
+                  let raw = control.value?.intValue,
+                  let option = control.options.first(where: { $0.value == raw }),
+                  MiotFacetEngine.isAlertLabel(option.label) else { continue }
+            let title = MiotFacetText.title(name: control.name, title: control.title)
+            let text = MiotFacetEngine.alertText(
+                title: title,
+                propertyName: control.name,
+                label: option.label
+            )
+            if seen.insert(text).inserted { alerts.append(text) }
+        }
+        return alerts
     }
 
     /// Device-type label for a generic card. Known MIoT types get a Chinese name; otherwise the
@@ -361,6 +407,7 @@ public enum MiotSynthesizer {
     static func genericTypeTitle(for spec: MiotDeviceSpec) -> String {
         let known: [String: String] = [
             "fish-tank": "鱼缸",
+            "pet-feeder": "宠物喂食器",
             "router": "路由器",
             "gateway": "网关",
             "repeater": "信号放大器",
@@ -398,6 +445,7 @@ public enum MiotSynthesizer {
     static func genericSymbolName(for deviceType: String) -> String {
         switch deviceType {
         case "fish-tank": return "fish.fill"
+        case "pet-feeder": return "pawprint.fill"
         case "router", "gateway", "repeater": return "wifi"
         case "lock": return "lock.fill"
         case "scale", "body-fat-scale": return "scalemass.fill"

@@ -18,8 +18,15 @@ from pathlib import Path
 BASE = "https://miot-spec.org/miot-spec-v2"
 OUT = Path(__file__).resolve().parent.parent / "Tests/Fixtures/miot_coverage_specs.json"
 SECOND_PICK_THRESHOLD = 100
-# Dual-track curtain motor (two curtain services) and a multi-service fish tank.
-EXTRA_MODELS = ["czmydz.curtain.myf5", "xiaomi.fishbowl.m200"]
+# Dual-track curtain motor (two curtain services), the multi-service fish tanks, and a Xiaomi
+# feeder with a desiccant service (#7).
+EXTRA_MODELS = [
+    "czmydz.curtain.myf5",
+    "xiaomi.fishbowl.m200",
+    "xiaomi.fishbowl.m300",
+    "hfjh.fishbowl.m100",
+    "xiaomi.feeder.iv2002",
+]
 
 
 def fetch(url):

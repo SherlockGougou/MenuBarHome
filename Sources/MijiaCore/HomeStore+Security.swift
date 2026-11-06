@@ -40,8 +40,13 @@ extension HomeStore {
         return presentManualControlConfirmation(prompt, for: device)
     }
 
-    func allowManualControl(facet: FacetControl, value: JSONValue?, for device: SmartDevice) -> Bool {
-        guard let prompt = ManualControlPolicy.confirmation(facet: facet, value: value, for: device) else { return true }
+    func allowManualControl(facet: FacetControl, value: JSONValue?, portion: Int? = nil, for device: SmartDevice) -> Bool {
+        guard let prompt = ManualControlPolicy.confirmation(
+            facet: facet,
+            value: value,
+            portion: portion,
+            for: device
+        ) else { return true }
         return presentManualControlConfirmation(prompt, for: device)
     }
 

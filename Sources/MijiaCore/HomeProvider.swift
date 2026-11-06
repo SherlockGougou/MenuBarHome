@@ -650,7 +650,7 @@ public actor HAWebSocketProvider: HomeProvider {
             let domain = eid.hasPrefix("script.") ? "script" : "scene"
             return (domain, "turn_on", ["entity_id": eid])
 
-        case .setMiotProperty(let eid, _, _), .callMiotAction(let eid):
+        case .setMiotProperty(let eid, _, _), .callMiotAction(let eid, _):
             // `execute` rejects these before reaching here; only the Xiaomi cloud understands MIoT.
             return ("miot", "unsupported", ["entity_id": eid])
         }

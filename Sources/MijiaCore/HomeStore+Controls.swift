@@ -693,25 +693,41 @@ extension HomeStore {
         )
     }
 
-    public func runFacetAction(_ deviceId: String, controlId: String) {
+    /// Fires a 更多设置 button. A feeding action takes `portion`, the amount the drawer picked;
+    /// other inputs fall back to the profile default (an enum input prefers the app/remote source).
+    public func runFacetAction(_ deviceId: String, controlId: String, portion: Int? = nil) {
         guard let device = controllableDevice(deviceId), device.isOnline,
               let control = deviceFacets[deviceId]?.first(where: { $0.id == controlId }),
               facetWriteAllowed(control), let target = control.target else { return }
         let command: DeviceCommand
         switch target {
         case .action(let entityId):
-            command = .callMiotAction(entityId: entityId)
+            command = .callMiotAction(
+                entityId: entityId,
+                arguments: Self.facetActionArguments(control, portion: portion)
+            )
         case .haAction(let entityId):
             command = .pressButton(entityId: entityId)
         case .property, .haProperty:
             return
         }
-        guard allowManualControl(facet: control, value: nil, for: device) else { return }
+        guard allowManualControl(facet: control, value: nil, portion: portion, for: device) else { return }
         extendFacetLock(deviceId, duration: .seconds(2.0))
         let pending = FacetWriteState(token: UUID(), origin: nil, bannerID: nil)
         facetWrites[facetWriteKey(deviceId, controlId)] = pending
         dispatchFacetWrite(device: device, controlId: controlId, pending: pending,
                            command: command, adjustment: false)
+    }
+
+    /// Input values for a facet action in spec order. The portion argument uses the drawer's pick,
+    /// clamped to the spec's range; every other input takes its profile default.
+    nonisolated static func facetActionArguments(_ control: FacetControl, portion: Int?) -> [JSONValue] {
+        control.arguments.enumerated().map { index, argument in
+            guard index == control.portionArgumentIndex else {
+                return MiotFacetEngine.defaultActionArgument(argument)
+            }
+            return .number(Double(argument.range?.clampedPortion(portion) ?? portion ?? 1))
+        }
     }
 
     /// The write a facet sends for `value`. MIoT properties carry the raw value; a Home Assistant
@@ -774,7 +790,7 @@ extension HomeStore {
 
     private func facetWriteAllowed(_ control: FacetControl) -> Bool {
         control.isWritable && control.target != nil
-            && (control.writesByDefault || allowAdvancedFacetWrites)
+            && (control.writesByDefault || control.isConfirmedWrite || allowAdvancedFacetWrites)
     }
 
     private func facetWriteKey(_ deviceId: String, _ controlId: String) -> String {

@@ -139,11 +139,14 @@ describe("MIoT facet engine (shared fixture)", () => {
 
   it("drops every noise service and property across the coverage fixture", () => {
     for (const [model, spec] of coverageSpecs()) {
-      for (const facet of buildMiotFacets(spec)) {
-        assert.ok(
-          !matchesMiotFacetPattern(facet.serviceName, DEVICE_PROFILES.noise.services),
-          `${model}: service ${facet.serviceName}`,
-        );
+      for (const facet of buildMiotFacets(spec, DEVICE_PROFILES, model)) {
+        if (matchesMiotFacetPattern(facet.serviceName, DEVICE_PROFILES.noise.services)) {
+          // A noisy vendor service only survives through the named exceptions (#7).
+          assert.ok(
+            matchesMiotFacetPattern(facet.name, DEVICE_PROFILES.noise.keepInNoisyServices),
+            `${model}: service ${facet.serviceName} property ${facet.name}`,
+          );
+        }
         assert.ok(
           !matchesMiotFacetPattern(facet.name, DEVICE_PROFILES.noise.properties),
           `${model}: property ${facet.name}`,
@@ -155,7 +158,7 @@ describe("MIoT facet engine (shared fixture)", () => {
   it("gives every facet a stable id and constraints that match its kind", () => {
     for (const [model, spec] of coverageSpecs()) {
       const ids = new Set<string>();
-      for (const facet of buildMiotFacets(spec)) {
+      for (const facet of buildMiotFacets(spec, DEVICE_PROFILES, model)) {
         assert.ok(!ids.has(facet.id), `${model}: duplicate ${facet.id}`);
         ids.add(facet.id);
         switch (facet.kind) {
@@ -196,7 +199,7 @@ describe("MIoT facet engine (shared fixture)", () => {
   it("matches the shared coverage golden", () => {
     const measured: Record<string, CoverageEntry> = {};
     for (const [model, spec] of coverageSpecs()) {
-      const facets = buildMiotFacets(spec);
+      const facets = buildMiotFacets(spec, DEVICE_PROFILES, model);
       measured[model] = {
         ids: facets.map((facet) => facet.id),
         highValue: facets.filter((facet) => facet.highValue).map((facet) => facet.id),

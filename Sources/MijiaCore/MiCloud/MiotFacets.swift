@@ -7,6 +7,40 @@ public struct DeviceProfiles: Codable, Equatable, Sendable {
     public struct Noise: Codable, Equatable, Sendable {
         public var services: [String]
         public var properties: [String]
+        /// Properties kept even when their service is noise. Vendors hide the water-temperature
+        /// alarm inside `temp-custom` / `fish-tank-custom`, and the feeder's daily portion count
+        /// inside `feeder-custom`; those named properties stay visible (#7).
+        public var keepInNoisyServices: [String]
+    }
+
+    /// Option labels that describe something wrong, matched as whole words so `Flow` is not
+    /// read as `Low` and `No Faults` is not read as a fault (#7).
+    public struct Alerts: Codable, Equatable, Sendable {
+        public var words: [String]
+    }
+
+    /// The portion action of a fish tank or a pet feeder (#7). `action` names the MIoT action and
+    /// `fedToday` names the readings that carry the portions already dispensed today.
+    public struct FeedProfile: Codable, Equatable, Sendable {
+        public var action: String
+        public var fedToday: [String]
+    }
+
+    /// Rules for one device family, matched by the record's model (`*.fishbowl.*`) or by the MIoT
+    /// device type (`fish-tank`). `highlight` replaces the global high-value patterns for that
+    /// family, so a fish tank shows the pump, light, feeding and filter before vendor extras.
+    public struct Override: Codable, Equatable, Sendable {
+        public var models: [String]?
+        public var deviceTypes: [String]?
+        public var highlight: [String]?
+        public var readouts: [String]?
+        public var feeding: FeedProfile?
+
+        public func matches(model: String?, deviceType: String) -> Bool {
+            if let deviceTypes, MiotFacetEngine.matches(deviceType, anyOf: deviceTypes) { return true }
+            if let models, let model, MiotFacetEngine.matches(model, anyOf: models) { return true }
+            return false
+        }
     }
 
     public struct Facets: Codable, Equatable, Sendable {
@@ -49,7 +83,10 @@ public struct DeviceProfiles: Codable, Equatable, Sendable {
 
     public var version: Int
     public var noise: Noise
+    public var alerts: Alerts
     public var facets: Facets
+    /// Device family → its own highlight, readout and feeding rules (#7).
+    public var overrides: [Override]
     /// Device type → services that may claim it when the type names none of its own services
     /// (#296). Anything not listed stays unsupported instead of being drawn as another device.
     public var fallbackClaims: [String: [String]]
@@ -122,6 +159,46 @@ public struct MiotFacetRange: Codable, Equatable, Sendable {
     public var step: Double
 }
 
+/// Portion handling for feeding inputs (#7). The spec's range is an untrusted cloud number, so
+/// every conversion here is bounds-checked: `Int(1e20)` traps and `Array(1...1e20)` allocates
+/// forever (§11).
+public extension MiotFacetRange {
+    /// The most entries a portion picker expands. Feeding specs top out at 30 portions
+    /// (`binuo.feeder.y1`); 64 leaves room for a wider vendor while still bounding a typo'd
+    /// range. Anything beyond the cap is truncated, never allocated.
+    static let maximumPortionOptions = 64
+
+    /// Whole portions inside `min...max`, at most `maxCount` entries, or empty when the range is
+    /// unusable: non-finite bounds, a non-positive step, or a max below min.
+    func validPortionOptions(maxCount: Int = MiotFacetRange.maximumPortionOptions) -> [Int] {
+        guard maxCount > 0, let bounds = integralPortionBounds() else { return [] }
+        var options: [Int] = []
+        options.reserveCapacity(maxCount)
+        for portion in bounds {
+            guard options.count < maxCount else { break }
+            options.append(portion)
+        }
+        return options
+    }
+
+    /// `requested` clamped into the range, or the first portion when it is nil. Nil when the range
+    /// is unusable, so callers keep the requested count instead of inventing a bound.
+    func clampedPortion(_ requested: Int?) -> Int? {
+        guard let bounds = integralPortionBounds() else { return nil }
+        return Swift.min(bounds.upperBound, Swift.max(bounds.lowerBound, requested ?? bounds.lowerBound))
+    }
+
+    /// The whole-number bounds of the range, or nil when either bound falls outside `Int`
+    /// (`Int(exactly:)` refuses overflow instead of trapping) or the range is empty.
+    private func integralPortionBounds() -> ClosedRange<Int>? {
+        guard min.isFinite, max.isFinite, step.isFinite, step > 0,
+              let lower = Int(exactly: min.rounded(.up)),
+              let upper = Int(exactly: max.rounded(.down)),
+              lower <= upper else { return nil }
+        return lower...upper
+    }
+}
+
 public struct MiotFacetArgument: Codable, Equatable, Sendable {
     public var propertyId: Int
     public var name: String
@@ -156,15 +233,27 @@ public struct MiotFacet: Codable, Equatable, Sendable {
 }
 
 public enum MiotFacetEngine {
-    /// Generic facets for one MIoT spec, in spec service/property/action order.
-    public static func facets(for spec: MiotDeviceSpec, profiles: DeviceProfiles = .current) -> [MiotFacet] {
+    /// Generic facets for one MIoT spec, in spec service/property/action order. `model` is the
+    /// device record's model (`xiaomi.fishbowl.m300`), used by model-pattern overrides.
+    public static func facets(
+        for spec: MiotDeviceSpec,
+        profiles: DeviceProfiles = .current,
+        model: String? = nil
+    ) -> [MiotFacet] {
         var facets: [MiotFacet] = []
         let deviceType = spec.shortName
         for service in spec.services {
             let serviceName = service.shortName
-            guard !matches(serviceName, anyOf: profiles.noise.services) else { continue }
-            for property in service.properties
-            where !matches(property.shortName, anyOf: profiles.noise.properties) {
+            let isNoiseService = matches(serviceName, anyOf: profiles.noise.services)
+            for property in service.properties {
+                let name = property.shortName
+                if isNoiseService {
+                    // A noisy vendor service keeps only the named properties the family needs.
+                    guard matches(name, anyOf: profiles.noise.keepInNoisyServices),
+                          !matches(name, anyOf: profiles.noise.properties) else { continue }
+                } else if matches(name, anyOf: profiles.noise.properties) {
+                    continue
+                }
                 if let facet = propertyFacet(
                     property,
                     service: service,
@@ -175,6 +264,7 @@ public enum MiotFacetEngine {
                     facets.append(facet)
                 }
             }
+            guard !isNoiseService else { continue }
             for action in service.actions {
                 if let facet = actionFacet(
                     action,
@@ -187,8 +277,18 @@ public enum MiotFacetEngine {
                 }
             }
         }
-        markHighValue(&facets, profiles: profiles)
+        markHighValue(&facets, override: profileOverride(for: spec, model: model, profiles: profiles), profiles: profiles)
         return facets
+    }
+
+    /// The family rules that apply to this spec: one entry may name the device type, the model
+    /// pattern, or both.
+    public static func profileOverride(
+        for spec: MiotDeviceSpec,
+        model: String? = nil,
+        profiles: DeviceProfiles = .current
+    ) -> DeviceProfiles.Override? {
+        profiles.overrides.first { $0.matches(model: model, deviceType: spec.shortName) }
     }
 
     private static func propertyFacet(
@@ -304,13 +404,40 @@ public enum MiotFacetEngine {
         )
     }
 
-    private static func markHighValue(_ facets: inout [MiotFacet], profiles: DeviceProfiles) {
+    /// The global list marks every matching facet up to `maxVisible` (an AC may show several
+    /// modes); a family override is a priority list instead, so it marks one facet per entry and
+    /// a second filter service cannot spend two of the eight slots (#7).
+    private static func markHighValue(
+        _ facets: inout [MiotFacet],
+        override: DeviceProfiles.Override?,
+        profiles: DeviceProfiles
+    ) {
         var remaining = max(0, profiles.facets.maxVisible)
-        for index in facets.indices where matches(facets[index].name, anyOf: profiles.facets.highValue) {
+        guard let patterns = override?.highlight else {
+            for index in facets.indices where matches(facets[index].name, anyOf: profiles.facets.highValue) {
+                guard remaining > 0 else { break }
+                facets[index].highValue = true
+                remaining -= 1
+            }
+            return
+        }
+        for pattern in patterns {
             guard remaining > 0 else { break }
+            guard let index = facets.firstIndex(where: {
+                !$0.highValue && highlightMatches($0, pattern: pattern)
+            }) else { continue }
             facets[index].highValue = true
             remaining -= 1
         }
+    }
+
+    /// A highlight entry is either `service.name` (`light.on`, so a companion light does not
+    /// stand in for the family's own switch) or a bare name pattern (`*filter*`).
+    private static func highlightMatches(_ facet: MiotFacet, pattern: String) -> Bool {
+        if pattern.contains(".") {
+            return matches("\(facet.serviceName).\(facet.name)", pattern: pattern)
+        }
+        return matches(facet.name, pattern: pattern)
     }
 
     private static func risk(
@@ -375,21 +502,38 @@ public enum MiotFacetEngine {
 
     /// Drawer rows for 更多设置 (#5). A property the primary card already reads is left out, and so
     /// is any action of the card's own service: both are already reachable from the main controls.
-    /// An action with inputs has no generic editor here, so it stays on its dedicated card.
+    /// An action with inputs has no generic editor here unless the family marks it as feeding, in
+    /// which case the drawer picks the portion and the policy confirms it (#7).
     public static func controls(
         for spec: MiotDeviceSpec,
         did: String,
         values: [MiotPropKey: JSONValue],
         primaryServiceId: Int?,
-        excluding touched: Set<MiotPropKey> = []
+        excluding touched: Set<MiotPropKey> = [],
+        model: String? = nil,
+        profiles: DeviceProfiles = .current
     ) -> [FacetControl] {
-        facets(for: spec).compactMap { facet in
+        let override = profileOverride(for: spec, model: model, profiles: profiles)
+        let feedingAction = override?.feeding?.action
+        // A spec can publish the same action twice (m300 has it under `fish-tank` and `feeder`).
+        // The first match carries the feeding editor; the duplicate keeps its card behaviour.
+        var feedingAssigned = false
+        var controls: [FacetControl] = facets(for: spec, profiles: profiles, model: model).compactMap { facet in
             if let propertyId = facet.propertyId,
                touched.contains(MiotPropKey(did: did, siid: facet.serviceId, piid: propertyId)) {
                 return nil
             }
             if facet.actionId != nil, facet.serviceId == primaryServiceId { return nil }
-            if let arguments = facet.arguments, !arguments.isEmpty { return nil }
+            let isFeeding = !feedingAssigned && feedingAction != nil
+                && facet.actionId != nil
+                && facet.name == feedingAction
+            if facet.actionId != nil {
+                // A parameterised action needs the feeding editor; anything else with inputs has
+                // no generic editor here (#7, #303).
+                let isPlainAction = (facet.arguments ?? []).isEmpty
+                if !isFeeding && !isPlainAction { return nil }
+                if isFeeding { feedingAssigned = true }
+            }
             let value = facet.propertyId.flatMap { piid in
                 values[MiotPropKey(did: did, siid: facet.serviceId, piid: piid)]
             }
@@ -401,7 +545,7 @@ public enum MiotFacetEngine {
                     target = .action(entityId: MiotAddress.makeAction(did: did, siid: facet.serviceId, aiid: aiid))
                 }
             }
-            return FacetControl(
+            var control = FacetControl(
                 id: facet.id,
                 kind: facet.kind,
                 name: facet.name,
@@ -419,7 +563,127 @@ public enum MiotFacetEngine {
                 isHighValue: facet.highValue,
                 target: target
             )
+            if isFeeding {
+                control.arguments = facet.arguments ?? []
+                control.portionArgumentIndex = portionArgumentIndex(in: control.arguments)
+                // Feeding is a physical action the drawer offers without the advanced-writes
+                // opt-in: the second confirmation is the guard, not a hidden setting (#7).
+                control.isConfirmedWrite = true
+            }
+            return control
         }
+        attachFedToday(&controls, feeding: override?.feeding)
+        return controls
+    }
+
+    /// The argument the drawer asks for when dispensing food: the first one with a range.
+    static func portionArgumentIndex(in arguments: [MiotFacetArgument]) -> Int? {
+        arguments.firstIndex { $0.range != nil }
+    }
+
+    /// The portions already dispensed today, formatted for the drawer row and the confirmation.
+    private static func attachFedToday(
+        _ controls: inout [FacetControl],
+        feeding: DeviceProfiles.FeedProfile?
+    ) {
+        guard let feeding else { return }
+        guard let reading = controls.first(where: {
+            $0.kind == .reading && $0.value != nil && matches($0.name, anyOf: feeding.fedToday)
+        }) else { return }
+        let text = MiotFacetText.value(reading)
+        guard text != "—" else { return }
+        for index in controls.indices where controls[index].portionArgumentIndex != nil {
+            controls[index].fedToday = text
+        }
+    }
+
+    /// The value an action input falls back to when it is not the portion the user picks. An enum
+    /// input that names an app/remote source is chosen so a remote dispense is not recorded as a
+    /// key press; otherwise the first option stands.
+    static func defaultActionArgument(_ argument: MiotFacetArgument) -> JSONValue {
+        if let options = argument.options, !options.isEmpty {
+            let preferred = ["remote", "app", "net", "cloud", "远程", "应用", "云端"]
+            let chosen = options.first { option in
+                preferred.contains { option.label.lowercased().contains($0) }
+            } ?? options[0]
+            return .number(Double(chosen.value))
+        }
+        return .number(argument.range?.min ?? 0)
+    }
+
+    /// The alert line for one reading: the spec's own label, translated when the vendor word names
+    /// a common condition. A pump's `Low` is a water level, a feeder's `Low` is a food level, so
+    /// the property name disambiguates (#7).
+    public static func alertText(title: String, propertyName: String, label: String) -> String {
+        "\(title)：\(alertCondition(propertyName: propertyName, label: label))"
+    }
+
+    static func alertCondition(propertyName: String, label: String) -> String {
+        guard !L10n.isEnglish else { return label }
+        let key = label.lowercased()
+        if key.contains("upper limit") { return "高于上限" }
+        if key.contains("lower limit") { return "低于下限" }
+        if propertyName.contains("pump") {
+            switch key {
+            case "not inserted": return "未插入"
+            case "low", "low1": return "低水位"
+            case "blocked", "blockage", "bockage": return "堵塞"
+            case "fault": return "故障"
+            default: break
+            }
+        }
+        if propertyName.contains("food") || propertyName.contains("feed") || propertyName.contains("left-level") {
+            switch key {
+            case "empty": return "已空"
+            case "low": return "余粮不足"
+            case "stuck food": return "卡粮"
+            case "timeout": return "超时"
+            default: break
+            }
+        }
+        switch key {
+        case "fault": return "故障"
+        case "error": return "错误"
+        case "exception": return "异常"
+        case "alarm": return "告警"
+        case "change": return "需更换"
+        case "timeout": return "超时"
+        case "empty": return "已空"
+        case "offline": return "离线"
+        case "not inserted": return "未插入"
+        case "blocked", "blockage", "bockage": return "堵塞"
+        default: return label
+        }
+    }
+
+    /// True when an option label describes something wrong ("Low", "Blocked", "Fault", "Not
+    /// Inserted"). Whole-word Latin matching keeps `Flow` and `No Faults` out (#7).
+    public static func isAlertLabel(_ label: String, profiles: DeviceProfiles = .current) -> Bool {
+        let text = label.lowercased()
+        return profiles.alerts.words.contains { word in
+            let needle = word.lowercased()
+            if needle.unicodeScalars.contains(where: { !$0.isASCII }) {
+                return text.contains(needle)
+            }
+            return containsWord(text, needle)
+        }
+    }
+
+    private static func containsWord(_ text: String, _ needle: String) -> Bool {
+        var searchStart = text.startIndex
+        while let range = text.range(of: needle, range: searchStart..<text.endIndex) {
+            let beforeIsBoundary = range.lowerBound == text.startIndex
+                || !isWordCharacter(text[text.index(before: range.lowerBound)])
+            let afterIsBoundary = range.upperBound == text.endIndex
+                || !isWordCharacter(text[range.upperBound])
+            if beforeIsBoundary && afterIsBoundary { return true }
+            searchStart = range.upperBound
+        }
+        return false
+    }
+
+    private static func isWordCharacter(_ character: Character) -> Bool {
+        character.isLetter || character.isNumber
     }
 
     /// Matches one short name against a noise or display pattern. Only `*` is special.

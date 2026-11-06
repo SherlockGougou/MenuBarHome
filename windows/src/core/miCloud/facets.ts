@@ -7,6 +7,12 @@ export interface DeviceProfiles {
   readonly noise: {
     readonly services: readonly string[];
     readonly properties: readonly string[];
+    /** Properties kept even when their service is noise (#7). */
+    readonly keepInNoisyServices: readonly string[];
+  };
+  /** Option labels that describe something wrong (#7). */
+  readonly alerts: {
+    readonly words: readonly string[];
   };
   readonly facets: {
     readonly maxVisible: number;
@@ -17,11 +23,24 @@ export interface DeviceProfiles {
     readonly highValue: readonly string[];
     readonly lowRiskWrites: readonly string[];
   };
+  /** Device family rules matched by model pattern or MIoT device type (#7). */
+  readonly overrides: readonly DeviceOverride[];
   /**
    * Device type → services that may claim it when the type names none of its own services (#296).
    * Anything not listed stays unsupported instead of being drawn as another device.
    */
   readonly fallbackClaims: Readonly<Record<string, readonly string[]>>;
+}
+
+export interface DeviceOverride {
+  readonly models?: readonly string[];
+  readonly deviceTypes?: readonly string[];
+  readonly highlight?: readonly string[];
+  readonly readouts?: readonly string[];
+  readonly feeding?: {
+    readonly action: string;
+    readonly fedToday: readonly string[];
+  };
 }
 
 /** The same `deviceProfiles.json` the macOS bundle ships (#303). */
@@ -87,31 +106,84 @@ export interface MiotFacet {
 }
 
 /** Generic facets for one MIoT spec, in spec service/property/action order. */
-export function buildMiotFacets(spec: MiotDeviceSpec, profiles: DeviceProfiles = DEVICE_PROFILES): MiotFacet[] {
+export function buildMiotFacets(
+  spec: MiotDeviceSpec,
+  profiles: DeviceProfiles = DEVICE_PROFILES,
+  model?: string,
+): MiotFacet[] {
   const facets: MiotFacet[] = [];
   const deviceType = miotShortName(spec.type);
   for (const service of spec.services) {
     const serviceName = miotShortName(service.type);
-    if (matchesMiotFacetPattern(serviceName, profiles.noise.services)) continue;
+    const isNoiseService = matchesMiotFacetPattern(serviceName, profiles.noise.services);
     for (const property of service.properties) {
-      if (matchesMiotFacetPattern(miotShortName(property.type), profiles.noise.properties)) continue;
+      const name = miotShortName(property.type);
+      if (isNoiseService) {
+        // A noisy vendor service keeps only the named properties the family needs (#7).
+        if (!matchesMiotFacetPattern(name, profiles.noise.keepInNoisyServices)) continue;
+        if (matchesMiotFacetPattern(name, profiles.noise.properties)) continue;
+      } else if (matchesMiotFacetPattern(name, profiles.noise.properties)) {
+        continue;
+      }
       const facet = propertyFacet(property, service, serviceName, deviceType, profiles);
       if (facet) facets.push(facet);
     }
+    if (isNoiseService) continue;
     for (const action of service.actions) {
       const facet = actionFacet(action, service, serviceName, deviceType, profiles);
       if (facet) facets.push(facet);
     }
   }
+  markHighValue(facets, profileOverride(spec, model, profiles), profiles);
+  return facets;
+}
+
+/** The family rules that apply to this spec, by model pattern first and device type second. */
+export function profileOverride(
+  spec: MiotDeviceSpec,
+  model: string | undefined,
+  profiles: DeviceProfiles = DEVICE_PROFILES,
+): DeviceOverride | undefined {
+  const deviceType = miotShortName(spec.type);
+  return profiles.overrides.find((override) => {
+    if (override.deviceTypes && matchesMiotFacetPattern(deviceType, override.deviceTypes)) return true;
+    if (override.models && model && matchesMiotFacetPattern(model, override.models)) return true;
+    return false;
+  });
+}
+
+/** The global list sweeps every match up to `maxVisible`; a family override is a priority list. */
+function markHighValue(
+  facets: MiotFacet[],
+  override: DeviceOverride | undefined,
+  profiles: DeviceProfiles,
+): void {
   let remaining = Math.max(0, profiles.facets.maxVisible);
-  for (let index = 0; index < facets.length; index += 1) {
-    const facet = facets[index]!;
-    if (!matchesMiotFacetPattern(facet.name, profiles.facets.highValue)) continue;
+  if (!override?.highlight) {
+    for (let index = 0; index < facets.length; index += 1) {
+      const facet = facets[index]!;
+      if (!matchesMiotFacetPattern(facet.name, profiles.facets.highValue)) continue;
+      if (remaining <= 0) break;
+      facets[index] = { ...facet, highValue: true };
+      remaining -= 1;
+    }
+    return;
+  }
+  for (const pattern of override.highlight) {
     if (remaining <= 0) break;
-    facets[index] = { ...facet, highValue: true };
+    const index = facets.findIndex(
+      (facet) => !facet.highValue && highlightMatches(facet, pattern),
+    );
+    if (index < 0) continue;
+    facets[index] = { ...facets[index]!, highValue: true };
     remaining -= 1;
   }
-  return facets;
+}
+
+/** `service.name` scopes a highlight to one service; a bare pattern matches the name alone. */
+function highlightMatches(facet: MiotFacet, pattern: string): boolean {
+  const target = pattern.includes(".") ? `${facet.serviceName}.${facet.name}` : facet.name;
+  return matchesMiotFacetPattern(target, [pattern]);
 }
 
 function propertyFacet(

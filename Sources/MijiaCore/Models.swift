@@ -1136,6 +1136,9 @@ public struct GenericSpec: Equatable, Sendable {
     /// No facet accepts any write, so the card is a status surface and says 只读.
     public var isReadOnly: Bool
     public var readouts: [Readout]
+    /// Conditions that need attention right now (`水泵状态：堵塞`), shown on the card and in the
+    /// drawer instead of hiding under 更多设置 (#7).
+    public var alerts: [String]
     public var symbolName: String?
 
     public init(
@@ -1145,6 +1148,7 @@ public struct GenericSpec: Equatable, Sendable {
         powerControl: FacetControl? = nil,
         isReadOnly: Bool,
         readouts: [Readout] = [],
+        alerts: [String] = [],
         symbolName: String? = nil
     ) {
         self.deviceType = deviceType
@@ -1153,6 +1157,7 @@ public struct GenericSpec: Equatable, Sendable {
         self.powerControl = powerControl
         self.isReadOnly = isReadOnly
         self.readouts = readouts
+        self.alerts = alerts
         self.symbolName = symbolName
     }
 }
@@ -1646,8 +1651,9 @@ public enum DeviceCommand: Equatable, Sendable {
     case activateScene(entityId: String)
     /// Generic write from a 更多设置 facet (#5): the entity carries `did` and `siid`.
     case setMiotProperty(entityId: String, piid: Int, value: JSONValue)
-    /// Generic no-argument action from a 更多设置 button.
-    case callMiotAction(entityId: String)
+    /// Generic MIoT action from a 更多设置 button. Feeding actions carry their input values in
+    /// spec order (#7); a no-argument action sends an empty list.
+    case callMiotAction(entityId: String, arguments: [JSONValue])
 }
 
 public enum VacuumAction: String, Equatable, Sendable {

@@ -153,11 +153,11 @@ struct FacetControlsTests {
     @Test("Generic actions fire only when the spec action takes no inputs")
     func actionMapping() throws {
         #expect(
-            try map(.callMiotAction(entityId: "miot-action:ac1:3:1"), model: "090615.airc.a07s")
+            try map(.callMiotAction(entityId: "miot-action:ac1:3:1", arguments: []), model: "090615.airc.a07s")
                 == .action(MiotActionCall(did: "ac1", siid: 3, aiid: 1))
         )
         #expect(throws: MiotCommandError.self) {
-            try map(.callMiotAction(entityId: "miot-action:cam1:4:3"), model: "careco.camera.650")
+            try map(.callMiotAction(entityId: "miot-action:cam1:4:3", arguments: []), model: "careco.camera.650")
         }
     }
 

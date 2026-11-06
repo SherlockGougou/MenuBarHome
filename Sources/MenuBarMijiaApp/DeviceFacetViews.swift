@@ -70,22 +70,40 @@ struct GenericDetailDrawer: View {
     let statusColor: Color
 
     var body: some View {
-        if spec.isReadOnly {
-            explanation(
-                L10n.tr(
-                    "该设备只向云端开放读数，不能从这里控制。",
-                    "This device only exposes readings and cannot be controlled here."
-                ),
-                systemImage: "lock.fill"
-            )
-        } else if spec.powerControl == nil {
-            explanation(
-                L10n.tr(
-                    "没有低风险的主开关；其余控件在下方「更多设置」，高风险写入默认保持只读。",
-                    "No low-risk main switch. The remaining controls are under More Settings; high-risk writes stay read-only by default."
-                ),
-                systemImage: "lock.shield"
-            )
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(spec.alerts, id: \.self) { alert in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text(alert)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
+                .foregroundStyle(.red)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: DesignTokens.Radius.inset, style: .continuous)
+                        .fill(Color.red.opacity(0.10))
+                )
+            }
+            if spec.isReadOnly {
+                explanation(
+                    L10n.tr(
+                        "该设备只向云端开放读数，不能从这里控制。",
+                        "This device only exposes readings and cannot be controlled here."
+                    ),
+                    systemImage: "lock.fill"
+                )
+            } else if spec.powerControl == nil {
+                explanation(
+                    L10n.tr(
+                        "没有低风险的主开关；其余控件在下方「更多设置」，高风险写入默认保持只读。",
+                        "No low-risk main switch. The remaining controls are under More Settings; high-risk writes stay read-only by default."
+                    ),
+                    systemImage: "lock.shield"
+                )
+            }
         }
     }
 
@@ -110,6 +128,8 @@ struct DeviceFacetSection: View {
 
     @State private var isExpanded: Bool
     @State private var showsRest: Bool
+    /// Portion picked per feeding action; the spec's minimum until the user changes it (#7).
+    @State private var portionSelections: [String: Int] = [:]
 
     init(
         device: SmartDevice,
@@ -315,16 +335,51 @@ struct DeviceFacetSection: View {
 
         case .button:
             VStack(alignment: .leading, spacing: 3) {
-                HStack {
+                HStack(spacing: 8) {
                     DetailPillButton(title: title, tint: accent) {
-                        store.runFacetAction(device.id, controlId: control.id)
+                        store.runFacetAction(
+                            device.id,
+                            controlId: control.id,
+                            portion: portion(for: control)
+                        )
                     }
                     .disabled(!enabled)
+                    if let values = portionValues(control) {
+                        Picker("", selection: Binding(
+                            get: { portion(for: control) },
+                            set: { portionSelections[control.id] = $0 }
+                        )) {
+                            ForEach(values, id: \.self) { value in
+                                Text(L10n.format("%@ 份", "%@ portion(s)", "\(value)")).tag(value)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                        .disabled(!enabled)
+                        .accessibilityLabel(Text(L10n.tr("投喂份数", "Portions")))
+                    }
                     Spacer(minLength: 0)
+                }
+                if let fedToday = control.fedToday {
+                    Text(L10n.format("今日已投喂 %@", "Fed today %@", fedToday))
+                        .font(.system(size: DesignTokens.TypeSize.micro, weight: .medium))
+                        .foregroundStyle(.secondary)
                 }
                 if let reason { reasonText(reason) }
             }
         }
+    }
+
+    /// The portions the spec's feeding input allows, or nil for an ordinary button.
+    private func portionValues(_ control: FacetControl) -> [Int]? {
+        let values = control.portionOptions
+        return values.isEmpty ? nil : values
+    }
+
+    private func portion(for control: FacetControl) -> Int {
+        if let chosen = portionSelections[control.id] { return chosen }
+        return portionValues(control)?.first ?? 1
     }
 
     private func displayTitle(_ control: FacetControl) -> String {
@@ -335,11 +390,15 @@ struct DeviceFacetSection: View {
 
     private func isEnabled(_ control: FacetControl) -> Bool {
         guard control.isWritable else { return false }
-        return device.isOnline && (control.writesByDefault || store.allowAdvancedFacetWrites)
+        return device.isOnline
+            && (control.writesByDefault || control.isConfirmedWrite || store.allowAdvancedFacetWrites)
     }
 
     private func disabledReason(_ control: FacetControl) -> String? {
-        guard control.isWritable, !control.writesByDefault, !store.allowAdvancedFacetWrites else {
+        guard control.isWritable,
+              !control.isConfirmedWrite,
+              !control.writesByDefault,
+              !store.allowAdvancedFacetWrites else {
             return nil
         }
         return L10n.tr(

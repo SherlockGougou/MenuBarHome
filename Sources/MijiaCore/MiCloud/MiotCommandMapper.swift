@@ -50,14 +50,34 @@ public enum MiotCommandMapper {
                 value: ctx.coerce(value, for: property)
             )])
         }
-        if case .callMiotAction(let entityId) = command {
+        if case .callMiotAction(let entityId, let arguments) = command {
             guard let address = MiotAddress.parseAction(entityId),
                   let service = spec.service(iid: address.siid),
                   let action = service.actions.first(where: { $0.iid == address.aiid }),
-                  action.inputProperties.isEmpty else {
+                  action.inputProperties.count == arguments.count else {
                 throw MiotCommandError.unsupported("action")
             }
-            return .action(MiotActionCall(did: address.did, siid: address.siid, aiid: address.aiid))
+            let ctx = Context(did: address.did, spec: spec, service: service)
+            var inputs: [JSONValue] = []
+            for (index, piid) in action.inputProperties.enumerated() {
+                guard let property = service.properties.first(where: { $0.iid == piid }) else {
+                    throw MiotCommandError.unsupported("action")
+                }
+                // An enum input only accepts one of its published options (#7).
+                if let list = property.valueList, !list.isEmpty {
+                    guard let raw = arguments[index].intValue,
+                          list.contains(where: { $0.value == raw }) else {
+                        throw MiotCommandError.unsupported("action")
+                    }
+                }
+                inputs.append(ctx.coerce(arguments[index], for: property))
+            }
+            return .action(MiotActionCall(
+                did: address.did,
+                siid: address.siid,
+                aiid: action.iid,
+                inputs: inputs
+            ))
         }
         let entityId = command.targetEntityId
         // The services the shared appliance card reads. A control it exposes may live on a
@@ -384,7 +404,7 @@ extension DeviceCommand {
              .setHumidity(let id, _),
              .vacuumAction(let id, _), .mediaSetVolume(let id, _), .mediaSelectSource(let id, _),
              .pressButton(let id), .sendNotifyMessage(let id, _), .activateScene(let id),
-             .setMiotProperty(let id, _, _), .callMiotAction(let id):
+             .setMiotProperty(let id, _, _), .callMiotAction(let id, _):
             return id
         }
     }

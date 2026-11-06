@@ -54,9 +54,18 @@ public enum ManualControlPolicy {
         )
     }
 
-    /// The whitelist controls availability; confirmation follows the operation's meaning.
-    public static func confirmation(facet: FacetControl, value: JSONValue?, for device: SmartDevice) -> ManualControlConfirmation? {
+    /// The whitelist controls availability; confirmation follows the operation's meaning. A feeding
+    /// action reports its portion and the portions already dispensed today (#7).
+    public static func confirmation(
+        facet: FacetControl,
+        value: JSONValue?,
+        portion: Int? = nil,
+        for device: SmartDevice
+    ) -> ManualControlConfirmation? {
         guard facetRequiresConfirmation(facet, value: value, for: device) else { return nil }
+        if facet.portionArgumentIndex != nil {
+            return feedingConfirmation(facet, portion: portion, for: device)
+        }
         let title = facet.title?.trimmingCharacters(in: .whitespacesAndNewlines)
         let label = title.flatMap { $0.isEmpty ? nil : $0 } ?? facet.name
         return ManualControlConfirmation(
@@ -70,6 +79,49 @@ public enum ManualControlPolicy {
             confirmTitle: L10n.tr("确认执行", "Confirm"),
             cancelTitle: L10n.tr("取消", "Cancel")
         )
+    }
+
+    /// Dispensing food has a physical consequence and no undo, so the prompt names the portions.
+    private static func feedingConfirmation(
+        _ facet: FacetControl,
+        portion: Int?,
+        for device: SmartDevice
+    ) -> ManualControlConfirmation {
+        let count = portionLabel(facet, portion: portion)
+        let message: String
+        if let fedToday = facet.fedToday {
+            message = L10n.format(
+                "「%@」将投喂 %@，今日已投喂 %@。投喂后无法撤销，请确认。",
+                "\"%@\" will dispense %@. Fed today: %@. This cannot be undone.",
+                device.name,
+                count,
+                fedToday
+            )
+        } else {
+            // Some feeders (`binuo.feeder.y1`, `xiaomi.feeder.iv2002`) report no daily total;
+            // saying so keeps the prompt from looking like it silently dropped a fact.
+            message = L10n.format(
+                "「%@」将投喂 %@。该设备未上报今日已投喂份数；投喂后无法撤销，请确认。",
+                "\"%@\" will dispense %@. This device does not report today's fed portions; this cannot be undone.",
+                device.name,
+                count
+            )
+        }
+        return ManualControlConfirmation(
+            title: L10n.tr("确认投喂？", "Dispense food?"),
+            message: message,
+            confirmTitle: L10n.tr("确认投喂", "Dispense"),
+            cancelTitle: L10n.tr("取消", "Cancel")
+        )
+    }
+
+    /// The portion the action will send, clamped to the spec's range.
+    public static func portionCount(_ facet: FacetControl, portion: Int?) -> Int {
+        facet.clampedPortion(portion)
+    }
+
+    private static func portionLabel(_ facet: FacetControl, portion: Int?) -> String {
+        L10n.format("%@ 份", "%@ portion(s)", "\(portionCount(facet, portion: portion))")
     }
 
     private static func facetRequiresConfirmation(_ facet: FacetControl, value: JSONValue?, for device: SmartDevice) -> Bool {

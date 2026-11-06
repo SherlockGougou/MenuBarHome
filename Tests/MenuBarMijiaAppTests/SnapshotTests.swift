@@ -238,6 +238,73 @@ struct SnapshotTests {
         )
     }
 
+    @Test("A fish tank drawer shows the pump alert and the portioned feeding action")
+    func fishTankDrawerSnapshot() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+
+        let (device, card, facets) = try Self.fishTank()
+        fixture.store.devices.append(device)
+        fixture.store.deviceFacets[device.id] = facets
+
+        assertRendered(
+            snapshotReady(
+                VStack(alignment: .leading, spacing: 10) {
+                    GenericDetailDrawer(spec: card, statusColor: DesignTokens.active)
+                    DeviceFacetSection(
+                        device: device,
+                        store: fixture.store,
+                        accent: DesignTokens.active,
+                        statusColor: DesignTokens.active,
+                        initiallyExpanded: true
+                    )
+                }
+                .padding(10)
+                .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 520),
+            named: "fish-tank-drawer-zh-light"
+        )
+    }
+
+    /// A real `xiaomi.fishbowl.m200` synthesized from the public spec: pump blocked, 24.5 °C water,
+    /// 12 portions fed today (#7).
+    private static func fishTank() throws -> (SmartDevice, GenericSpec, [FacetControl]) {
+        var directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        for _ in 0..<8 {
+            if FileManager.default.fileExists(atPath: directory.appendingPathComponent("Tests/Fixtures").path) {
+                break
+            }
+            directory.deleteLastPathComponent()
+        }
+        let model = "xiaomi.fishbowl.m200"
+        let data = try Data(contentsOf: directory.appendingPathComponent("Tests/Fixtures/miot_coverage_specs.json"))
+        let specs = try JSONDecoder().decode([String: MiotDeviceSpec].self, from: data)
+        let spec = try #require(specs[model])
+        let did = "snapshot-fish-tank"
+        let home = MiotSynthesizer.synthesize(
+            devices: [MiDeviceRecord(did: did, name: "鱼缸", model: model, isOnline: true)],
+            rooms: [],
+            specs: [model: spec],
+            values: [
+                MiotPropKey(did: did, siid: 2, piid: 1): .bool(true),
+                MiotPropKey(did: did, siid: 2, piid: 4): .number(4),
+                MiotPropKey(did: did, siid: 2, piid: 6): .number(24.5),
+                MiotPropKey(did: did, siid: 3, piid: 1): .bool(true),
+                MiotPropKey(did: did, siid: 3, piid: 2): .number(0),
+                MiotPropKey(did: did, siid: 5, piid: 2): .number(12),
+                MiotPropKey(did: did, siid: 6, piid: 1): .number(64),
+                MiotPropKey(did: did, siid: 13, piid: 2): .bool(true),
+            ]
+        )
+        let device = try #require(home.devices.first)
+        guard case .generic(let card) = device.kind else {
+            throw CocoaError(.featureUnsupported)
+        }
+        let facets = home.deviceFacets[did] ?? []
+        return (device, card, facets)
+    }
+
     private static func genericDevice(readOnly: Bool) -> (SmartDevice, [FacetControl]) {
         let power = FacetControl(
             id: "2.1", kind: .toggle, name: "on", title: "开关", serviceName: "fish-tank",
