@@ -25,8 +25,8 @@ English | [简体中文](README.zh-CN.md)
 </p>
 
 <p align="center">
-  <a href="https://github.com/jryang1997/MenuBarMijia/stargazers"><img src="https://img.shields.io/github/stars/jryang1997/MenuBarMijia?style=social" alt="GitHub Stars"></a>
-  <a href="https://github.com/jryang1997/MenuBarMijia/releases/latest"><img src="https://img.shields.io/github/v/release/jryang1997/MenuBarMijia?color=0A84FF&label=release" alt="Latest Release"></a>
+  <a href="https://gitlab.com/jryang1997/MenuBarMijia/-/starrers"><img src="https://img.shields.io/gitlab/stars/jryang1997%2FMenuBarMijia?style=social" alt="GitLab Stars"></a>
+  <a href="https://gitlab.com/jryang1997/MenuBarMijia/-/releases"><img src="https://img.shields.io/gitlab/v/release/jryang1997%2FMenuBarMijia?color=0A84FF&label=release" alt="Latest Release"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white" alt="macOS 14+">
   <img src="https://img.shields.io/badge/Windows_11-Tauri_v2-0078D4?logo=windows11&logoColor=white" alt="Windows 11">
   <img src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white" alt="Swift 6">
@@ -34,19 +34,15 @@ English | [简体中文](README.zh-CN.md)
 </p>
 
 <p align="center">
-  <a href="https://jryang1997.github.io/menubarmijia-web/">Project website</a> ·
-  <a href="https://github.com/jryang1997/MenuBarMijia/releases/latest">Download latest</a> ·
+  <a href="https://jryang1997.gitlab.io/menubarmijia-web/">Project website</a> ·
+  <a href="https://gitlab.com/jryang1997/MenuBarMijia/-/releases">Download latest</a> ·
   <a href="#quick-start">Install & Connect</a> ·
   <a href="#features--platform-matrix">Platform Comparison</a> ·
   <a href="#safety-privacy--limitations">Safety & Privacy</a> ·
-  <a href="#star-history">Star History</a> ·
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-```bash
-# Recommended one-line installation on macOS via Homebrew Cask
-brew install --cask jryang1997/tap/menubarmijia
-```
+> **Moved to GitLab (2026-11):** the GitHub account behind this project was suspended, so the repository now lives at [gitlab.com/jryang1997/MenuBarMijia](https://gitlab.com/jryang1997/MenuBarMijia). Installers and the Homebrew tap are being republished on [GitLab Releases](https://gitlab.com/jryang1997/MenuBarMijia/-/releases). Installed builds keep working, but their update check still points at GitHub, so install the next version by hand once.
 
 ---
 
@@ -150,20 +146,16 @@ The macOS version is built natively in Swift 6, while the Windows 11 client is a
 
 #### Installing on macOS
 
-**Method A: Homebrew Cask (Recommended)**
-```bash
-brew install --cask jryang1997/tap/menubarmijia
-```
-> If Homebrew asks to trust a new third-party tap, run `brew trust --cask jryang1997/tap/menubarmijia` first.
+**Homebrew:** the `jryang1997/tap` tap was hosted on GitHub and is offline until it is republished on GitLab.
 
-**Method B: Direct DMG Download**
-Download the latest macOS DMG from [GitHub Releases](https://github.com/jryang1997/MenuBarMijia/releases/latest) and drag `MenuBarMijia.app` into your Applications folder.
+**Direct DMG Download**
+Download the latest macOS DMG from [GitLab Releases](https://gitlab.com/jryang1997/MenuBarMijia/-/releases) and drag `MenuBarMijia.app` into your Applications folder.
 > **About macOS Gatekeeper:**<br>
 > This project is an independent open-source tool and is not enrolled in the paid Apple Developer Program (no Developer ID notarization). If Gatekeeper blocks initial launch, open **System Settings → Privacy & Security**, scroll down, and click **"Open Anyway"** for MenuBarMijia.
 
 #### Installing on Windows 11
 
-Download the latest Windows x64 `.exe` or `.msi` from [GitHub Releases](https://github.com/jryang1997/MenuBarMijia/releases/latest).
+Download the latest Windows x64 `.exe` or `.msi` from [GitLab Releases](https://gitlab.com/jryang1997/MenuBarMijia/-/releases).
 > **About Windows SmartScreen:**<br>
 > The Windows binary is not signed with an enterprise Authenticode certificate. If SmartScreen shows "Windows protected your PC", click **"More info" → "Run anyway"**. SHA-256 digests are published on each Release for manual verification.
 
@@ -247,7 +239,7 @@ To help prevent mistakes, actions the AI is unsure about ask first ("Ask me when
 
 The macOS app is not yet notarized by Apple, so you may need to allow it in System Settings the first time. Windows may show a SmartScreen prompt. macOS updates are verified with an Ed25519 public key; the signing key stays offline. See [ADR-0007](docs/adr/0007-lan-direct-deferred.md) for more on connection options.
 
-Each release also publishes GitHub build provenance attestations for the installers and SPDX SBOMs for both platforms. `gh attestation verify <installer> --repo jryang1997/MenuBarMijia` checks that the file was built by this repository's release workflow. See [verifying release artifacts](SECURITY.md#verifying-release-artifacts).
+Releases published on GitHub (up to v1.1.7) carried GitHub build provenance attestations and SPDX SBOMs; GitLab releases do not have attestations yet. See [verifying release artifacts](SECURITY.md#verifying-release-artifacts).
 
 To report a vulnerability in private, follow [Security policy](SECURITY.md).
 
@@ -282,9 +274,9 @@ Please review [CODING_STANDARDS.md](CODING_STANDARDS.md) before submitting pull 
 
 Thanks to everyone who has contributed features, fixes, and feedback:
 
-- [@jryang1997](https://github.com/jryang1997) (一群小羊说) — Creator & maintainer
-- [@almightyYantao](https://github.com/almightyYantao) (Alimighty.Yantao) — Multi-key Mesh switch split-device synthesis ([#6](https://github.com/jryang1997/MenuBarMijia/issues/6), [#7](https://github.com/jryang1997/MenuBarMijia/pull/7)), multi-home switcher & light-group scene filtering ([#8](https://github.com/jryang1997/MenuBarMijia/pull/8)), visual skin system, inline climate module, drag-to-reorder layout & custom device groups ([#9](https://github.com/jryang1997/MenuBarMijia/pull/9)), macOS app bundle icon packaging ([#10](https://github.com/jryang1997/MenuBarMijia/pull/10)), panel drop-in animation, local device renaming & room-strip polish ([#11](https://github.com/jryang1997/MenuBarMijia/pull/11)), Windows feature parity and cross-platform UI fixes ([#12](https://github.com/jryang1997/MenuBarMijia/pull/12)), and redundant-write optimization for provider snapshots ([#66](https://github.com/jryang1997/MenuBarMijia/pull/66))
-- [@htx996](https://github.com/htx996) (han) — macOS status-item context menu with live/demo mode switching, dual-source status, and menu-safe click, hold-to-talk, and keyboard handling ([#250](https://github.com/jryang1997/MenuBarMijia/pull/250))
+- [@jryang1997](https://gitlab.com/jryang1997) (一群小羊说) — Creator & maintainer
+- [@almightyYantao](https://github.com/almightyYantao) (Alimighty.Yantao) — Multi-key Mesh switch split-device synthesis (GitHub #6, GitHub #7), multi-home switcher & light-group scene filtering (GitHub #8), visual skin system, inline climate module, drag-to-reorder layout & custom device groups (GitHub #9), macOS app bundle icon packaging (GitHub #10), panel drop-in animation, local device renaming & room-strip polish (GitHub #11), Windows feature parity and cross-platform UI fixes (GitHub #12), and redundant-write optimization for provider snapshots (GitHub #66)
+- [@htx996](https://github.com/htx996) (han) — macOS status-item context menu with live/demo mode switching, dual-source status, and menu-safe click, hold-to-talk, and keyboard handling (GitHub #250)
 
 ## License & Acknowledgements
 
@@ -296,16 +288,3 @@ Thanks to all contributors who have submitted PRs, reported issues, and helped r
 
 ---
 
-## Star History
-
-Every star is one fewer trip to the phone. The curve below is powered by [star-history.com](https://star-history.com/#jryang1997/MenuBarMijia&Date).
-
-<p align="center">
-  <a href="https://star-history.com/#jryang1997/MenuBarMijia&amp;Date">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=jryang1997/MenuBarMijia&amp;type=Date&amp;theme=dark">
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=jryang1997/MenuBarMijia&amp;type=Date">
-      <img src="https://api.star-history.com/svg?repos=jryang1997/MenuBarMijia&amp;type=Date" alt="Star History Chart for jryang1997/MenuBarMijia" width="720">
-    </picture>
-  </a>
-</p>

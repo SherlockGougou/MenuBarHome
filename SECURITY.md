@@ -36,19 +36,15 @@ The same vulnerability is in scope on the current `main` branch when the Latest 
 
 ## Reporting a vulnerability
 
-1. Open the [Security tab](https://github.com/jryang1997/MenuBarMijia/security) for this repository.
-2. If a report for this vulnerability is already open, add the new information to that report.
-3. If no report is open and the tab shows a button named **Report a vulnerability**, use that button.
-4. Do not open a public issue for the same vulnerability.
+1. Open a [new issue](https://gitlab.com/jryang1997/MenuBarMijia/-/issues/new) on GitLab and tick **This issue is confidential** before you submit.
+2. Do not open a public issue for the same vulnerability.
 
-The report that button files is visible to you and the maintainer.
-
-If the tab does not show that button, this policy gives you no other channel.
+A confidential issue is visible to you and the maintainer only.
 
 Include these facts.
 
 - The version the app shows.
-- Whether that version is the GitHub Release marked Latest.
+- Whether that version is the newest release on GitLab Releases.
 - Which area under [In scope](#in-scope) is affected.
 - What an attacker can do.
 
@@ -70,7 +66,9 @@ Ask in the private report before you publish any details.
 
 ## Verifying release artifacts
 
-The `Release` workflow attaches build provenance attestations and a software bill of materials (SBOM) to every release.
+Releases published on GitHub, up to v1.1.7, carried build provenance attestations and a software bill of materials (SBOM) from the `Release` workflow. The project moved to GitLab after the GitHub account was suspended; GitLab releases have no attestations yet, and the GitHub-hosted copies are no longer downloadable.
+
+The `Release` workflow attached build provenance attestations and a software bill of materials (SBOM) to every release.
 
 The attestations cover the three installers:
 
