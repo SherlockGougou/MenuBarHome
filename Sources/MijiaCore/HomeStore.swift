@@ -867,22 +867,6 @@ public final class HomeStore {
         }
     }
 
-    func executeDeviceCommand(_ command: DeviceCommand) async throws {
-        if LGWebOSProtocol.isLGEntity(command.targetEntityId), let lgClient = lgWebOSClient {
-            try await lgClient.execute(command)
-        } else {
-            try await provider.execute(command)
-        }
-    }
-
-    @discardableResult
-    func lockOptimistic(_ deviceId: String, duration: Duration) -> UInt64 {
-        let rev = (optimisticLockRevision[deviceId] ?? 0) &+ 1
-        optimisticLockRevision[deviceId] = rev
-        optimisticLockUntil[deviceId] = ContinuousClock.now.advanced(by: duration)
-        return rev
-    }
-
     // MARK: - Assistant Commands & Personalized Jev Context
 
     public var isShowingAssistantBar: Bool = false
