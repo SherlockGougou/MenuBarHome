@@ -1,5 +1,29 @@
 {
   "specs": {
+    "fixture.fan.levels": {
+      "type": "urn:miot-spec-v2:device:fan:0000A005:fixture-levels:1",
+      "services": [
+        {
+          "iid": 2,
+          "type": "urn:miot-spec-v2:service:fan:00007808:fixture-levels:1",
+          "properties": [
+            { "iid": 1, "type": "urn:miot-spec-v2:property:on:00000006:fixture-levels:1", "format": "bool", "access": ["read", "write"] },
+            {
+              "iid": 2,
+              "type": "urn:miot-spec-v2:property:fan-level:00000016:fixture-levels:1",
+              "format": "uint8",
+              "access": ["read", "write"],
+              "value-list": [
+                { "value": 1, "description": "Level1" },
+                { "value": 2, "description": "Level2" },
+                { "value": 3, "description": "Level3" }
+              ]
+            }
+          ],
+          "actions": []
+        }
+      ]
+    },
     "fixture.curtain.single": {
       "type": "urn:miot-spec-v2:device:curtain:0000A00C:fixture-single:1",
       "services": [
@@ -3821,6 +3845,28 @@
     "did_curtain_dual.s3": "纱帘"
   },
   "commandCases": [
+    {
+      "model": "fixture.fan.levels",
+      "command": { "kind": "setFanPercentage", "entityId": "miot:did_levels:2", "percent": 33 },
+      "expected": {
+        "kind": "setProps",
+        "writes": [
+          { "did": "did_levels", "siid": 2, "piid": 1, "value": true },
+          { "did": "did_levels", "siid": 2, "piid": 2, "value": 1 }
+        ]
+      }
+    },
+    {
+      "model": "fixture.fan.levels",
+      "command": { "kind": "setFanPercentage", "entityId": "miot:did_levels:2", "percent": 67 },
+      "expected": {
+        "kind": "setProps",
+        "writes": [
+          { "did": "did_levels", "siid": 2, "piid": 1, "value": true },
+          { "did": "did_levels", "siid": 2, "piid": 2, "value": 2 }
+        ]
+      }
+    },
     {
       "model": "yeelink.light.ceiling22",
       "command": { "kind": "setLightPower", "entityId": "miot:did_light:2", "isOn": false },

@@ -296,7 +296,7 @@ public enum MiotSynthesizer {
         return .light(LightSpec(
             entityId: MiotAddress.make(did: r.did, siid: s.iid),
             isOn: on?.value?.miotBool ?? false,
-            brightnessPercent: bri.flatMap { ref in ref.value?.doubleValue.map { percent(fromRaw: $0, property: ref.property) } },
+            brightnessPercent: bri.flatMap { ref in ref.value?.doubleValue.map { MiotPercentScale.percent(fromRaw: $0, property: ref.property, curve: .proportional) } },
             colorTempKelvin: ct?.value?.intValue,
             minKelvin: ct?.property.rangeMin.map { Int($0) } ?? 2700,
             maxKelvin: ct?.property.rangeMax.map { Int($0) } ?? 6500,
@@ -358,7 +358,7 @@ public enum MiotSynthesizer {
         return .fan(FanSpec(
             entityId: MiotAddress.make(did: r.did, siid: s.iid),
             isOn: on?.value?.miotBool ?? false,
-            percentage: percentRef.flatMap { ref in ref.value?.doubleValue.map { percent(fromRaw: $0, property: ref.property) } },
+            percentage: percentRef.flatMap { ref in ref.value?.doubleValue.map { MiotPercentScale.percent(fromRaw: $0, property: ref.property, curve: .speed) } },
             presetMode: presetRef?.valueDescription,
             availablePresetModes: presetRef?.property.isWritable == true ? (presetRef?.property.valueList?.map(\.description) ?? []) : [],
             isOscillating: swing?.value?.miotBool,
@@ -401,7 +401,7 @@ public enum MiotSynthesizer {
         return .fan(FanSpec(
             entityId: MiotAddress.make(did: r.did, siid: s.iid),
             isOn: on?.value?.miotBool ?? false,
-            percentage: speedRef.flatMap { ref in ref.value?.doubleValue.map { speedPercent(fromRaw: $0, property: ref.property) } },
+            percentage: speedRef.flatMap { ref in ref.value?.doubleValue.map { MiotPercentScale.percent(fromRaw: $0, property: ref.property, curve: .speed) } },
             presetMode: presetRef?.valueDescription,
             availablePresetModes: presetRef?.property.isWritable == true ? (presetRef?.property.valueList?.map(\.description) ?? []) : [],
             isOscillating: nil,
@@ -454,7 +454,7 @@ public enum MiotSynthesizer {
         return .speaker(SpeakerSpec(
             mediaEntityId: MiotAddress.make(did: r.did, siid: s.iid),
             state: state,
-            volumePercent: volume.flatMap { ref in ref.value?.doubleValue.map { percent(fromRaw: $0, property: ref.property) } } ?? 0,
+            volumePercent: volume.flatMap { ref in ref.value?.doubleValue.map { MiotPercentScale.percent(fromRaw: $0, property: ref.property, curve: .proportional) } } ?? 0,
             isMuted: mute?.value?.miotBool ?? false,
             muteSwitchEntityId: mute?.property.isWritable == true ? MiotAddress.make(did: r.did, siid: s.iid) : nil,
             sleepModeEntityId: sleep?.property.isWritable == true ? intelligent.map { MiotAddress.make(did: r.did, siid: $0.iid) } : nil,
@@ -583,7 +583,7 @@ public enum MiotSynthesizer {
     /// Reads one position property as a 0…100 percentage.
     static func coverPosition(_ ref: MiotReader.Ref?) -> Int? {
         guard let ref, let raw = ref.value?.doubleValue else { return nil }
-        return percent(fromRaw: raw, property: ref.property)
+        return MiotPercentScale.percent(fromRaw: raw, property: ref.property, curve: .proportional)
     }
 
     /// The target is the card's position while the motor travels, so intermediate current-position
@@ -983,33 +983,6 @@ public enum MiotSynthesizer {
     }
 
     // MARK: Value Translation
-
-    static func percent(fromRaw raw: Double, property: MiotProperty) -> Int {
-        let scaled: Double
-        if let max = property.rangeMax, max > 0, max != 100 {
-            scaled = raw / max * 100
-        } else {
-            scaled = raw
-        }
-        return Swift.max(0, Swift.min(100, Int(scaled.rounded())))
-    }
-
-    static func speedPercent(fromRaw raw: Double, property: MiotProperty) -> Int {
-        if let lo = property.rangeMin, let hi = property.rangeMax, hi > lo {
-            let scaled = lo > 1 ? (raw - lo) / (hi - lo) * 100 : (hi != 100 ? raw / hi * 100 : raw)
-            return Swift.max(0, Swift.min(100, Int(scaled.rounded())))
-        }
-        if let list = property.valueList, !list.isEmpty {
-            let vals = list.map(\.value)
-            if let hi = vals.max(), let lo = vals.min(), hi > lo {
-                let scaled = lo > 1
-                    ? (raw - Double(lo)) / Double(hi - lo) * 100
-                    : raw / Double(hi) * 100
-                return Swift.max(0, Swift.min(100, Int(scaled.rounded())))
-            }
-        }
-        return percent(fromRaw: raw, property: property)
-    }
 
     private static func hasScaleToken(_ comment: String, _ token: String) -> Bool {
         var searchRange = comment.startIndex..<comment.endIndex

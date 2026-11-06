@@ -27,6 +27,7 @@ import {
   type MiotValueListItem,
 } from "./spec.js";
 import { miotFallbackAllows } from "./facets.js";
+import { percentFromRaw } from "./percentScale.js";
 
 export function exposesWrite(access: readonly string[] | undefined): boolean {
   return Boolean(access?.includes("write"));
@@ -50,13 +51,6 @@ interface MiotBuildPlan {
   readonly id: string;
   readonly name: string;
   readonly spec: MiotDeviceSpec;
-}
-
-/** 0 closed … 100 open, scaled the way macOS `MiotSynthesizer.percent` does. */
-function coverPercent(raw: number, prop: MiotProperty): number {
-  const max = prop.valueRange?.[1];
-  const scaled = max !== undefined && max > 0 && max !== 100 ? (raw / max) * 100 : raw;
-  return Math.max(0, Math.min(100, Math.round(scaled)));
 }
 
 /** Exact motor value-list words only, matching macOS `coverMotorDescription`. */
@@ -527,11 +521,7 @@ export const MiotSynthesizer = {
           ? (mode?.prop.valueList?.find((i) => i.value === modeVal)?.description ?? null)
           : null;
       const briNum = typeof bri?.val === "number" ? bri.val : null;
-      const maxBri = bri?.prop.valueRange?.[1] ?? 100;
-      const briPct =
-        briNum !== null
-          ? Math.max(0, Math.min(100, Math.round(maxBri > 0 && maxBri !== 100 ? (briNum / maxBri) * 100 : briNum)))
-          : null;
+      const briPct = bri && briNum !== null ? percentFromRaw(briNum, bri.prop, "proportional") : null;
 
       const isLightGroup = did.startsWith("group.");
       const onWritable = exposesWrite(on?.prop.access);
@@ -625,14 +615,8 @@ export const MiotSynthesizer = {
           ? mode
           : levels.find((r) => (r.prop.valueList?.length ?? 0) > 0);
       const pctNum = typeof percentRef?.val === "number" ? percentRef.val : null;
-      const maxPct = percentRef?.prop.valueRange?.[1] ?? 100;
-      const percentage =
-        pctNum !== null
-          ? Math.max(
-              0,
-              Math.min(100, Math.round(maxPct > 0 && maxPct !== 100 ? (pctNum / maxPct) * 100 : pctNum))
-            )
-          : null;
+      // The writer scales fan speed with the speed curve, so the reader must too.
+      const percentage = percentRef && pctNum !== null ? percentFromRaw(pctNum, percentRef.prop, "speed") : null;
       const presetVal = typeof presetRef?.val === "number" ? Math.trunc(presetRef.val) : null;
       const presetDesc =
         presetVal !== null
@@ -683,26 +667,8 @@ export const MiotSynthesizer = {
           ? mode
           : levels.find((r) => (r.prop.valueList?.length ?? 0) > 0);
 
-      let percentage: number | null = null;
-      if (speedRef && typeof speedRef.val === "number") {
-        const raw = speedRef.val;
-        const range = speedRef.prop.valueRange;
-        const list = speedRef.prop.valueList;
-        let scaled = raw;
-        if (range && range.length >= 2 && (range[1] ?? 0) > (range[0] ?? 0)) {
-          const lo = range[0] ?? 0;
-          const hi = range[1] ?? 100;
-          scaled = lo > 1 ? ((raw - lo) / (hi - lo)) * 100 : hi !== 100 ? (raw / hi) * 100 : raw;
-        } else if (list && list.length > 0) {
-          const vals = list.map((i) => i.value);
-          const lo = Math.min(...vals);
-          const hi = Math.max(...vals);
-          if (hi > lo) {
-            scaled = lo > 1 ? ((raw - lo) / (hi - lo)) * 100 : (raw / hi) * 100;
-          }
-        }
-        percentage = Math.max(0, Math.min(100, Math.round(scaled)));
-      }
+      const percentage =
+        speedRef && typeof speedRef.val === "number" ? percentFromRaw(speedRef.val, speedRef.prop, "speed") : null;
 
       const presetVal = typeof presetRef?.val === "number" ? Math.trunc(presetRef.val) : null;
       const presetDesc =
@@ -841,7 +807,7 @@ export const MiotSynthesizer = {
         kind: "speaker",
         mediaEntityId: speakerAddress,
         state,
-        volumePercent: volume && typeof volume.val === "number" ? coverPercent(volume.val, volume.prop) : 0,
+        volumePercent: volume && typeof volume.val === "number" ? percentFromRaw(volume.val, volume.prop, "proportional") : 0,
         isMuted: miotBool(mute?.val) ?? false,
         muteSwitchEntityId: exposesWrite(mute?.prop.access) ? speakerAddress : null,
         sleepModeEntityId:
@@ -881,7 +847,7 @@ export const MiotSynthesizer = {
         subtype: sName,
         positionPercent:
           positionSource && typeof positionSource.val === "number"
-            ? coverPercent(positionSource.val, positionSource.prop)
+            ? percentFromRaw(positionSource.val, positionSource.prop, "proportional")
             : null,
         positionWritable: exposesWrite(target?.prop.access),
         openDescription: coverMotorDescription(items, "open"),

@@ -9,6 +9,7 @@ import {
   type MiotProperty,
   type MiotService,
 } from "./spec.js";
+import { rawFromPercent } from "./percentScale.js";
 
 export type MiotWrite =
   | { readonly kind: "setProps"; readonly writes: readonly MiotPropWrite[] }
@@ -106,8 +107,7 @@ export const MiotCommandMapper = {
           };
         }
         const { prop } = findProp("brightness");
-        const max = prop.valueRange?.[1] ?? 100;
-        const raw = max > 0 && max !== 100 ? (command.percent / 100) * max : command.percent;
+        const raw = rawFromPercent(command.percent, prop, "proportional");
         return {
           kind: "setProps",
           writes: [
@@ -219,30 +219,8 @@ export const MiotCommandMapper = {
         }
         if (!speedFound) throw new Error("Unsupported property: fan-level");
 
-        const clamped = Math.max(0, Math.min(100, command.percent));
-        let writeVal: number;
-        const range = speedFound.prop.valueRange;
-        const list = speedFound.prop.valueList;
-        if (range && range.length >= 2 && (range[1] ?? 0) > (range[0] ?? 0)) {
-          const lo = range[0] ?? 0;
-          const hi = range[1] ?? 100;
-          const raw = lo > 1 ? lo + (clamped / 100) * (hi - lo) : hi !== 100 ? (clamped / 100) * hi : clamped;
-          writeVal = coerce(speedFound.prop, raw);
-        } else if (list && list.length > 0) {
-          const vals = list.map((i) => i.value);
-          const lo = Math.min(...vals);
-          const hi = Math.max(...vals);
-          const target = lo === 0 && hi > 0 ? (clamped / 100) * hi : hi > lo ? lo + (clamped / 100) * (hi - lo) : lo;
-          let best = list[0]!;
-          for (const item of list) {
-            if (Math.abs(item.value - target) < Math.abs(best.value - target)) {
-              best = item;
-            }
-          }
-          writeVal = best.value;
-        } else {
-          writeVal = coerce(speedFound.prop, clamped);
-        }
+        const raw = rawFromPercent(command.percent, speedFound.prop, "speed");
+        const writeVal = coerce(speedFound.prop, raw);
 
         const prefix = [...powerOnPrefix()];
         if (speedFound.service.iid !== service.iid) {
@@ -363,12 +341,10 @@ export const MiotCommandMapper = {
           throw new Error("Unsupported property: volume");
         }
         const { prop } = findProp("volume");
-        const lo = prop.valueRange?.[0] ?? 0;
-        const hi = prop.valueRange?.[1] ?? 100;
-        const level = Math.max(0, Math.min(1, command.level));
+        const raw = rawFromPercent(command.level * 100, prop, "proportional");
         return {
           kind: "setProps",
-          writes: [{ did: addr.did, siid: service.iid, piid: prop.iid, value: coerce(prop, lo + level * (hi - lo)) }],
+          writes: [{ did: addr.did, siid: service.iid, piid: prop.iid, value: coerce(prop, raw) }],
         };
       }
       case "activateScene":
