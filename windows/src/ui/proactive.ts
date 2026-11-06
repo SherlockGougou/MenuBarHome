@@ -17,7 +17,7 @@ import {
 import type { AssistantSuggestion, DeviceIntent, SmartDevice } from "../core/models.js";
 import { GrokBallView } from "./grokBall.js";
 import { withAliases } from "./panelPrefs.js";
-import { buildInverseCommand } from "./intentExecution.js";
+import { inverseCommands } from "../core/commandEffects.js";
 
 export function proactiveSignature(host: MenuMijiaWindowsApp): string {
     const bucket = timeBucketLabel(new Date().getHours());
@@ -49,7 +49,7 @@ export function isIntentReversibleOnDevice(host: MenuMijiaWindowsApp, intent: De
     }
     const normalizedIntent: DeviceIntent = { targetId: intent.targetId, operation: normalized };
     const commands = IntentValidator.commandsForIntent(normalizedIntent, device);
-    if (commands.length === 0 || !commands.every((command) => buildInverseCommand(device, command).length > 0)) {
+    if (commands.length === 0 || !commands.every((command) => inverseCommands(device, command).length > 0)) {
       return { reversible: false, nextDevice: device };
     }
     const k = device.kind;
