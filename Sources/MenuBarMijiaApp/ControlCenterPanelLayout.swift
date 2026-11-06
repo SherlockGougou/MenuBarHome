@@ -210,7 +210,10 @@ extension ControlCenterPanel {
     }
 
     var groups: [DeviceGroup] { GroupPrefs.groups(groupsRaw) }
-    var groupMap: [String: String] { liveGroupMap ?? GroupPrefs.map(groupMapRaw) }
+    /// Saved card order, sizes and group membership for this store's defaults.
+    var panelLayout: PanelLayoutStore { PanelLayoutStore.shared(for: store.userDefaults) }
+
+    var groupMap: [String: String] { panelLayout.groupMap }
     var collapsedGroups: Set<String> { GroupPrefs.set(collapsedRaw) }
 
     /// Collapse state is per page: folding "更多设备" in All must not hide "其他" in a room.
@@ -299,10 +302,7 @@ extension ControlCenterPanel {
                 store.toggleFavorite(dragged)
             }
             if to != "fav" {
-                var map = groupMap
-                map[dragged] = to == "rest" ? nil : to
-                liveGroupMap = map
-                groupMapRaw = GroupPrefs.encode(map)
+                panelLayout.assign(dragged, toGroup: to == "rest" ? nil : to)
             }
         }
     }
@@ -369,9 +369,7 @@ extension ControlCenterPanel {
     func deleteGroup(_ id: String) {
         withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
             groupsRaw = GroupPrefs.encode(groups.filter { $0.id != id })
-            let map = groupMap.filter { $0.value != id }
-            liveGroupMap = map
-            groupMapRaw = GroupPrefs.encode(map)
+            panelLayout.removeGroup(id)
         }
     }
 
@@ -384,10 +382,7 @@ extension ControlCenterPanel {
                     let group = DeviceGroup(id: UUID().uuidString, name: name)
                     withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
                         groupsRaw = GroupPrefs.encode(groups + [group])
-                        var map = groupMap
-                        map[deviceId] = group.id
-                        liveGroupMap = map
-                        groupMapRaw = GroupPrefs.encode(map)
+                        panelLayout.assign(deviceId, toGroup: group.id)
                         layoutUI.newGroupForDevice = nil
                     }
                 } onCancel: {
@@ -658,7 +653,7 @@ extension ControlCenterPanel {
     }
 
     /// Moves `dragged` to `target`'s slot in the saved order (seeded from the full device list).
-    var currentOrder: [String] { liveOrder ?? DeviceLayoutPrefs.decodeOrder(orderRaw) }
+    var currentOrder: [String] { panelLayout.order }
 
     func moveDevice(_ dragged: String, relativeTo target: String, after: Bool) {
         var order = currentOrder
@@ -669,12 +664,11 @@ extension ControlCenterPanel {
         order.insert(dragged, at: after ? t + 1 : t)
         guard order != currentOrder else { return }
         withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
-            liveOrder = order
+            panelLayout.setOrder(order)
             if store.favoriteDeviceIds.contains(dragged) {
                 store.favoriteOrder = order.filter { store.favoriteDeviceIds.contains($0) }
             }
         }
-        orderRaw = DeviceLayoutPrefs.encodeOrder(order)
     }
 
     func cycleSize(_ device: SmartDevice) {
@@ -689,16 +683,13 @@ extension ControlCenterPanel {
 
     func setTileSize(_ next: TileSize, for device: SmartDevice, playHaptic: Bool) {
         guard tileSize(device) != next else { return }
-        var sizes = liveSizes ?? DeviceLayoutPrefs.decode(tileSizesRaw)
-        sizes[DeviceLayoutPrefs.scopedKey(id: device.id, scope: layoutScope)] = next
         if playHaptic {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         }
         withAnimation(AppleMotion.snappySpring) {
             store.expandedDeviceId = nil
-            liveSizes = sizes
+            panelLayout.setSize(next, of: device.id, scope: layoutScope)
         }
-        tileSizesRaw = DeviceLayoutPrefs.encode(sizes)
     }
 
     /// "完成" for either edit mode. In the room-order list Return is routed by the panel's key
@@ -749,8 +740,7 @@ extension ControlCenterPanel {
     /// The device's card size with `.auto` resolved; full and panel sizes take a whole row.
     func tileSize(_ device: SmartDevice) -> TileSize {
         DeviceLayoutPrefs.resolved(
-            liveSizes.map { DeviceLayoutPrefs.lookup($0, id: device.id, scope: layoutScope) }
-                ?? DeviceLayoutPrefs.cachedSize(raw: tileSizesRaw, id: device.id, scope: layoutScope),
+            panelLayout.size(of: device.id, scope: layoutScope),
             device: device,
             compactGrid: store.isCompactGridMode,
             climatePanel: climatePanelModule

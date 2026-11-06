@@ -6,14 +6,8 @@ import MijiaCore
 public struct ControlCenterPanel: View {
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(PanelPrefs.climatePanelKey) var climatePanelModule: Bool = true
-    @AppStorage(DeviceLayoutPrefs.storageKey) var tileSizesRaw: String = "{}"
-    @AppStorage(DeviceLayoutPrefs.orderKey) var orderRaw: String = "[]"
     @State var draggingId: String?
     @State var activeResize: ActiveTileResize?
-    // In-memory mirrors of the saved order/sizes: @AppStorage publishes changes outside the
-    // current animation transaction, so moves made through it alone snap instead of sliding.
-    @State var liveOrder: [String]?
-    @State var liveSizes: [String: TileSize]?
     @State var tileFrames: [String: CGRect] = [:]
     @State var dragLocation: CGPoint?
     @State var grabOffset: CGSize = .zero
@@ -23,9 +17,7 @@ public struct ControlCenterPanel: View {
     @State var pressCancelled = false
     @State var pendingScrollToDeviceId: String?
     @AppStorage(GroupPrefs.groupsKey) var groupsRaw: String = "[]"
-    @AppStorage(GroupPrefs.mapKey) var groupMapRaw: String = "{}"
     @AppStorage(GroupPrefs.collapsedKey) var collapsedRaw: String = "[]"
-    @State var liveGroupMap: [String: String]?
     @State var hoveredHeader: String?
     @AppStorage(GroupPrefs.aliasesKey) var aliasesRaw: String = "{}"
     // #146: room aliases and order, separate from device prefs so a room rename never touches devices.
@@ -147,13 +139,6 @@ public struct ControlCenterPanel: View {
                     .zIndex(3)
             }
         }
-        // Keep the in-memory mirrors in step with edits made elsewhere (card context menus).
-        .onChange(of: groupMapRaw) { _, raw in
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { liveGroupMap = GroupPrefs.map(raw) }
-        }
-        .onChange(of: tileSizesRaw) { _, raw in
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { liveSizes = DeviceLayoutPrefs.decode(raw) }
-        }
         .onChange(of: store.favoriteOrder) { _, favOrder in
             guard !favOrder.isEmpty else { return }
             var order = currentOrder
@@ -167,8 +152,7 @@ public struct ControlCenterPanel: View {
                 }
             }
             if order != currentOrder {
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) { liveOrder = order }
-                orderRaw = DeviceLayoutPrefs.encodeOrder(order)
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) { panelLayout.setOrder(order) }
             }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.82), value: layoutUI.newGroupForDevice)
