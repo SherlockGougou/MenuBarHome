@@ -206,9 +206,11 @@ def cmd_pr(forge: Forge, args) -> None:
         statuses = status.get("statuses") or []
         print(f"head {pr['head']['sha'][:7]}  combined: {status.get('state') or 'none'}")
         if not statuses:
-            print("（还没有任何检查上报：没有 Actions runner 时一直为空，用 bash scripts/check.sh 本地把关）")
+            print("（还没有任何检查上报；用 bash scripts/check.sh --skip-snapshots 本地把关）")
         for item in statuses:
             print(f"{item['status']:8} {item['context']}  {item.get('target_url') or ''}")
+        if any(item["status"] == "pending" for item in statuses):
+            print("注意：没有注册 Actions runner 时 pending 永远不会结束，本地门禁才是闸门。")
         if status.get("state") in ("failure", "error"):
             sys.exit(1)
     elif args.action == "merge":

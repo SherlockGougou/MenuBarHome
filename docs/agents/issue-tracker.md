@@ -24,7 +24,7 @@ The GitHub PR history was not migrated: `pending-work.sh` shows `no PR` for ever
 
 - **Open**: push the branch to `origin`, then `python3 scripts/forge.py pr create --title "..." --body-file -` (head defaults to the current branch, base to `main`).
 - **Read**: `python3 scripts/forge.py pr view <n>`; diff with `git diff origin/main...origin/<branch>`.
-- **Checks**: `python3 scripts/forge.py pr checks <n>` lists commit statuses on the head. No Actions runner is registered yet, so the list stays empty; `bash scripts/check.sh --skip-snapshots` is the gate.
+- **Checks**: `python3 scripts/forge.py pr checks <n>` lists commit statuses on the head. Forgejo runs the existing `.github/workflows`, but no Actions runner is registered yet, so every job sits at `pending` forever; `bash scripts/check.sh --skip-snapshots` is the gate.
 - **Merge**: `python3 scripts/forge.py pr merge <n> --method squash --delete-branch`.
 
 Issues and PRs share one number space, so a bare `#42` may be either: `issue view` reads both.
