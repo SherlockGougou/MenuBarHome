@@ -10,10 +10,6 @@ let package = Package(
         .library(name: "MijiaCore", targets: ["MijiaCore"]),
         .executable(name: "MenuBarMijiaApp", targets: ["MenuBarMijiaApp"])
     ],
-    dependencies: [
-        // UI snapshot tests (#46); baselines are recorded once on CI with SNAPSHOT_RECORD=1.
-        .package(url: "https://github.com/pointfreeco/swift-snapshot-testing", from: "1.19.7")
-    ],
     targets: [
         .target(
             name: "MijiaCore",
@@ -50,7 +46,6 @@ let package = Package(
             dependencies: [
                 "MenuBarMijiaApp",
                 "MijiaCore",
-                .product(name: "SnapshotTesting", package: "swift-snapshot-testing")
             ],
             swiftSettings: [
                 .swiftLanguageMode(.v6)

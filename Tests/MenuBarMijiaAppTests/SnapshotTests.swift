@@ -2,7 +2,6 @@ import Testing
 import Foundation
 import SwiftUI
 import AppKit
-import SnapshotTesting
 @testable import MijiaCore
 @testable import MenuBarMijiaApp
 
@@ -11,7 +10,7 @@ import SnapshotTesting
 /// Two-phase baseline: `bash scripts/record_snapshots.sh` runs `SNAPSHOT_RECORD=1 swift test --filter
 /// SnapshotTests` on the maintainer's Mac, which is also the GitLab CI runner, and writes PNGs into
 /// `Tests/MenuBarMijiaAppTests/__Snapshots__/SnapshotTests/`; those files are then committed.
-/// SnapshotTesting reports "Record mode is on" as a failure for that run, so recording exits
+/// SnapshotAssertion reports "Record mode is on" as a failure for that run, so recording exits
 /// non-zero while still producing every baseline. Later runs compare
 /// against them; on a mismatch the new bitmap is written under `$SNAPSHOT_ARTIFACTS`/SnapshotTests
 /// (or `$TMPDIR/SnapshotTests`) and the diff command is printed in the failure message.
@@ -23,8 +22,8 @@ import SnapshotTesting
 @MainActor
 @Suite(.serialized)
 struct SnapshotTests {
-    private var recordMode: SnapshotTestingConfiguration.Record {
-        ProcessInfo.processInfo.environment["SNAPSHOT_RECORD"] == "1" ? .all : .missing
+    private var recordAll: Bool {
+        ProcessInfo.processInfo.environment["SNAPSHOT_RECORD"] == "1"
     }
 
     // MARK: - Panel: one system look (Chinese, light, single column)
@@ -499,15 +498,17 @@ struct SnapshotTests {
             }
     }
 
-    /// SnapshotTesting only ships the SwiftUI `.image(layout:)` strategy for iOS/tvOS, so macOS
-    /// renders through an `NSHostingView` inside a borderless window and snapshots the NSView.
+    /// Renders a SwiftUI view through an `NSHostingView` inside a borderless window and snapshots the NSImage.
     private func assertRendered<V: View>(
         _ view: V,
         size: CGSize,
         named name: String,
         scheme: ColorScheme = .light,
+        fileID: StaticString = #fileID,
         file: StaticString = #filePath,
-        testName: String = #function
+        testName: String = #function,
+        line: Int = #line,
+        column: Int = #column
     ) {
         // `swift test` does not launch an app; AppKit still needs its shared application object
         // before offscreen windows and hosting views can be created.
@@ -554,14 +555,23 @@ struct SnapshotTests {
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
         let image = NSImage(size: size)
         image.addRepresentation(bitmap)
-        assertSnapshot(
-            of: image,
-            as: .image,
+        if let failure = SnapshotAssertion.verifyImage(
+            image,
             named: name,
-            record: recordMode,
+            recordAll: recordAll,
             file: file,
             testName: testName
-        )
+        ) {
+            Issue.record(
+                Comment(rawValue: failure),
+                sourceLocation: SourceLocation(
+                    fileID: String(describing: fileID),
+                    filePath: String(describing: file),
+                    line: line,
+                    column: column
+                )
+            )
+        }
 
         window.contentView = nil
         window.orderOut(nil)
