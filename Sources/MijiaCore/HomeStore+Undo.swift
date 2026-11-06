@@ -262,8 +262,8 @@ extension HomeStore {
             guard s.powerWritable else { return nil }
             s.isOn = false
             return (
-                .setSwitch(entityId: s.entityId, isOn: false),
-                .setSwitch(entityId: s.entityId, isOn: true),
+                .setSwitch(entityId: s.powerEntityId, isOn: false),
+                .setSwitch(entityId: s.powerEntityId, isOn: true),
                 .appliance(s)
             )
         case .speaker, .fridge, .sensor, .cover:

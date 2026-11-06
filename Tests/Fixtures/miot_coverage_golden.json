@@ -7,8 +7,10 @@
       "unexposedWritable" : 14
     },
     "090615.bhf_light.ptxyb" : {
-      "category" : "droppedControllable",
-      "deviceType" : "bath-heater"
+      "category" : "matched",
+      "deviceType" : "bath-heater",
+      "service" : "ptc-bath-heater",
+      "unexposedWritable" : 1
     },
     "090615.curtain.1mcu01" : {
       "category" : "matched",
@@ -215,8 +217,10 @@
       "unexposedWritable" : 0
     },
     "alsmai.hood.a31203" : {
-      "category" : "droppedControllable",
-      "deviceType" : "hood"
+      "category" : "matched",
+      "deviceType" : "hood",
+      "service" : "hood",
+      "unexposedWritable" : 4
     },
     "alsmai.oven.a0120g" : {
       "category" : "matched",
@@ -647,8 +651,10 @@
       "deviceType" : "fan"
     },
     "leishi.bhf_light.ls109" : {
-      "category" : "droppedControllable",
-      "deviceType" : "bath-heater"
+      "category" : "matched",
+      "deviceType" : "bath-heater",
+      "service" : "ptc-bath-heater",
+      "unexposedWritable" : 5
     },
     "line.remote.wkgf1" : {
       "category" : "droppedControllable",
@@ -861,8 +867,10 @@
       "unexposedWritable" : 4
     },
     "viomi.hood.c26" : {
-      "category" : "droppedControllable",
-      "deviceType" : "hood"
+      "category" : "matched",
+      "deviceType" : "hood",
+      "service" : "hood",
+      "unexposedWritable" : 6
     },
     "viomi.waterheater.u3" : {
       "category" : "matched",
@@ -941,28 +949,44 @@
   },
   "summary" : {
     "categories" : {
-      "droppedControllable" : 102,
+      "droppedControllable" : 98,
       "droppedReadOnly" : 13,
-      "matched" : 59,
+      "matched" : 63,
       "misclaimed" : 0,
       "noUsableProperties" : 31
     },
     "deviceTypes" : 177,
     "specs" : 205,
-    "unexposedWritableTotal" : 425
+    "unexposedWritableTotal" : 441
   },
   "windowsDivergences" : {
+    "090615.bhf_light.ptxyb" : {
+      "category" : "droppedControllable",
+      "deviceType" : "bath-heater"
+    },
     "aden.waterheater.ash200" : {
       "category" : "droppedControllable",
       "deviceType" : "water-heater"
+    },
+    "alsmai.hood.a31203" : {
+      "category" : "droppedControllable",
+      "deviceType" : "hood"
     },
     "aupu.airer.d350m" : {
       "category" : "droppedControllable",
       "deviceType" : "airer"
     },
+    "leishi.bhf_light.ls109" : {
+      "category" : "droppedControllable",
+      "deviceType" : "bath-heater"
+    },
     "mrbond.airer.m1super" : {
       "category" : "droppedControllable",
       "deviceType" : "airer"
+    },
+    "viomi.hood.c26" : {
+      "category" : "droppedControllable",
+      "deviceType" : "hood"
     },
     "viomi.waterheater.u3" : {
       "category" : "droppedControllable",

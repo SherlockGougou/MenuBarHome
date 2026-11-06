@@ -56,5 +56,32 @@
     "relay": [
       "switch"
     ]
+  },
+  "appliances": {
+    "bath-heater": {
+      "primary": [
+        "ptc-bath-heater",
+        "bath-heater"
+      ],
+      "companions": [
+        "fan-control",
+        "environment",
+        "light"
+      ],
+      "symbol": "heater.vertical",
+      "roomReading": true,
+      "heats": true
+    },
+    "hood": {
+      "primary": [
+        "hood",
+        "fan-control"
+      ],
+      "companions": [
+        "fan-control",
+        "light"
+      ],
+      "symbol": "wind"
+    }
   }
 }

@@ -275,16 +275,27 @@ public enum MiotSynthesizer {
 
     /// Services that count as this device type's own primary service.
     static func preferredServices(forDeviceType deviceType: String) -> [String] {
+        if let profile = DeviceProfiles.current.appliances[deviceType] { return profile.primary }
         switch deviceType {
-        case "outlet": ["outlet", "switch"]
-        case "camera", "cateye", "video-doorbell": ["camera-control", "video-doorbell"]
-        case "kettle", "ble-kettle": ["kettle", "ble-kettle", "water-dispenser"]
-        default: [deviceType]
+        case "outlet": return ["outlet", "switch"]
+        case "camera", "cateye", "video-doorbell": return ["camera-control", "video-doorbell"]
+        case "kettle", "ble-kettle": return ["kettle", "ble-kettle", "water-dispenser"]
+        default: return [deviceType]
         }
     }
 
     static func primary(for spec: MiotDeviceSpec) -> (MiotService, KindBuilder)? {
         let deviceType = spec.shortName
+        // A device type the profile table lists as an appliance takes the first service the table
+        // names, even though the type itself has no same-name service (#4).
+        if let profile = DeviceProfiles.current.appliances[deviceType] {
+            for serviceName in profile.primary {
+                if let service = spec.services(named: serviceName).first {
+                    return (service, buildApplianceCard)
+                }
+            }
+            return nil
+        }
         for serviceName in preferredServices(forDeviceType: deviceType) {
             if let entry = registry.first(where: { $0.service == serviceName }),
                claims(entry.service, spec: spec),
@@ -792,7 +803,7 @@ public enum MiotSynthesizer {
 
         var parts: [String] = []
         if let desc = status?.valueDescription {
-            parts.append(applianceStatusText(forDescription: desc))
+            parts.append(genericApplianceStatusText(forDescription: desc))
         }
         if let t = temp?.value?.doubleValue, t.isFinite {
             parts.append("\(Int(t.rounded()))°C")
@@ -815,31 +826,47 @@ public enum MiotSynthesizer {
     }
 
     /// The shared appliance card (#300). Power, mode, target temperature, status, fault, remaining
-    /// time and start/pause actions are each exposed only when the spec publishes them. This first
-    /// cut registers the `water-heater` type only; the generic shape engine is #303.
+    /// time and start/pause actions are each exposed only when the spec publishes them. A device
+    /// type listed in `deviceProfiles.json`'s `appliances` table merges its primary service with
+    /// every companion service, so a bath heater or hood keeps its light and fan speed (#4).
     static func buildApplianceCard(_ r: MiotReader, _ s: MiotService) -> DeviceKind {
-        let companions = r.spec.services(named: "water-heater") + r.spec.services(named: "boiler")
-        let services = [s] + companions
-        // A companion service can carry the only writable copy of a property while the primary
-        // service publishes the same name read-only. Prefer the writable copy so the card exposes
-        // the control and the command mapper can address that service (#300 review).
-        let on = r.first("on", in: services, where: { $0.isWritable })
-            ?? r.first("on", in: services)
-        let mode = r.first("mode", in: services, where: { $0.isWritable && $0.valueList?.isEmpty == false })
-            ?? r.first("mode", in: services, where: { $0.valueList?.isEmpty == false })
-        let target = r.first("target-temperature", in: services, where: { $0.isWritable })
-            ?? r.first("target-temperature", in: services)
-        let current = r.first("temperature", in: services + r.spec.services(named: "environment"))
-        let status = r.first("status", in: services)
-        let fault = r.first("fault", in: services) ?? r.first("device-fault", in: services)
-        let remaining = r.first("left-time", in: services)
+        let profile = DeviceProfiles.current.appliances[r.spec.shortName]
+        let services = applianceServices(primary: s, profile: profile, spec: r.spec)
+        // A `light` companion contributes its own switch only; its `on`/`mode` must never be
+        // mistaken for the appliance's main function.
+        let lightService = services.first { $0.shortName == "light" && $0.property(named: "on") != nil }
+        let controls = services.filter { $0.iid != lightService?.iid }
+        // The main function's own service owns power whenever it publishes it. A companion can
+        // carry the only writable copy while the primary publishes the same name read-only
+        // (#300), so writable companions still come before readable fallbacks. This ordering
+        // keeps a bath heater's `heating` from being replaced by a companion fan switch (#4).
+        let companionControls = controls.filter { $0.iid != s.iid }
+        let power = firstWritablePower(in: [s], reader: r)
+            ?? firstWritablePower(in: companionControls, reader: r)
+            ?? r.first("on", in: [s]) ?? r.first("heating", in: [s])
+            ?? r.first("on", in: companionControls) ?? r.first("heating", in: companionControls)
+        let mode = r.first("mode", in: controls, where: { $0.isWritable && $0.valueList?.isEmpty == false })
+            ?? r.first("mode", in: controls, where: { $0.valueList?.isEmpty == false })
+        let target = r.first("target-temperature", in: controls, where: { $0.isWritable })
+            ?? r.first("target-temperature", in: controls)
+        let readingServices = services + r.spec.services(named: "environment")
+            + r.spec.services(named: "temperature-humidity-sensor")
+        let current = r.first("temperature", in: readingServices)
+        let humidity = r.first("relative-humidity", in: readingServices)
+            ?? r.first("humidity", in: readingServices)
+        let status = r.first("status", in: controls)
+        let fault = r.first("fault", in: controls) ?? r.first("device-fault", in: controls)
+        let remaining = r.first("left-time", in: controls)
         let faultCode = fault?.value?.intValue
+        let lightOn = lightService.flatMap { r.ref("on", in: $0) }
+        let fan = r.first("fan-level", in: controls, where: { $0.isWritable && $0.valueList?.isEmpty == false })
+            ?? r.first("fan-level", in: controls, where: { $0.valueList?.isEmpty == false })
 
         return .appliance(ApplianceSpec(
             entityId: MiotAddress.make(did: r.did, siid: s.iid),
-            isOn: on?.value?.miotBool ?? false,
-            powerPresent: on != nil,
-            powerWritable: on?.property.isWritable == true,
+            isOn: power?.value?.miotBool ?? false,
+            powerPresent: power != nil,
+            powerWritable: power?.property.isWritable == true,
             currentMode: mode?.valueDescription,
             availableModes: mode?.property.valueList?.map(\.description) ?? [],
             modeWritable: mode?.property.isWritable == true,
@@ -849,15 +876,57 @@ public enum MiotSynthesizer {
             maxTemp: target?.property.rangeMax ?? 100,
             step: target?.property.rangeStep ?? 1,
             temperatureWritable: target?.property.isWritable == true,
-            statusText: status?.valueDescription.map(waterHeaterStatusText(forDescription:)),
+            statusText: status?.valueDescription.map(applianceStatusText(forDescription:)),
             faultText: faultDescription(
                 code: faultCode,
                 description: faultCode.flatMap { fault?.property.description(forValue: $0) }
             ),
             remainingMinutes: remaining?.value?.intValue.flatMap { $0 > 0 ? $0 : nil },
-            startAction: applianceAction(.start, services: services, reader: r),
-            pauseAction: applianceAction(.pause, services: services, reader: r)
+            startAction: applianceAction(.start, services: controls, reader: r),
+            pauseAction: applianceAction(.pause, services: controls, reader: r),
+            powerEntityId: power.map { MiotAddress.make(did: r.did, siid: $0.service.iid) },
+            modeEntityId: mode.map { MiotAddress.make(did: r.did, siid: $0.service.iid) },
+            temperatureEntityId: target.map { MiotAddress.make(did: r.did, siid: $0.service.iid) },
+            light: lightOn.map {
+                ApplianceLight(
+                    entityId: MiotAddress.make(did: r.did, siid: $0.service.iid),
+                    isOn: $0.value?.miotBool ?? false,
+                    writable: $0.property.isWritable
+                )
+            },
+            fanLevel: fan.map {
+                ApplianceFanLevel(
+                    entityId: MiotAddress.make(did: r.did, siid: $0.service.iid),
+                    current: $0.valueDescription,
+                    options: $0.property.valueList?.map(\.description) ?? [],
+                    writable: $0.property.isWritable
+                )
+            },
+            currentHumidity: humidity?.value?.doubleValue,
+            symbolName: profile?.symbol,
+            roomReading: profile?.roomReading == true,
+            heats: profile?.heats ?? (r.spec.shortName == "water-heater")
         ))
+    }
+
+    static func firstWritablePower(in services: [MiotService], reader r: MiotReader) -> MiotReader.Ref? {
+        r.first("on", in: services, where: { $0.isWritable })
+            ?? r.first("heating", in: services, where: { $0.isWritable })
+    }
+
+    /// The primary service followed by the profile's companion services, in profile order.
+    static func applianceServices(
+        primary: MiotService,
+        profile: DeviceProfiles.ApplianceProfile?,
+        spec: MiotDeviceSpec
+    ) -> [MiotService] {
+        let companions = profile?.companions ?? ["water-heater", "boiler"]
+        var services = [primary]
+        for name in companions {
+            services.append(contentsOf: spec.services(named: name))
+        }
+        var seen: Set<Int> = []
+        return services.filter { seen.insert($0.iid).inserted }
     }
 
     static func applianceAction(
@@ -1120,9 +1189,9 @@ public enum MiotSynthesizer {
         return "idle"
     }
 
-    /// Water heater statuses use words the shared kitchen mapping must not reinterpret
-    /// (`Close` as standby, `Wash` as bathing). Keep those meanings scoped to this family.
-    static func waterHeaterStatusText(forDescription description: String) -> String {
+    /// Shared appliance-card statuses: `Close` means standby and `Wash` means bathing, words the
+    /// kitchen mapping would reinterpret. `genericApplianceStatusText` handles every other word.
+    static func applianceStatusText(forDescription description: String) -> String {
         switch description.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
         case "close", "closed", "off", "shutdown":
             return L10n.tr("待机", "Standby")
@@ -1131,11 +1200,11 @@ public enum MiotSynthesizer {
         case "wash", "washing":
             return L10n.tr("洗浴中", "Washing")
         default:
-            return applianceStatusText(forDescription: description)
+            return genericApplianceStatusText(forDescription: description)
         }
     }
 
-    static func applianceStatusText(forDescription description: String) -> String {
+    static func genericApplianceStatusText(forDescription description: String) -> String {
         let lower = description.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         if lower.contains("idle") || lower.contains("standby") || lower.contains("off") || lower.contains("shutdown") {
             return L10n.tr("待机", "Standby")
@@ -1149,8 +1218,14 @@ public enum MiotSynthesizer {
         if lower.contains("preheat") {
             return L10n.tr("预热中", "Preheating")
         }
+        if lower.contains("delayed") || lower.contains("delay-off") || lower.contains("延时") {
+            return L10n.tr("延时关机", "Delayed Off")
+        }
         if lower.contains("delay") || lower.contains("appoint") || lower.contains("reservation") {
             return L10n.tr("预约中", "Scheduled")
+        }
+        if lower.contains("clean") || lower.contains("清洗") {
+            return L10n.tr("清洗中", "Cleaning")
         }
         if lower.contains("paus") {
             return L10n.tr("已暂停", "Paused")

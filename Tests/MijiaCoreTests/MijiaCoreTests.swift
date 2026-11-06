@@ -618,7 +618,7 @@ struct MijiaCoreTests {
         }
     }
 
-    @Test("Issue #98 survey: secondary light services no longer claim hood/airer/bath-heater cards; video-doorbell controls map to camera")
+    @Test("Issue #98 survey: secondary light services never own the card; hoods now become appliance cards; video-doorbell controls map to camera")
     func miotServiceSelectionGuards() throws {
         func spec(_ type: String, _ services: [MiotService]) -> MiotDeviceSpec {
             MiotDeviceSpec(type: type, services: services)
@@ -636,12 +636,21 @@ struct MijiaCoreTests {
             MiotService(iid: iid, type: "urn:miot-spec-v2:service:\(name):00000000:test:1", properties: props)
         }
 
-        // Hood carries a lamp: the lamp must not become the whole device card.
+        // Hood carries a lamp: the lamp must not become the whole device card. The hood service
+        // itself is now the main function of the shared appliance card (#4).
         let hood = spec("urn:miot-spec-v2:device:hood:0000A01B:viomi-c4:1", [
             service(2, "hood", [prop("on", ["read", "write"])]),
             service(6, "light", [prop("on", ["read", "write"])]),
         ])
-        #expect(MiotSynthesizer.supportedServiceName(for: hood) == nil)
+        #expect(MiotSynthesizer.supportedServiceName(for: hood) == "hood")
+        let hoodRecord = MiDeviceRecord(did: "hood-test", name: "油烟机", model: "hood-test", isOnline: true)
+        let hoodHome = MiotSynthesizer.synthesize(
+            devices: [hoodRecord], rooms: [], specs: ["hood-test": hood], values: [:]
+        )
+        #expect(hoodHome.devices.count == 1)
+        if let kind = hoodHome.devices.first?.kind, case .appliance = kind {} else {
+            Issue.record("hood must synthesize as the appliance card, not its light")
+        }
 
         // Ceiling fan: the fan service is the device, the light is the accessory.
         let ceilingFan = spec("urn:miot-spec-v2:device:ceiling-fan:0000A02C:test:1", [

@@ -54,6 +54,37 @@ struct ApplianceDetailDrawer: View {
                 .padding(-6)
             }
 
+            if let fan = spec.fanLevel, fan.writable, !fan.options.isEmpty {
+                fanLevelPicker(fan)
+            }
+
+            if let light = spec.light, light.writable {
+                HStack(spacing: 8) {
+                    Image(systemName: light.isOn ? "lightbulb.fill" : "lightbulb")
+                        .foregroundStyle(light.isOn ? accent : statusColor)
+                    Text(L10n.tr("灯光", "Light"))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
+                    Spacer(minLength: 8)
+                    Toggle("", isOn: Binding(
+                        get: { light.isOn },
+                        set: { store.setApplianceLightPower(device.id, isOn: $0) }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .tint(accent)
+                    .disabled(!device.isOnline)
+                }
+                .padding(.horizontal, 8)
+            }
+
+            if spec.roomReading, let humidity = spec.currentHumidity {
+                statusRow(
+                    title: L10n.tr("湿度", "Humidity"),
+                    value: "\(Int(humidity.rounded()))%"
+                )
+            }
+
             if let status = spec.statusText, !status.isEmpty {
                 statusRow(title: L10n.tr("状态", "Status"), value: status)
             }
@@ -124,6 +155,27 @@ struct ApplianceDetailDrawer: View {
             .disabled(!device.isOnline || !spec.temperatureWritable)
         }
         .padding(.horizontal, 8)
+    }
+
+    private func fanLevelPicker(_ fan: ApplianceFanLevel) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            AdaptiveGlassContainer(spacing: 6) {
+                HStack(spacing: 6) {
+                    ForEach(fan.options, id: \.self) { level in
+                        Button(SmartDevice.localizeApplianceFanLevel(level)) {
+                            store.setApplianceFanLevel(device.id, level: level)
+                        }
+                        .buttonStyle(PillActionButtonStyle(
+                            isSelected: fan.current == level,
+                            tintColor: accent
+                        ))
+                        .disabled(!device.isOnline || !fan.writable)
+                    }
+                }
+            }
+            .padding(6)
+        }
+        .padding(-6)
     }
 
     private func statusRow(title: String, value: String) -> some View {

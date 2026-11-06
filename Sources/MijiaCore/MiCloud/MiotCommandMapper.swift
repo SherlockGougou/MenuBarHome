@@ -109,7 +109,7 @@ public enum MiotCommandMapper {
         case .setClimateMode(_, let hvacMode):
             if hvacMode == "off" { return .setProps([try ctx.write("on", .bool(false))]) }
             var writes = [try ctx.write("on", .bool(true))]
-            if let mode = ctx.property("mode"),
+            if let mode = ctx.listProperty("mode"),
                let item = mode.property.valueList?.first(where: { MiotSynthesizer.hvacMode(forDescription: $0.description) == hvacMode }) {
                 writes.append(ctx.write(mode, .number(Double(item.value))))
             }
@@ -144,10 +144,14 @@ public enum MiotCommandMapper {
 
         case .setSwitch(_, let isOn):
             // A gas water heater publishes its power switch on the companion `boiler` service
-            // while the card addresses the `water-heater` service (#300).
+            // while the card addresses the `water-heater` service (#300). A bath heater publishes
+            // its heat as `heating` instead of `on` (#4).
             if let power = ctx.property("on")
                 ?? ctx.writableProperty("on", in: ["boiler", "water-heater"]) {
                 return .setProps([ctx.write(power, .bool(isOn))])
+            }
+            if let heating = ctx.property("heating") {
+                return .setProps([ctx.write(heating, .bool(isOn))])
             }
             let name: String
             if service.shortName == "speaker", ctx.property("mute") != nil {
@@ -231,6 +235,16 @@ public enum MiotCommandMapper {
                 if let p = s.properties.first(where: { $0.shortName == name && $0.isWritable }) {
                     return Found(service: s, property: p)
                 }
+            }
+            return nil
+        }
+
+        /// First writable property with a non-empty value list, the same property the synthesizer
+        /// binds. A writable `mode` without a list must not shadow the list that follows it.
+        func listProperty(_ name: String) -> Found? {
+            for p in service.properties
+            where p.shortName == name && p.isWritable && p.valueList?.isEmpty == false {
+                return Found(service: service, property: p)
             }
             return nil
         }

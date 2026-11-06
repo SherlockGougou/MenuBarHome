@@ -747,6 +747,34 @@ public struct ApplianceAction: Equatable, Sendable {
     public var title: String { kind.title }
 }
 
+/// A hood's or bath heater's light service, merged into the appliance card as a secondary switch.
+public struct ApplianceLight: Equatable, Sendable {
+    public var entityId: String
+    public var isOn: Bool
+    public var writable: Bool
+
+    public init(entityId: String, isOn: Bool, writable: Bool) {
+        self.entityId = entityId
+        self.isOn = isOn
+        self.writable = writable
+    }
+}
+
+/// A hood's exhaust speed (`fan-level`), merged into the appliance card as a second select.
+public struct ApplianceFanLevel: Equatable, Sendable {
+    public var entityId: String
+    public var current: String?
+    public var options: [String]
+    public var writable: Bool
+
+    public init(entityId: String, current: String? = nil, options: [String] = [], writable: Bool = false) {
+        self.entityId = entityId
+        self.current = current
+        self.options = options
+        self.writable = writable
+    }
+}
+
 /// A shared appliance card (GLOSSARY `ApplianceDevice`). Every control is optional and driven by
 /// what the spec publishes: power, mode, target temperature, status, fault, remaining time and
 /// no-argument start/pause actions. Nothing here is hard-coded for one appliance family.
@@ -769,6 +797,21 @@ public struct ApplianceSpec: Equatable, Sendable {
     public var remainingMinutes: Int?
     public var startAction: ApplianceAction?
     public var pauseAction: ApplianceAction?
+    /// Address of the service holding the on/off property. A companion service may own it while
+    /// `entityId` stays the main function's service.
+    public var powerEntityId: String
+    /// Address of the service holding `mode` and `target-temperature`; they may live on a
+    /// companion service while `entityId` stays the main function's service.
+    public var modeEntityId: String
+    public var temperatureEntityId: String
+    public var light: ApplianceLight?
+    public var fanLevel: ApplianceFanLevel?
+    public var currentHumidity: Double?
+    public var symbolName: String?
+    /// The current temperature is the room's, not the appliance's own tank or cavity.
+    public var roomReading: Bool
+    /// The card can start a heater; high-risk confirmation applies to power-on and warmer targets.
+    public var heats: Bool
 
     public init(
         entityId: String,
@@ -788,7 +831,16 @@ public struct ApplianceSpec: Equatable, Sendable {
         faultText: String? = nil,
         remainingMinutes: Int? = nil,
         startAction: ApplianceAction? = nil,
-        pauseAction: ApplianceAction? = nil
+        pauseAction: ApplianceAction? = nil,
+        powerEntityId: String? = nil,
+        modeEntityId: String? = nil,
+        temperatureEntityId: String? = nil,
+        light: ApplianceLight? = nil,
+        fanLevel: ApplianceFanLevel? = nil,
+        currentHumidity: Double? = nil,
+        symbolName: String? = nil,
+        roomReading: Bool = false,
+        heats: Bool = false
     ) {
         self.entityId = entityId
         self.isOn = isOn
@@ -808,6 +860,26 @@ public struct ApplianceSpec: Equatable, Sendable {
         self.remainingMinutes = remainingMinutes
         self.startAction = startAction
         self.pauseAction = pauseAction
+        self.powerEntityId = powerEntityId ?? entityId
+        self.modeEntityId = modeEntityId ?? entityId
+        self.temperatureEntityId = temperatureEntityId ?? entityId
+        self.light = light
+        self.fanLevel = fanLevel
+        self.currentHumidity = currentHumidity
+        self.symbolName = symbolName
+        self.roomReading = roomReading
+        self.heats = heats
+    }
+
+    /// Whether choosing this mode starts heating from standby. Idle/off/standby modes do not.
+    public static func modeStartsHeating(_ mode: String) -> Bool {
+        let normalized = mode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let idleWords = [
+            "idle", "off", "standby", "close", "closed", "none",
+            "fan", "ventilate", "ventilation", "blow", "cool",
+            "吹风", "换气", "凉风", "待机", "关闭", "无",
+        ]
+        return !idleWords.contains { normalized.contains($0) }
     }
 }
 
@@ -881,6 +953,7 @@ public enum DeviceKind: Equatable, Sendable {
             return spec.canMove || spec.positionWritable
         case .appliance(let spec):
             return spec.powerWritable || spec.modeWritable || spec.temperatureWritable
+                || spec.fanLevel?.writable == true || spec.light?.writable == true
                 || spec.startAction != nil || spec.pauseAction != nil
         }
     }
@@ -949,7 +1022,10 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
         case .camera(let s): [s.entityId, s.motionDetectionEntityId, s.streamEntityId]
         case .sensor: []
         case .cover(let s): [s.entityId]
-        case .appliance(let s): [s.entityId, s.startAction?.entityId, s.pauseAction?.entityId]
+        case .appliance(let s):
+            [s.entityId, s.powerEntityId, s.modeEntityId, s.temperatureEntityId,
+             s.light?.entityId, s.fanLevel?.entityId,
+             s.startAction?.entityId, s.pauseAction?.entityId]
         }
         return entityIds.compactMap { id in
             guard let id else { return nil }
@@ -1060,6 +1136,8 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
                 || spec.batteryPercent != nil || spec.faultText != nil
         case .appliance(let spec):
             return (spec.temperatureWritable && spec.targetTemperature != nil) || spec.modeWritable
+                || spec.light?.writable == true || spec.fanLevel?.writable == true
+                || spec.currentHumidity != nil
                 || spec.statusText != nil || spec.faultText != nil || spec.remainingMinutes != nil
                 || spec.startAction != nil || spec.pauseAction != nil
         }
@@ -1101,6 +1179,16 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
                 roomName: roomName,
                 temperature: temp,
                 humidity: nil
+            )
+        case .appliance(let a):
+            guard a.roomReading, a.currentTemperature != nil || a.currentHumidity != nil else { return nil }
+            let trimmed = name.trimmingCharacters(in: .whitespaces)
+            return EnvironmentReading(
+                id: id,
+                label: trimmed.isEmpty ? roomName : trimmed,
+                roomName: roomName,
+                temperature: a.currentTemperature,
+                humidity: a.currentHumidity
             )
         default:
             return nil
