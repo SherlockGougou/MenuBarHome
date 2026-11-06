@@ -39,7 +39,7 @@ CI 失败先看 `bash scripts/ci_errors.sh <pipeline-id|log-file>`（只打失�
 - 检查失败原因尚未确认时，走 PR 排查，解决后再合并。已复现并确认与本轮无关的既有失败，需记录证据及例外原因；跳过检查不是默认流程。
 - 一个完整问题对应一次提交或一个 PR；同一问题的后续调整继续使用原 PR。
 - 直接 push 后，有 runner 时确认云端检查的最终结果；交付时区分“已推送”与“检查已通过”。直接 push 不等于发布新版本。
-- 合并请求（MR，即本文的 PR）用 `python3 scripts/forge.py pr create` 开，`pr checks <n>` 看流水线。项目还没有 `.gitlab-ci.yml` 和 runner，`.github/workflows` 不会被执行：本地 `bash scripts/check.sh --skip-snapshots` 就是合并闸门，交付时如实说明「没有云端 CI」。GitHub Actions、Codex 审查与 `pr-wait`/babysit 一类依赖 GitHub 的技能都已不可用。
+- 合并请求（MR，即本文的 PR）用 `python3 scripts/forge.py pr create` 开，`pr checks <n>` 看流水线。`.gitlab-ci.yml` 在维护者 Mac 上的项目 runner（shell executor，标签 `macos`）跑 `bash scripts/check.sh --skip-snapshots`，含 Windows 前端测试；不跑快照比对和 Rust 测试。首次查询为空时按退避重试。`.github/workflows`、Codex 审查与 `pr-wait`/babysit 一类依赖 GitHub 的技能都已不可用。
 
 ### Worktrees
 

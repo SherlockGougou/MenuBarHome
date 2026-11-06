@@ -1,0 +1,30 @@
+# GitLab CI for MenuBarMijia. Jobs run on the maintainer's Mac (project runner, shell executor,
+# tag `macos`); see docs/agents/issue-tracker.md. GitHub Actions under .github/workflows are not run.
+#
+# Snapshot comparison stays off: the baselines were recorded on GitHub's macos-26 runner and this
+# Mac's renderer never matches them (AGENTS.md). Re-recording them here is a separate decision.
+
+workflow:
+  rules:
+    # One pipeline per change: merge request pipelines, plus pushes to main. Branch pushes that
+    # already have an open MR do not get a second pipeline.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+default:
+  tags: [macos]
+  interruptible: true
+
+variables:
+  GIT_DEPTH: "50"
+  # launchd starts the runner with a minimal PATH.
+  PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+check:
+  stage: test
+  timeout: 45m
+  script:
+    - (cd windows && npm ci --no-audit --no-fund)
+    - bash scripts/check.sh --skip-snapshots

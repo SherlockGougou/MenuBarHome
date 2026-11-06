@@ -17,7 +17,7 @@ if [ -f "$1" ]; then
     sed 's/^/log\t/' "$1" >"$log"
 else
     jobs="$(python3 scripts/forge.py api GET "{repo}/pipelines/$1/jobs?scope[]=failed" --paginate \
-        | python3 -c 'import json, sys; [print(f"{j[\"id\"]}\t{j[\"name\"]}") for j in json.load(sys.stdin)]')"
+        | python3 -c 'import json, sys; [print(str(j["id"]) + "\t" + j["name"]) for j in json.load(sys.stdin)]')"
     while IFS=$'\t' read -r id name; do
         [ -n "$id" ] || continue
         python3 scripts/forge.py fetch "{repo}/jobs/$id/trace" | sed "s/^/$name\t/" >>"$log"
@@ -25,7 +25,8 @@ else
 fi
 
 if [ ! -s "$log" ]; then
-    echo "没有失败日志：$1（流水线仍在运行、已成功，或不存在）"
+    echo "没有失败日志：$1（流水线仍在运行、已成功、不存在，或在建任务前就失败了，例如账号未验证）"
+    echo "   $(python3 scripts/forge.py web)/-/pipelines/$1"
     exit 1
 fi
 
