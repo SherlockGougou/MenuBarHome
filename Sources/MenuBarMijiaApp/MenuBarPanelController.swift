@@ -875,133 +875,49 @@ final class MenuBarPanelController: NSObject {
     func handleStatusItemEvent(eventType: NSEvent.EventType?, pressedMouseButtons: Int) {
         let eventNumber = statusItemEventNumber()
         let now = ProcessInfo.processInfo.systemUptime
-        let eventName = Self.statusEventTypeName(eventType)
-        let buttons = "0x\(String(pressedMouseButtons, radix: 16))"
-        let uptimeText = String(format: "%.3f", now)
-        switch eventType {
-        case .leftMouseDown?:
-            if isContextMenuDismissalEvent(eventNumber) {
-                traceStatusItem(
-                    "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=contextMenuDismissalEvent"
-                )
-                restoreStatusItemHighlight()
-                return
-            }
-            guard !pressTriggered else {
-                traceStatusItem(
-                    "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=pressTriggered"
-                )
-                return
-            }
-            if now < suppressReleaseUntil {
-                // The menu-bar host can synthesize a primary pair after dismissing the context
-                // menu; it has no physical left-button bit. Keep filtering that pair, but let the
-                // user's next real click cancel the time-based tail immediately.
-                guard (pressedMouseButtons & 0x1) != 0 else {
-                    traceStatusItem(
-                        "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=suppressReleaseUntil"
-                    )
-                    return
-                }
-                suppressReleaseUntil = 0
-            }
-            traceStatusItem(
-                "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) decision=beginPress"
+        let decision = StatusItemEventDecision.decide(
+            eventType: eventType,
+            pressedMouseButtons: pressedMouseButtons,
+            now: now,
+            state: StatusItemEventDecision.State(
+                isContextMenuDismissalEvent: isContextMenuDismissalEvent(eventNumber),
+                pressTriggered: pressTriggered,
+                isPressActive: isStatusItemPressActive,
+                acceptsStandalonePostMenuMouseUp: acceptsStandalonePostMenuMouseUp,
+                suppressReleaseUntil: suppressReleaseUntil,
+                suppressContextMenuUntil: suppressContextMenuUntil
             )
-            // Only an accepted down consumes the pending post-menu click; a rejected synthetic pair
-            // must leave it armed for the host's next mouse-up-only delivery.
-            clearPostMenuPrimaryMouseUp()
+        )
+        traceStatusItem(
+            "handleStatusItemEvent event=\(Self.statusEventTypeName(eventType)) "
+                + "buttons=0x\(String(pressedMouseButtons, radix: 16)) "
+                + "uptime=\(String(format: "%.3f", now)) \(decision.trace)"
+        )
+        if decision.cancelsReleaseSuppression { suppressReleaseUntil = 0 }
+        if decision.clearsPostMenuMouseUp { clearPostMenuPrimaryMouseUp() }
+        switch decision.step {
+        case .none:
+            break
+        case .beginPress:
             pressAllowsToggle = true
             setStatusItemHighlighted(true)
             beginPress()
-        case .rightMouseDown?:
-            traceStatusItem(
-                "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) decision=requestStatusContextMenu(fallback)"
-            )
+        case .requestContextMenu:
             requestStatusContextMenu(
                 settle: ContextMenuSettle.fallback,
                 eventType: eventType,
                 pressedMouseButtons: pressedMouseButtons
             )
-        case .rightMouseUp?:
-            traceStatusItem(
-                "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=rightMouseUp"
-            )
-            restoreStatusItemHighlight()
-            return
-        case .leftMouseUp?:
-            defer { restoreStatusItemHighlight() }
-            if isContextMenuDismissalEvent(eventNumber) {
-                traceStatusItem(
-                    "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=contextMenuDismissalEvent"
-                )
-                return
-            }
-            // On macOS 26+ (NSSceneStatusItem), `-[NSStatusItem _performOneShotAction:]` synthesizes
-            // both `leftMouseDown` and `leftMouseUp` back-to-back at the moment the press begins while
-            // the physical mouse button is still held down. Only finish immediately when the button is
-            // no longer physically pressed; otherwise let `pressTimer` track the hold threshold and
-            // eventual release.
-            if (pressedMouseButtons & 0x1) == 0 {
-                if isStatusItemPressActive {
-                    traceStatusItem(
-                        "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) decision=finishPress"
-                    )
-                    finishPress()
-                } else if acceptsStandalonePostMenuMouseUp,
-                          now >= suppressReleaseUntil {
-                    traceStatusItem(
-                        "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) decision=postMenuStandaloneToggle"
-                    )
-                    clearPostMenuPrimaryMouseUp()
-                    pressAllowsToggle = false
-                    suppressReleaseUntil = ProcessInfo.processInfo.systemUptime + 0.15
-                    performStatusItemToggle()
-                } else if acceptsStandalonePostMenuMouseUp {
-                    traceStatusItem(
-                        "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=suppressReleaseUntil"
-                    )
-                } else {
-                    traceStatusItem(
-                        "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=inactiveRelease"
-                    )
-                }
-            } else {
-                traceStatusItem(
-                    "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=primaryStillPressed"
-                )
-            }
-        default:
-            // Keyboard and accessibility activation never produce the mouse-up this fallback waits
-            // for. Past the dismissal grace, drop the stale fallback so the key still toggles; the
-            // grace window keeps Escape and the menu's own synthetic tail from opening the panel.
-            if acceptsStandalonePostMenuMouseUp, now >= suppressContextMenuUntil {
-                clearPostMenuPrimaryMouseUp()
-            }
-            if !acceptsStandalonePostMenuMouseUp,
-               !pressTriggered,
-               now >= suppressReleaseUntil {
-                traceStatusItem(
-                    "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) decision=defaultToggle"
-                )
-                performStatusItemToggle()
-            } else if pressTriggered {
-                traceStatusItem(
-                    "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=pressTriggered"
-                )
-            } else if now < suppressReleaseUntil {
-                traceStatusItem(
-                    "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=suppressReleaseUntil"
-                )
-            } else {
-                traceStatusItem(
-                    "handleStatusItemEvent event=\(eventName) buttons=\(buttons) uptime=\(uptimeText) guard=postMenuAwaitingMouseUp"
-                )
-            }
-            if pressedMouseButtons == 0 {
-                restoreStatusItemHighlight()
-            }
+        case .finishPress:
+            finishPress()
+        case .postMenuToggle:
+            pressAllowsToggle = false
+            suppressReleaseUntil = ProcessInfo.processInfo.systemUptime + 0.15
+            performStatusItemToggle()
+        case .toggle:
+            performStatusItemToggle()
         }
+        if decision.restoresHighlight { restoreStatusItemHighlight() }
     }
 
     @objc func handleStatusItemNativeLongPress(_ sender: Any?) {

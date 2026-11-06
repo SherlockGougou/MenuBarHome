@@ -307,7 +307,7 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
 
     // MARK: - 3. Local Keyboard Shortcuts
 
-    static func miReauthKeyDownResult(
+    nonisolated static func miReauthKeyDownResult(
         keyCode: Int, isShowingMiReauth: Bool, isPanelWindow: Bool
     ) -> Bool? {
         guard isShowingMiReauth, isPanelWindow else { return nil }
@@ -333,7 +333,7 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
 
     /// 返回 `nil` 表示这个键不归排序会话，调用方继续走面板旧逻辑。`/` 与 `v` 故意不在这里：
     /// 助手栏是叠在列表上的输入条，不会改动房间顺序，所以保持原来的打开行为。
-    static func roomOrderKeyAction(
+    nonisolated static func roomOrderKeyAction(
         keyCode: UInt16,
         hasCommand: Bool,
         hasShift: Bool,
@@ -372,187 +372,119 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
         }
     }
 
+    /// Snapshots the panel state, asks `PanelKeyRouter` who owns the key, and performs it.
     private func handleKeyDown(_ event: NSEvent, store: HomeStore) -> Bool {
-        let code = Int(event.keyCode)
-
-        // Settings is a separate scene; the panel has no app menu of its own (agent app).
-        if code == kVK_ANSI_Comma, event.modifierFlags.contains(.command) {
-            SettingsWindowOpener.shared.show()
-            return true
+        let flags = event.modifierFlags
+        let key = PanelKeyRouter.Key(
+            code: Int(event.keyCode),
+            command: flags.contains(.command),
+            shift: flags.contains(.shift),
+            option: flags.contains(.option),
+            control: flags.contains(.control),
+            characters: event.charactersIgnoringModifiers,
+            isRepeat: event.isARepeat,
+            matchesGlobalHotkey: HotkeyRecorderController.matches(event)
+        )
+        let context = keyContext(store: store)
+        if let action = PanelKeyRouter.beforeSearch(key, context) {
+            return perform(action, store: store)
         }
-
-        // #181: the re-auth QR modal overlay owns keyboard focus while open; Esc dismisses it and
-        // other panel navigation / search keys do not fire underneath the modal.
-        if let consumesEvent = Self.miReauthKeyDownResult(
-            keyCode: code,
-            isShowingMiReauth: store.isShowingMiReauth,
-            isPanelWindow: MenuBarPanelController.shared.isPanelWindow(NSApp.keyWindow)
-        ) {
-            if consumesEvent {
-                store.dismissMiReauth()
-            }
-            return consumesEvent
-        }
-
-        // Esc collapses the side attachment first; the dashboard retains its other shortcuts.
-        if code == kVK_Escape, store.isGrokBallStageExpanded,
-           MenuBarPanelController.shared.isPanelWindow(NSApp.keyWindow) {
-            store.dismissGrokBallStage()
-            return true
-        }
-
-        // #60: an open search owns ↑↓ / Return / → / Esc / typing. With no search it returns false for
-        // every key, so the shortcuts below — and the text-field guard right after this — are unchanged.
+        // #60: an open search owns ↑↓ / Return / → / Esc / typing; with no search it returns false.
         if PanelSearchKeyboard.handle(event, store: store) {
             return true
         }
+        // Search may have changed the state (closing itself, moving focus).
+        return perform(PanelKeyRouter.afterSearch(key, keyContext(store: store)), store: store)
+    }
 
-        // #146 §5.5 ②：重命名/新建提示打开时 Esc 归提示所有。文本域 guard 会把 Esc 变成
-        // `makeFirstResponder(nil)` 并留下没关掉的提示，所以这一步必须排在它前面。
-        if LayoutUIState.shared.hasActivePrompt {
-            if code == kVK_Escape {
-                LayoutUIState.shared.dismissActivePrompt()
-                return true
-            }
-            // Return / ↑↓ 交给提示里的文本框；继续往下走会命中 `toggleFocusedDevice()`，在面板背后
-            // 误控卡片。
-            if code == kVK_Return || code == kVK_UpArrow || code == kVK_DownArrow {
-                return false
-            }
-        }
+    private func keyContext(store: HomeStore) -> PanelKeyRouter.Context {
+        let responder = NSApp.keyWindow?.firstResponder
+        return PanelKeyRouter.Context(
+            isPanelWindow: MenuBarPanelController.shared.isPanelWindow(NSApp.keyWindow),
+            isShowingMiReauth: store.isShowingMiReauth,
+            isGrokBallStageExpanded: store.isGrokBallStageExpanded,
+            hasActivePrompt: LayoutUIState.shared.hasActivePrompt,
+            globalHotkeyEnabled: store.enableGlobalHotkey,
+            isRecordingHotkey: HotkeyRecorderController.shared.isRecording,
+            isGlobalHotkeyRegistered: HotkeySettingsState.shared.isRegistered,
+            isHotkeyPhysicallyDown: isHotkeyPhysicallyDown,
+            isTextFieldFocused: responder is NSTextView || responder is NSTextField,
+            isShowingAssistantBar: store.isShowingAssistantBar,
+            editMode: LayoutUIState.shared.editMode,
+            hasExpandedDevice: store.expandedDeviceId != nil,
+            hasFocusedDevice: store.focusedDeviceId != nil
+        )
+    }
 
-        // Do not let key-repeats of the global shortcut (e.g. holding ⌥M for voice input) leak into
-        // a focused text field (`µ` on US keyboards) or re-toggle the panel mid-hold.
-        if store.enableGlobalHotkey,
-           !HotkeyRecorderController.shared.isRecording,
-           HotkeyRecorderController.matches(event) {
-            if !HotkeySettingsState.shared.isRegistered, !event.isARepeat, !isHotkeyPhysicallyDown {
-                MenuBarPanelController.shared.hidePanel()
-            }
-            return true
-        }
-
-        // Do not intercept typing when a text field (e.g., XiaoAi input or Settings URL) is first responder
-        if let responder = NSApp.keyWindow?.firstResponder,
-           responder is NSTextView || responder is NSTextField {
-            if code == kVK_Escape {
-                if store.isShowingAssistantBar {
-                    SpeechInputController.shared.stop(andSubmit: false, store: store)
-                    store.dismissAssistantBar()
-                }
-                NSApp.keyWindow?.makeFirstResponder(nil)
-                return true
-            }
+    /// Performs a routed key; returns whether the panel consumed the event.
+    private func perform(_ action: PanelKeyRouter.Action, store: HomeStore) -> Bool {
+        switch action {
+        case .passThrough:
             return false
-        }
-
-        // Arrow/space/digit shortcuts belong to the menu-bar panel. The Settings window (⌘,) keeps
-        // normal AppKit control behavior instead of triggering device actions (#42).
-        if !MenuBarPanelController.shared.isPanelWindow(NSApp.keyWindow) {
-            return false
-        }
-
-        // #146 §5.5 ③：排序模式优先于下面的面板快捷键。Return / Esc / Tab 必须在这里被吃掉，否则会落到
-        // `toggleFocusedDevice()`、关面板的 Esc 阶梯或 `cycleRoom` 的旧顺序上，与预览列表对不上。
-        // Space、← → 与数字 1…9 同样吃掉：`toggleFocusedDevice()` 在 `focusedDeviceId == nil` 时会直接
-        // 开关列表第一台设备、`selectQuickIndex()` 会按序号开关设备，进入排序前清不清焦点都挡不住
-        // （审计里 Return 误控设备是同一条不变量）。有意的例外是 `/` 与 `v`——助手栏是叠在列表上的
-        // 输入条，不改动房间顺序，所以放行给下面的旧逻辑。
-        if LayoutUIState.shared.editMode == .roomOrder {
-            if let action = Self.roomOrderKeyAction(
-                keyCode: event.keyCode,
-                hasCommand: event.modifierFlags.contains(.command),
-                hasShift: event.modifierFlags.contains(.shift),
-                charactersIgnoringModifiers: event.charactersIgnoringModifiers
-            ) {
-                switch action {
-                case .moveFocus(let delta):
-                    RoomOrderKeyboard.moveFocus(delta, rooms: RoomOrderKeyboard.items(store: store))
-                case .moveRow(let slots):
-                    RoomOrderKeyboard.moveFocused(bySlots: slots, rooms: RoomOrderKeyboard.items(store: store))
-                case .moveRowToEdge(let toFront):
-                    RoomOrderKeyboard.moveFocusedToEdge(toFront: toFront, rooms: RoomOrderKeyboard.items(store: store))
-                case .commit:
-                    // 排序模式的 Return 只提交退出，绝不能落到 `toggleFocusedDevice()`。
-                    LayoutUIState.shared.exitRoomOrder(.commit)
-                case .cancel:
-                    // Esc 只回滚排序，不执行关面板阶梯。
-                    LayoutUIState.shared.cancelRoomOrder()
-                case .consume:
-                    break
-                }
-                return true
-            }
-        }
-
-        // #146 §5.5 ④：`doneEditingButton` 的 `.defaultAction` 要靠这个 Return 事件触发，放行给下面的
-        // `kVK_Return` 分支会在设备布局模式里误控选中设备。
-        if LayoutUIState.shared.editMode == .deviceLayout, code == kVK_Return {
-            return false
-        }
-
-        if event.charactersIgnoringModifiers == "/",
-           event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
-            store.presentAssistantBar()
+        case .consume:
             return true
-        }
-
-        if event.charactersIgnoringModifiers?.lowercased() == "v",
-           event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
-            store.presentAssistantBar(startVoice: true)
-            return true
-        }
-
-        switch code {
-        case kVK_UpArrow:
-            store.moveFocus(delta: -1)
-            return true
-        case kVK_DownArrow:
-            store.moveFocus(delta: 1)
-            return true
-        case kVK_LeftArrow:
-            store.adjustFocusedDevice(delta: -1)
-            return true
-        case kVK_RightArrow:
-            store.adjustFocusedDevice(delta: 1)
-            return true
-        case kVK_Space, kVK_Return:
-            store.toggleFocusedDevice()
-            return true
-        case kVK_Tab:
-            let delta = event.modifierFlags.contains(.shift) ? -1 : 1
-            // #146: follow the same order the room strip shows, not the provider order.
-            let order = RoomPrefs.displayIds(
-                order: RoomPrefs.storedOrder(),
-                rooms: store.rooms
-            )
-            store.cycleRoom(delta: delta, order: order)
-            return true
-        case kVK_Escape:
-            if store.isShowingAssistantBar {
+        case .openSettings:
+            // Settings is a separate scene; the panel has no app menu of its own (agent app).
+            SettingsWindowOpener.shared.show()
+        case .dismissMiReauth:
+            store.dismissMiReauth()
+        case .dismissGrokBallStage:
+            store.dismissGrokBallStage()
+        case .dismissPrompt:
+            LayoutUIState.shared.dismissActivePrompt()
+        case .globalHotkeyEcho(let hidePanel):
+            if hidePanel { MenuBarPanelController.shared.hidePanel() }
+        case .leaveTextField(let dismissAssistant):
+            if dismissAssistant {
                 SpeechInputController.shared.stop(andSubmit: false, store: store)
                 store.dismissAssistantBar()
-            } else if store.expandedDeviceId != nil {
-                store.expandedDeviceId = nil
-            } else if store.focusedDeviceId != nil {
-                store.focusedDeviceId = nil
-            } else {
-                MenuBarPanelController.shared.hidePanel()
             }
-            return true
-        default:
+            NSApp.keyWindow?.makeFirstResponder(nil)
+        case .roomOrder(let action):
+            performRoomOrder(action, store: store)
+        case .presentAssistant(let voice):
+            store.presentAssistantBar(startVoice: voice)
+        case .moveFocus(let delta):
+            store.moveFocus(delta: delta)
+        case .adjustFocusedDevice(let delta):
+            store.adjustFocusedDevice(delta: delta)
+        case .toggleFocusedDevice:
+            store.toggleFocusedDevice()
+        case .cycleRoom(let delta):
+            // #146: follow the same order the room strip shows, not the provider order.
+            store.cycleRoom(delta: delta, order: RoomPrefs.displayIds(order: RoomPrefs.storedOrder(), rooms: store.rooms))
+        case .dismissAssistantBar:
+            SpeechInputController.shared.stop(andSubmit: false, store: store)
+            store.dismissAssistantBar()
+        case .collapseExpandedDevice:
+            store.expandedDeviceId = nil
+        case .clearFocus:
+            store.focusedDeviceId = nil
+        case .hidePanel:
+            MenuBarPanelController.shared.hidePanel()
+        case .selectQuickIndex(let digit):
+            store.selectQuickIndex(digit)
+        }
+        return true
+    }
+
+    private func performRoomOrder(_ action: RoomOrderKeyAction, store: HomeStore) {
+        switch action {
+        case .moveFocus(let delta):
+            RoomOrderKeyboard.moveFocus(delta, rooms: RoomOrderKeyboard.items(store: store))
+        case .moveRow(let slots):
+            RoomOrderKeyboard.moveFocused(bySlots: slots, rooms: RoomOrderKeyboard.items(store: store))
+        case .moveRowToEdge(let toFront):
+            RoomOrderKeyboard.moveFocusedToEdge(toFront: toFront, rooms: RoomOrderKeyboard.items(store: store))
+        case .commit:
+            // Return in the room order only commits and exits, never `toggleFocusedDevice()`.
+            LayoutUIState.shared.exitRoomOrder(.commit)
+        case .cancel:
+            // Esc only rolls the order back; it does not walk the close-panel ladder.
+            LayoutUIState.shared.cancelRoomOrder()
+        case .consume:
             break
         }
-
-        if let chars = event.charactersIgnoringModifiers,
-           chars.count == 1,
-           let digit = Int(chars),
-           (1...9).contains(digit) {
-            store.selectQuickIndex(digit)
-            return true
-        }
-
-        return false
     }
 
     // MARK: - 4. Native macOS Safety Alerts (UNUserNotificationCenter)
