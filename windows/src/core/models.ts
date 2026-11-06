@@ -545,41 +545,69 @@ export function localizeFridgeMode(mode: string): string {
   }
 }
 
+/** One air-quality grade; mirrors macOS `AirQualityLevel`, pinned by Tests/Fixtures/air_quality_golden.json. */
+export type AirQualityLevel = "excellent" | "good" | "moderate" | "poor" | "heavy" | "hazardous";
+
+const AIR_QUALITY_LABEL: Record<AirQualityLevel, string> = {
+  excellent: "优",
+  good: "良",
+  moderate: "轻度污染",
+  poor: "中度污染",
+  heavy: "重度污染",
+  hazardous: "严重污染",
+};
+
+function airQualityFromRaw(raw: string): AirQualityLevel | null {
+  switch (raw.trim().toLowerCase()) {
+    case "excellent":
+    case "空气优":
+    case "优":
+      return "excellent";
+    case "good":
+    case "空气良":
+    case "良":
+      return "good";
+    case "moderate":
+    case "轻度污染":
+      return "moderate";
+    case "poor":
+    case "中度污染":
+      return "poor";
+    case "heavy pollution":
+    case "heavy":
+    case "重度污染":
+      return "heavy";
+    case "hazardous":
+    case "严重污染":
+      return "hazardous";
+    default:
+      return null;
+  }
+}
+
+function airQualityFromPm25(pm25: number): AirQualityLevel {
+  if (pm25 <= 35) return "excellent";
+  if (pm25 <= 75) return "good";
+  if (pm25 <= 115) return "moderate";
+  if (pm25 <= 150) return "poor";
+  if (pm25 <= 250) return "heavy";
+  return "hazardous";
+}
+
+/** A known raw grade wins over PM2.5; an unknown raw grade has no level. */
+export function airQualityLevel(raw: string | null | undefined, pm25?: number | null): AirQualityLevel | null {
+  if (raw && raw.trim() !== "") return airQualityFromRaw(raw);
+  if (pm25 === undefined || pm25 === null) return null;
+  return airQualityFromPm25(pm25);
+}
+
 export function localizeAirQuality(raw: string | null | undefined, pm25?: number | null): string | null {
   if (raw && raw.trim() !== "") {
-    switch (raw.trim().toLowerCase()) {
-      case "excellent":
-      case "空气优":
-      case "优":
-        return t("优");
-      case "good":
-      case "空气良":
-      case "良":
-        return t("良");
-      case "moderate":
-      case "轻度污染":
-        return t("轻度污染");
-      case "poor":
-      case "中度污染":
-        return t("中度污染");
-      case "heavy pollution":
-      case "heavy":
-      case "重度污染":
-        return t("重度污染");
-      case "hazardous":
-      case "严重污染":
-        return t("严重污染");
-      default:
-        return raw;
-    }
+    const level = airQualityFromRaw(raw);
+    return level ? t(AIR_QUALITY_LABEL[level]) : raw;
   }
   if (pm25 === undefined || pm25 === null) return null;
-  if (pm25 <= 35) return t("优");
-  if (pm25 <= 75) return t("良");
-  if (pm25 <= 115) return t("轻度污染");
-  if (pm25 <= 150) return t("中度污染");
-  if (pm25 <= 250) return t("重度污染");
-  return t("严重污染");
+  return t(AIR_QUALITY_LABEL[airQualityFromPm25(pm25)]);
 }
 
 export type DeviceReadout = "live" | "waiting" | "possiblyStale";
