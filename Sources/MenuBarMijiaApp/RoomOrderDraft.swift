@@ -244,7 +244,9 @@ extension LayoutUIState {
             if let draft = kindOrderDraft {
                 KindOrderPrefs.persist(order: draft.order, to: defaults)
             }
-            HomeStore.shared.scheduleRaycastSnapshotExport()
+            if defaults === UserDefaults.standard {
+                HomeStore.shared.scheduleRaycastSnapshotExport()
+            }
         }
         roomOrderDraft = nil
         kindOrderDraft = nil

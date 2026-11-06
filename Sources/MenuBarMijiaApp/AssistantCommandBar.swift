@@ -712,7 +712,7 @@ struct AssistantSettingsSection: View {
         let habitItems = store.userHabitMemory.readableItems(devices: store.devices, scenes: store.scenes)
         let habitCount = habitItems.count
         let hasCustomKey = !apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let importedSource = hasCustomKey ? AssistantConfig.importedKeySource(forBaseURL: baseURLDraft) : nil
+        let importedSource = hasCustomKey ? AssistantConfig.importedKeySource(forBaseURL: baseURLDraft, defaults: store.userDefaults, vault: store.credentialVault) : nil
         let isLoopback = AssistantConfig(baseURL: baseURLDraft, model: modelDraft, apiKey: "").isLoopbackEndpoint
         let isInsecure = !baseURLDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !AssistantConfig(baseURL: baseURLDraft, model: modelDraft, apiKey: "").allowsSendingAPIKey
@@ -761,14 +761,14 @@ struct AssistantSettingsSection: View {
                             if newPreset != .custom {
                                 baseURLDraft = newPreset.defaultBaseURL
                                 modelDraft = newPreset.defaultModel
-                                apiKeyDraft = AssistantConfig.userStoredAPIKey(forBaseURL: newPreset.defaultBaseURL)
+                                apiKeyDraft = store.storedAssistantAPIKey(forBaseURL: newPreset.defaultBaseURL)
                             } else {
                                 if modelDraft == oldPreset.defaultModel || ModelIntentResolver.isSystemOneModel(modelDraft) {
                                     modelDraft = "gpt-4o-mini"
                                 }
                                 // Keys never follow the user to another provider; a custom key reappears once its own URL is typed.
                                 apiKeyDraft = AssistantProviderPreset.infer(baseURL: baseURLDraft) == .custom
-                                    ? AssistantConfig.userStoredAPIKey(forBaseURL: baseURLDraft)
+                                    ? store.storedAssistantAPIKey(forBaseURL: baseURLDraft)
                                     : ""
                             }
                         }
@@ -798,13 +798,13 @@ struct AssistantSettingsSection: View {
                             let inferred = AssistantProviderPreset.infer(baseURL: newValue)
                             if inferred == .custom, inferred == oldPreset,
                                AssistantEndpoint(newValue)?.identity != AssistantEndpoint(oldURL)?.identity,
-                               apiKeyDraft.isEmpty || apiKeyDraft == AssistantConfig.userStoredAPIKey(forBaseURL: oldURL) {
+                               apiKeyDraft.isEmpty || apiKeyDraft == store.storedAssistantAPIKey(forBaseURL: oldURL) {
                                 // Another custom server: the saved key stays with its own server (#19).
-                                apiKeyDraft = AssistantConfig.userStoredAPIKey(forBaseURL: newValue)
+                                apiKeyDraft = store.storedAssistantAPIKey(forBaseURL: newValue)
                             }
                             if inferred != oldPreset {
                                 selectedPreset = inferred
-                                apiKeyDraft = AssistantConfig.userStoredAPIKey(forBaseURL: newValue)
+                                apiKeyDraft = store.storedAssistantAPIKey(forBaseURL: newValue)
                                 if !inferred.defaultModel.isEmpty {
                                     modelDraft = inferred.defaultModel
                                 } else if modelDraft == oldPreset.defaultModel || ModelIntentResolver.isSystemOneModel(modelDraft) {
@@ -871,7 +871,7 @@ struct AssistantSettingsSection: View {
                     selectedPreset = .openRouterJev
                     baseURLDraft = AssistantConfig.defaultBaseURL
                     modelDraft = AssistantConfig.defaultModel
-                    apiKeyDraft = AssistantConfig.userStoredAPIKey(forBaseURL: AssistantConfig.defaultBaseURL)
+                    apiKeyDraft = store.storedAssistantAPIKey(forBaseURL: AssistantConfig.defaultBaseURL)
                     _ = saveCurrentDraft()
                     store.showToast(L10n.tr("已恢复默认 AI 配置", "Restored default AI configuration"))
                 }
@@ -906,7 +906,7 @@ struct AssistantSettingsSection: View {
             baseURLDraft = config.baseURL
             modelDraft = config.model
             selectedPreset = AssistantProviderPreset.infer(baseURL: config.baseURL)
-            apiKeyDraft = AssistantConfig.userStoredAPIKey(forBaseURL: config.baseURL)
+            apiKeyDraft = store.storedAssistantAPIKey(forBaseURL: config.baseURL)
         }
     }
 
@@ -1092,7 +1092,7 @@ struct AssistantSettingsSection: View {
                     .font(.system(size: DesignTokens.TypeSize.caption))
                     .foregroundStyle(.secondary)
                 Button(L10n.tr("撤销导入", "Remove")) {
-                    AssistantConfig.removeStoredAPIKey(forBaseURL: target)
+                    AssistantConfig.removeStoredAPIKey(forBaseURL: target, defaults: store.userDefaults, vault: store.credentialVault)
                     apiKeyDraft = ""
                     storageRevision &+= 1
                     store.showToast(L10n.tr("已删除导入的 Key", "Removed the imported key"))
@@ -1102,8 +1102,8 @@ struct AssistantSettingsSection: View {
                 .foregroundStyle(Color.accentColor)
             } else {
                 Button(L10n.tr("从 CodexBar / 环境变量导入 Key", "Import key from CodexBar / environment")) {
-                    if let label = AssistantConfig.importAmbientAPIKey(forBaseURL: target) {
-                        apiKeyDraft = AssistantConfig.userStoredAPIKey(forBaseURL: target)
+                    if let label = AssistantConfig.importAmbientAPIKey(forBaseURL: target, defaults: store.userDefaults, vault: store.credentialVault) {
+                        apiKeyDraft = store.storedAssistantAPIKey(forBaseURL: target)
                         storageRevision &+= 1
                         store.showToast(L10n.tr("已从 \(label) 导入 \(selectedPreset.shortTitle) 的 Key", "Imported the \(selectedPreset.shortTitle) key from \(label)"))
                     } else {

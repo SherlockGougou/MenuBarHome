@@ -6,8 +6,8 @@ import Observation
 // Stored state lives in HomeStore.swift (extensions cannot hold stored properties).
 extension HomeStore {
     public var assistantConfig: AssistantConfig {
-        get { AssistantConfig.load(from: userDefaults) }
-        set { newValue.save(to: userDefaults) }
+        get { AssistantConfig.load(from: userDefaults, vault: credentialVault) }
+        set { newValue.save(to: userDefaults, vault: credentialVault) }
     }
 
     public var userHabitMemory: UserHabitMemory {

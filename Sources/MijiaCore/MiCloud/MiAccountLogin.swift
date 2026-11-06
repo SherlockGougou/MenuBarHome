@@ -314,7 +314,7 @@ public enum MiSessionStore {
 
     public static func loadAccounts(
         defaults: UserDefaults = .standard,
-        vault: CredentialVault = .shared
+        vault: CredentialVault? = nil
     ) -> [MiAccount] {
         guard let data = storedData(defaults: defaults, vault: vault) else { return [] }
         // Every earlier build wrote one bare session here; rewrite the slot in the v2 envelope once
@@ -339,7 +339,7 @@ public enum MiSessionStore {
     public static func saveAccounts(
         _ accounts: [MiAccount],
         defaults: UserDefaults = .standard,
-        vault: CredentialVault = .shared
+        vault: CredentialVault? = nil
     ) -> Bool {
         let sessions = deduped(accounts.map(\.session))
         guard !sessions.isEmpty else {
@@ -353,14 +353,14 @@ public enum MiSessionStore {
     public static func save(
         _ session: MiSession,
         defaults: UserDefaults = .standard,
-        vault: CredentialVault = .shared
+        vault: CredentialVault? = nil
     ) -> Bool {
         upsert(session, defaults: defaults, vault: vault)
     }
 
     public static func load(
         defaults: UserDefaults = .standard,
-        vault: CredentialVault = .shared
+        vault: CredentialVault? = nil
     ) -> MiSession? {
         loadAccounts(defaults: defaults, vault: vault).first?.session
     }
@@ -369,7 +369,7 @@ public enum MiSessionStore {
     public static func upsert(
         _ session: MiSession,
         defaults: UserDefaults = .standard,
-        vault: CredentialVault = .shared
+        vault: CredentialVault? = nil
     ) -> Bool {
         guard var accounts = readExistingAccounts(defaults: defaults, vault: vault) else {
             return false
@@ -387,7 +387,7 @@ public enum MiSessionStore {
     public static func remove(
         accountID: String,
         defaults: UserDefaults = .standard,
-        vault: CredentialVault = .shared
+        vault: CredentialVault? = nil
     ) -> Bool {
         guard let accounts = readExistingAccounts(defaults: defaults, vault: vault) else {
             return false
@@ -403,7 +403,7 @@ public enum MiSessionStore {
         _ rejected: MiSession,
         at date: Date = Date(),
         defaults: UserDefaults = .standard,
-        vault: CredentialVault = .shared
+        vault: CredentialVault? = nil
     ) -> MiSession? {
         var accounts = loadAccounts(defaults: defaults, vault: vault)
         guard let index = accounts.firstIndex(where: {
@@ -440,9 +440,9 @@ public enum MiSessionStore {
     /// Keychain slot is unreadable or corrupt, so a failed read never overwrites existing accounts.
     private static func readExistingAccounts(
         defaults: UserDefaults,
-        vault: CredentialVault
+        vault: CredentialVault?
     ) -> [MiAccount]? {
-        guard defaults === UserDefaults.standard else {
+        guard vault != nil || defaults === UserDefaults.standard else {
             if defaults.object(forKey: fallbackDefaultsKey) == nil { return [] }
             guard let data = defaults.data(forKey: fallbackDefaultsKey),
                   let sessions = decodeSessions(from: data) else {
@@ -450,7 +450,7 @@ public enum MiSessionStore {
             }
             return deduped(sessions).map { MiAccount(session: $0) }
         }
-        switch vault.lookup(keychainAccount, retryingUnavailable: true) {
+        switch (vault ?? .shared).lookup(keychainAccount, retryingUnavailable: true) {
         case .missing:
             return []
         case .unavailable:
@@ -481,22 +481,22 @@ public enum MiSessionStore {
         return sessions.filter { seen.insert(MiAccount(session: $0).id).inserted }
     }
 
-    private static func storedData(defaults: UserDefaults, vault: CredentialVault) -> Data? {
-        guard defaults === UserDefaults.standard else {
+    private static func storedData(defaults: UserDefaults, vault: CredentialVault?) -> Data? {
+        guard vault != nil || defaults === UserDefaults.standard else {
             return defaults.data(forKey: fallbackDefaultsKey)
         }
-        return KeychainHelper.readKeychainData(account: keychainAccount, vault: vault)
+        return KeychainHelper.readKeychainData(account: keychainAccount, vault: vault ?? .shared)
     }
 
     /// `data` is already re-encoded through `MiSession` in a v2 envelope, so no `passToken` reaches the store.
     @discardableResult
-    private static func store(_ data: Data, defaults: UserDefaults, vault: CredentialVault) -> Bool {
-        guard defaults === UserDefaults.standard else {
+    private static func store(_ data: Data, defaults: UserDefaults, vault: CredentialVault?) -> Bool {
+        guard vault != nil || defaults === UserDefaults.standard else {
             defaults.set(data, forKey: fallbackDefaultsKey)
             return true
         }
         // The vault item itself is `AfterFirstUnlockThisDeviceOnly`, so the session stays off backups.
-        let written = KeychainHelper.writeKeychainData(data, account: keychainAccount, vault: vault)
+        let written = KeychainHelper.writeKeychainData(data, account: keychainAccount, vault: vault ?? .shared)
         guard written else { return false }
         // The plaintext mirror is gone (#16): the Keychain is the only store.
         defaults.removeObject(forKey: fallbackDefaultsKey)

@@ -56,10 +56,10 @@ public struct OnboardingGuideView: View {
         .onAppear {
             launchAtLogin.refresh()
             haURLDraft = store.serverURLString
-            haTokenDraft = KeychainHelper.loadToken()
+            haTokenDraft = store.loadHAToken()
             let currentBase = store.assistantConfig.baseURL
             selectedPreset = AssistantProviderPreset.infer(baseURL: currentBase)
-            apiKeyDraft = AssistantConfig.userStoredAPIKey(forBaseURL: currentBase)
+            apiKeyDraft = store.storedAssistantAPIKey(forBaseURL: currentBase)
             voiceAuthorized = SpeechInputController.shared.hasVoicePermissions
             if store.miSessionMaskedUserId == nil,
                haTokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -534,7 +534,7 @@ public struct OnboardingGuideView: View {
     private var advancedAIModelCard: some View {
         let effectiveBase = selectedPreset.defaultBaseURL.isEmpty ? store.assistantConfig.baseURL : selectedPreset.defaultBaseURL
         let hasCustomKey = !apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let importedSource = hasCustomKey ? AssistantConfig.importedKeySource(forBaseURL: effectiveBase) : nil
+        let importedSource = hasCustomKey ? AssistantConfig.importedKeySource(forBaseURL: effectiveBase, defaults: store.userDefaults, vault: store.credentialVault) : nil
         let isLoopback = AssistantConfig(baseURL: effectiveBase, model: selectedPreset.defaultModel, apiKey: "").isLoopbackEndpoint
 
         return VStack(alignment: .leading, spacing: 7) {
@@ -581,9 +581,9 @@ public struct OnboardingGuideView: View {
                         set: { newPreset in
                             selectedPreset = newPreset
                             if newPreset != .custom {
-                                apiKeyDraft = AssistantConfig.userStoredAPIKey(forBaseURL: newPreset.defaultBaseURL)
+                                apiKeyDraft = store.storedAssistantAPIKey(forBaseURL: newPreset.defaultBaseURL)
                             } else {
-                                apiKeyDraft = AssistantConfig.userStoredAPIKey(forBaseURL: store.assistantConfig.baseURL)
+                                apiKeyDraft = store.storedAssistantAPIKey(forBaseURL: store.assistantConfig.baseURL)
                             }
                         }
                     )
@@ -610,8 +610,8 @@ public struct OnboardingGuideView: View {
 
             if selectedPreset.supportsKeyImport && !hasCustomKey {
                 Button(L10n.tr("已在 CodexBar 或环境变量里配过？点此导入 Key", "Already set up in CodexBar or env vars? Import the key")) {
-                    if let label = AssistantConfig.importAmbientAPIKey(forBaseURL: effectiveBase) {
-                        apiKeyDraft = AssistantConfig.userStoredAPIKey(forBaseURL: effectiveBase)
+                    if let label = AssistantConfig.importAmbientAPIKey(forBaseURL: effectiveBase, defaults: store.userDefaults, vault: store.credentialVault) {
+                        apiKeyDraft = store.storedAssistantAPIKey(forBaseURL: effectiveBase)
                         store.showToast(L10n.tr("已从 \(label) 导入 \(selectedPreset.shortTitle) 的 Key", "Imported the \(selectedPreset.shortTitle) key from \(label)"))
                     } else {
                         store.showToast(

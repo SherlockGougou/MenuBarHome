@@ -221,7 +221,7 @@ extension HomeStore {
             handleDoorbellRing(ring)
 
         case .sessionExpired(let rejected):
-            if let updated = MiSessionStore.markRejected(rejected, defaults: userDefaults) {
+            if let updated = MiSessionStore.markRejected(rejected, defaults: userDefaults, vault: credentialVault) {
                 if let idx = miAccounts.firstIndex(where: {
                     $0.session.userId == updated.userId && $0.session.serviceToken == updated.serviceToken
                 }) {
@@ -515,7 +515,7 @@ extension HomeStore {
     }
 
     func makeLiveProvider() -> any HomeProvider {
-        let token = KeychainHelper.loadToken(defaults: userDefaults)
+        let token = loadHAToken()
         let ha: (any HomeProvider)? = (hasHASource || (!hasMiSource && homeBackend == .homeAssistant))
             ? makeHAProvider(baseURLString: serverURLString, token: token)
             : nil
@@ -622,7 +622,7 @@ extension HomeStore {
             startListening()
         } else {
             if previousBackend == .demo {
-                self.hasHASource = !KeychainHelper.loadToken(defaults: userDefaults)
+                self.hasHASource = !loadHAToken()
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                     .isEmpty
             }
@@ -642,7 +642,7 @@ extension HomeStore {
     }
 
     public func completeMiLogin(_ session: MiSession) {
-        guard MiSessionStore.upsert(session, defaults: userDefaults) else {
+        guard MiSessionStore.upsert(session, defaults: userDefaults, vault: credentialVault) else {
             showToast(
                 L10n.tr("无法写入钥匙串，请授权钥匙串访问后重试", "Could not save to Keychain; allow Keychain access and try again"),
                 isError: true
@@ -651,7 +651,7 @@ extension HomeStore {
         }
         // The primary (first) account drives the summary and the history scope, so signing in a
         // second account must not relabel the panel with the newcomer.
-        miAccounts = MiSessionStore.loadAccounts(defaults: userDefaults)
+        miAccounts = MiSessionStore.loadAccounts(defaults: userDefaults, vault: credentialVault)
         self.miSessionMaskedUserId = miAccounts.first?.maskedUserId
         self.miSessionExpiresAt = miAccounts.compactMap(\.session.expiresAt).min()
         self.isShowingMiReauth = false
@@ -663,7 +663,7 @@ extension HomeStore {
         miLoginStartBackend = nil
         if superseded { return }
         invalidateUndoContext()
-        self.hasHASource = !KeychainHelper.loadToken(defaults: userDefaults)
+        self.hasHASource = !loadHAToken()
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .isEmpty
         self.homeBackend = .xiaomiCloud
@@ -751,7 +751,7 @@ extension HomeStore {
     /// Removes one account and keeps the rest: its devices, readings, rooms and homes leave the panel
     /// right away instead of waiting for the next merged snapshot.
     public func logoutMiAccount(id: String) {
-        guard MiSessionStore.remove(accountID: id, defaults: userDefaults) else {
+        guard MiSessionStore.remove(accountID: id, defaults: userDefaults, vault: credentialVault) else {
             showToast(
                 L10n.tr("无法更新钥匙串，请授权钥匙串访问后重试", "Could not update Keychain; allow Keychain access and try again"),
                 isError: true
@@ -759,7 +759,7 @@ extension HomeStore {
             return
         }
         invalidateUndoContext()
-        miAccounts = MiSessionStore.loadAccounts(defaults: userDefaults)
+        miAccounts = MiSessionStore.loadAccounts(defaults: userDefaults, vault: credentialVault)
         miAccountStatuses.removeValue(forKey: id)
         self.miSessionMaskedUserId = miAccounts.first?.maskedUserId
         self.miSessionExpiresAt = miAccounts.compactMap(\.session.expiresAt).min()
@@ -802,7 +802,7 @@ extension HomeStore {
         }
         pendingHAAddressSuggestion = nil
         self.serverURLString = normalized
-        KeychainHelper.saveToken(token, defaults: userDefaults)
+        KeychainHelper.saveToken(token, defaults: userDefaults, vault: credentialVault)
         self.hasHASource = !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         self.homeBackend = preferredLiveBackend
         if !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -831,7 +831,7 @@ extension HomeStore {
         self.serverURLString = instance.baseURL
         if reconnectProvider {
             if let haProvider = provider as? HAWebSocketProvider {
-                let token = KeychainHelper.loadToken(defaults: userDefaults)
+                let token = loadHAToken()
                 Task {
                     await haProvider.updateCredentials(baseURLString: instance.baseURL, token: token)
                 }
@@ -865,7 +865,7 @@ extension HomeStore {
             let normalizedCurrent = HAWebSocketProvider.normalizeBaseURL(serverURLString)
             let isDefaultURL = (normalizedCurrent == KeychainHelper.defaultNASURL)
                 || (userDefaults.string(forKey: "ha_server_url") == nil)
-            let hasToken = !KeychainHelper.loadToken(defaults: userDefaults).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let hasToken = !loadHAToken().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             if isDefaultURL && !hasToken && first.baseURL != normalizedCurrent {
                 applyDiscoveredHAInstance(first, reconnectProvider: false)
             }

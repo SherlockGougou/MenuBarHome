@@ -11,6 +11,8 @@ let package = Package(
         .executable(name: "MenuBarMijiaApp", targets: ["MenuBarMijiaApp"])
     ],
     targets: [
+        .target(name: "KeychainTestGuard", path: "Tests/KeychainTestGuard"),
+        .target(name: "KeychainTestSupport", dependencies: ["MijiaCore", "KeychainTestGuard"], path: "Tests/KeychainTestSupport"),
         .target(
             name: "MijiaCore",
             // Translation tables (#52): `Resources/Localizations/<language>.json`, copied into
@@ -34,7 +36,7 @@ let package = Package(
         ),
         .testTarget(
             name: "MijiaCoreTests",
-            dependencies: ["MijiaCore"],
+            dependencies: ["MijiaCore", "KeychainTestSupport"],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]
@@ -46,6 +48,7 @@ let package = Package(
             dependencies: [
                 "MenuBarMijiaApp",
                 "MijiaCore",
+                "KeychainTestSupport",
             ],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
