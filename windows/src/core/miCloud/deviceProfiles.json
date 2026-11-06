@@ -35,5 +35,26 @@
       "mode",
       "fan-level"
     ]
+  },
+  "fallbackClaims": {
+    "air-condition-outlet": [
+      "air-conditioner"
+    ],
+    "ble-speaker": [
+      "speaker"
+    ],
+    "ceiling-fan": [
+      "fan"
+    ],
+    "door": [
+      "lock",
+      "video-doorbell"
+    ],
+    "night-light": [
+      "light"
+    ],
+    "relay": [
+      "switch"
+    ]
   }
 }

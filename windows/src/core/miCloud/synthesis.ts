@@ -26,6 +26,7 @@ import {
   type MiotService,
   type MiotValueListItem,
 } from "./spec.js";
+import { miotFallbackAllows } from "./facets.js";
 
 export function exposesWrite(access: readonly string[] | undefined): boolean {
   return Boolean(access?.includes("write"));
@@ -286,13 +287,7 @@ export function primaryMiotService(spec: MiotDeviceSpec): MiotService | undefine
   });
   if (!primaryService) {
     for (const p of priority) {
-      // A secondary `light` service must not claim devices whose own type is something
-      // else (hood / airer / bath-heater / ceiling-fan / gateway), or those cards become
-      // bare lamps that only toggle their lamp while the primary function stays hidden.
-      if (p === "light" && devShort !== "light" && !devShort.includes("light") && !devShort.includes("lamp")) {
-        continue;
-      }
-      if (!claims(p)) continue;
+      if (!miotFallbackAllows(devShort, p) || !claims(p)) continue;
       const found = spec.services.find((s) => miotShortName(s.type) === p);
       if (found) {
         primaryService = found;
@@ -313,9 +308,11 @@ export function primaryMiotService(spec: MiotDeviceSpec): MiotService | undefine
     // Only genuine plug-like services may fall back to a plug card. macOS has no
     // generic-on fallback at all, so accepting e.g. a bath-heater's `ptc-bath-heater`
     // or `light` service here would fake a device the other platform drops (#98).
+    // The plug fallback obeys the same table (#296): a motor controller's switch is not a plug.
     primaryService = spec.services.find(
       (s) =>
         ["outlet", "switch"].includes(miotShortName(s.type)) &&
+        miotFallbackAllows(devShort, miotShortName(s.type)) &&
         s.properties.some((p) => miotShortName(p.type) === "on" && p.access.includes("write"))
     );
   }
