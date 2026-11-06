@@ -521,7 +521,12 @@ public enum CoverSubtype: String, Equatable, Sendable {
     private static let miotServiceSubtypes: [String: CoverSubtype] = [
         "curtain": .curtain,
         "window-opener": .windowOpener,
+        "airer": .clothesAirer,
     ]
+
+    /// MIoT airers report position as distance lowered (0 at the top). The card shows height, so
+    /// reads and writes flip; hass-xiaomi-miot defaults airers to the same reversal (#299).
+    public var invertsMiotPosition: Bool { self == .clothesAirer }
 
     public init(miotServiceShortName: String?) {
         self = Self.miotServiceSubtypes[miotServiceShortName ?? ""] ?? .windowOpener
@@ -568,11 +573,16 @@ public enum CoverMotion: String, Equatable, Sendable {
     case closing
 
     /// Nil at rest; the card and drawer both show this label while the motor travels.
-    public var localizedLabel: String? {
-        switch self {
-        case .opening: L10n.tr("正在打开", "Opening")
-        case .closing: L10n.tr("正在关闭", "Closing")
-        case .stopped: nil
+    public var localizedLabel: String? { localizedLabel(for: .curtain) }
+
+    /// An airer rises and lowers; it never "opens" (#299).
+    public func localizedLabel(for subtype: CoverSubtype) -> String? {
+        switch (self, subtype == .clothesAirer) {
+        case (.opening, false): L10n.tr("正在打开", "Opening")
+        case (.closing, false): L10n.tr("正在关闭", "Closing")
+        case (.opening, true): L10n.tr("正在上升", "Rising")
+        case (.closing, true): L10n.tr("正在下降", "Lowering")
+        case (.stopped, _): nil
         }
     }
 }
@@ -617,7 +627,7 @@ public enum CoverStatusWord: Equatable, Sendable {
             self = .opening
         case "closing", "down", "dowm", "falling", "fallin", "dropping", "downing", "lower":
             self = .closing
-        case "open", "opened", "fullyopen", "stopathighest", "stopatupperlimit", "upperlimitstop", "ceiling":
+        case "open", "opened", "fullyopen", "stopathighest", "stopatupperlimit", "stopupperlimit", "upperlimitstop", "ceiling":
             self = .open
         case "close", "closed", "closeover", "stopatlowest", "stoplowerlimit", "lowerlimitstop", "floor", "lowerlimit":
             self = .closed
@@ -1169,6 +1179,7 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
             }
             return "sensor.fill"
         case .cover(let s):
+            if s.subtype == .clothesAirer { return "hanger" }
             return (s.positionPercent ?? 0) > 0 ? "window.vertical.open" : "window.vertical.closed"
         case .appliance:
             return "water.waves"
@@ -1327,7 +1338,12 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
             return L10n.tr("在线", "Online")
         case .cover(let s):
             if let fault = s.faultText, !fault.isEmpty { return fault }
-            if let motion = s.motion.localizedLabel { return motion }
+            if let motion = s.motion.localizedLabel(for: s.subtype) { return motion }
+            if s.subtype == .clothesAirer, let pos = s.positionPercent {
+                if pos <= 0 { return L10n.tr("已降到底", "Fully lowered") }
+                if pos >= 100 { return L10n.tr("已升到顶", "Fully raised") }
+                return L10n.tr("高度 \(pos)%", "Height \(pos)%")
+            }
             if let pos = s.positionPercent {
                 if pos <= 0 { return L10n.tr("已关上", "Closed") }
                 if pos >= 100 { return L10n.tr("已打开", "Open") }

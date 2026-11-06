@@ -173,8 +173,13 @@ public enum MiotCommandMapper {
             return .setProps([ctx.write(volume, .number(min + Swift.max(0, Swift.min(1, level)) * (max - min)))])
 
         case .setNumberValue(_, let value):
-            if ctx.property("target-position") != nil {
-                return .setProps([try ctx.write("target-position", .number(value))])
+            if let target = ctx.property("target-position") {
+                // The card speaks 0…100; mirror `MiotSynthesizer.percent(fromRaw:)` back to the raw
+                // range, and flip for an airer whose raw position is distance lowered (#299).
+                let subtype = CoverSubtype(miotServiceShortName: ctx.service.shortName)
+                let percent = subtype.invertsMiotPosition ? 100 - value : value
+                let raw = target.property.rangeMax.map { $0 > 0 && $0 != 100 ? percent / 100 * $0 : percent } ?? percent
+                return .setProps([ctx.write(target, .number(raw))])
             }
             return .setProps([try ctx.write("target-temperature", .number(value))])
 
