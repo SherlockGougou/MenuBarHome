@@ -667,9 +667,9 @@ public final class HomeStore {
         // A home id saved before multi-account has no account prefix. The only account owns it; with
         // zero or several accounts a bare id is ambiguous, so it is dropped rather than guessed.
         var initialSelectedHomeId = ud.string(forKey: MiCloudProvider.selectedHomeKey)
-        if let selection = initialSelectedHomeId, !selection.contains("/") {
+        if let selection = initialSelectedHomeId, MiAccountScope.owner(of: selection) == nil {
             if initialAccounts.count == 1, let onlyAccount = initialAccounts.first {
-                let scoped = "\(onlyAccount.id)/\(selection)"
+                let scoped = MiAccountScope.id(selection, account: onlyAccount.id)
                 initialSelectedHomeId = scoped
                 ud.set(scoped, forKey: MiCloudProvider.selectedHomeKey)
             } else {

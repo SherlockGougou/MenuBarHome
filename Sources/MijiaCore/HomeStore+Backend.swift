@@ -764,7 +764,7 @@ extension HomeStore {
         self.miSessionMaskedUserId = miAccounts.first?.maskedUserId
         self.miSessionExpiresAt = miAccounts.compactMap(\.session.expiresAt).min()
         self.miSessionScopeIdentifier = miAccounts.first?.session.historyScopeIdentifier
-        if selectedMiHomeId?.hasPrefix(id + "/") == true {
+        if let home = selectedMiHomeId, MiAccountScope.isOwned(home, by: id) {
             selectedMiHomeId = nil
             userDefaults.removeObject(forKey: MiCloudProvider.selectedHomeKey)
         }
@@ -772,11 +772,11 @@ extension HomeStore {
             let removedDeviceIds = Set(devices.filter { $0.accountId == id }.map(\.id))
             devices.removeAll { $0.accountId == id }
             environmentReadings.removeAll { removedDeviceIds.contains($0.id) }
-            rooms.removeAll { $0.id.hasPrefix(id + "/") }
+            rooms.removeAll { MiAccountScope.isOwned($0.id, by: id) }
             // Its homes leave too, so the home menu cannot offer a home nobody owns any more.
             homes.removeAll { $0.accountId == id }
             // A room pill pointing at the removed account would show an empty panel.
-            if let roomId = selectedRoomId, roomId.hasPrefix(id + "/") {
+            if let roomId = selectedRoomId, MiAccountScope.isOwned(roomId, by: id) {
                 selectRoom(nil)
             }
             if miAccounts.isEmpty, hasHASource {
@@ -790,15 +790,8 @@ extension HomeStore {
     }
 
     private func shutdownCurrentProvider() {
-        if let old = provider as? DualSourceHomeProvider {
-            Task { await old.shutdown() }
-        } else if let old = provider as? MiAccountsProvider {
-            Task { await old.shutdown() }
-        } else if let old = provider as? MiCloudProvider {
-            Task { await old.shutdown() }
-        } else if let old = provider as? HAWebSocketProvider {
-            Task { await old.shutdown() }
-        }
+        let old = provider
+        Task { await old.shutdown() }
     }
 
     public func updateConnection(serverURL: String, token: String) {

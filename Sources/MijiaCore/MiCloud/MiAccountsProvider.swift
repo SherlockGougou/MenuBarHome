@@ -110,15 +110,14 @@ public actor MiAccountsProvider: HomeProvider {
         let knownAccountIds = Set(accounts.map(\.id))
         return {
             guard let selection = loader(), !selection.isEmpty else { return nil }
-            guard let slash = selection.firstIndex(of: "/") else {
+            guard let ownerId = MiAccountScope.owner(of: selection) else {
                 if isFirst { return selection }
                 return knownAccountIds.count > 1 ? MiCloudProvider.otherAccountHomeSentinel : nil
             }
-            let ownerId = String(selection[..<slash])
             guard ownerId == accountId else {
                 return knownAccountIds.contains(ownerId) ? MiCloudProvider.otherAccountHomeSentinel : nil
             }
-            let raw = String(selection[selection.index(after: slash)...])
+            let raw = MiAccountScope.localId(of: selection)
             return raw.isEmpty ? nil : raw
         }
     }
@@ -126,7 +125,8 @@ public actor MiAccountsProvider: HomeProvider {
     @discardableResult
     private func resetSelection(ownedBy accountId: String) -> Bool {
         guard let selection = selectedHomeLoader(),
-              selection.hasPrefix(accountId + "/") || (!selection.contains("/") && accounts.first?.id == accountId) else { return false }
+              MiAccountScope.isOwned(selection, by: accountId)
+                || (MiAccountScope.owner(of: selection) == nil && accounts.first?.id == accountId) else { return false }
         clearSelectedHome()
         return true
     }
@@ -366,5 +366,30 @@ public actor MiAccountsProvider: HomeProvider {
             guard let child = childProvider(for: ownerId) else { continue }
             await child.stopCameraStream(for: device)
         }
+    }
+}
+
+/// How a multi-account home names what one Mi account owns: `<accountId>/<local id>`.
+/// Home selections and room ids use it; the store reads ownership through here instead of
+/// parsing the separator itself.
+public enum MiAccountScope {
+    public static func id(_ localId: String, account accountId: String) -> String {
+        "\(accountId)/\(localId)"
+    }
+
+    /// The owning account, or nil for an unscoped id (a single-account selection).
+    public static func owner(of scopedId: String) -> String? {
+        guard let slash = scopedId.firstIndex(of: "/") else { return nil }
+        return String(scopedId[..<slash])
+    }
+
+    /// The part after the account; the whole id when it is unscoped.
+    public static func localId(of scopedId: String) -> String {
+        guard let slash = scopedId.firstIndex(of: "/") else { return scopedId }
+        return String(scopedId[scopedId.index(after: slash)...])
+    }
+
+    public static func isOwned(_ scopedId: String, by accountId: String) -> Bool {
+        scopedId.hasPrefix(accountId + "/")
     }
 }
