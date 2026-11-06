@@ -1,0 +1,603 @@
+#!/usr/bin/env python3
+"""mijia — 在终端里控制 MenuBarMijia。
+
+所有控制都通过 `menumijia://` 链接交给 MenuBarMijia 执行，本脚本只读应用写出的
+`raycast-snapshot.json`，不保存也不转发米家 / Home Assistant 凭据。因此需要：
+
+1. 打开 MenuBarMijia：设置 → 自动化与外部控制 → 打开「Raycast 集成」；
+2. 让应用保持运行（关闭后它无法执行链接）。
+
+用法示例：
+
+    mijia list --room 书房
+    mijia toggle 书房台灯
+    mijia on 客厅射灯
+    mijia scene 观影模式
+    mijia ask "把客厅灯调到 40%"
+
+退出码：0 成功；1 应用报告执行失败；2 本地错误（快照缺失、设备找不到、
+集成未开启等）；3 等待结果超时。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import unicodedata
+import uuid
+from pathlib import Path
+
+SCHEMA_VERSION = 1
+SNAPSHOT_ENV = "MENUBARMIJIA_SNAPSHOT_PATH"
+DEFAULT_SNAPSHOT_PATH = (
+    Path.home() / "Library" / "Application Support" / "MenuBarMijia" / "raycast-snapshot.json"
+)
+DEFAULT_TIMEOUT = 12.0
+POLL_INTERVAL = 0.15
+
+EXIT_OK = 0
+EXIT_COMMAND_FAILED = 1
+EXIT_LOCAL_ERROR = 2
+EXIT_TIMEOUT = 3
+
+
+class CliError(Exception):
+    """在把链接交给应用之前就失败：快照缺失、设备找不到、集成未开启。"""
+
+
+class FeedbackTimeout(CliError):
+    """链接已交给应用，但在超时内没有等到这条命令的结果。"""
+
+
+def snapshot_path(explicit: str | None = None, env: dict | None = None) -> Path:
+    if explicit:
+        return Path(explicit).expanduser()
+    override = ((env if env is not None else os.environ).get(SNAPSHOT_ENV) or "").strip()
+    if override:
+        return Path(override).expanduser()
+    return DEFAULT_SNAPSHOT_PATH
+
+
+def load_snapshot(path: Path) -> dict:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise CliError(
+            f"没找到 {path}。请在 MenuBarMijia 的设置 → 自动化与外部控制里打开「Raycast 集成」。"
+        ) from None
+    except OSError as error:
+        raise CliError(f"读取快照失败：{error}") from error
+    try:
+        snapshot = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise CliError(f"{path} 不是合法 JSON：{error}") from error
+    if not isinstance(snapshot, dict):
+        raise CliError(f"{path} 的顶层不是对象，格式不认识")
+    version = snapshot.get("schemaVersion")
+    if version != SCHEMA_VERSION:
+        raise CliError(f"快照版本是 {version!r}，本脚本只认识 {SCHEMA_VERSION}；请更新到配套版本。")
+    return snapshot
+
+
+def _fold(value: object) -> str:
+    return str(value or "").strip().casefold()
+
+
+def _device_label(device: dict) -> str:
+    name = str(device.get("name") or "?")
+    room = str(device.get("roomName") or "")
+    room_part = f"（{room}）" if room else ""
+    return f"{name}{room_part} · {device.get('id', '?')}"
+
+
+def _unique(candidates: list, what: str, query: str, label) -> dict:
+    if not candidates:
+        raise CliError(f"没有名字或 ID 是「{query}」的{what}")
+    if len(candidates) > 1:
+        listing = "\n".join(f"  - {label(item)}" for item in candidates)
+        raise CliError(f"「{query}」匹配到多个{what}，请写得更具体或直接用 ID：\n{listing}")
+    return candidates[0]
+
+
+def match_device(snapshot: dict, query: str) -> dict:
+    devices = [device for device in snapshot.get("devices") or [] if isinstance(device, dict)]
+    needle = _fold(query)
+    if not needle:
+        raise CliError("设备名不能为空")
+    for device in devices:
+        if str(device.get("id") or "") == str(query).strip():
+            return device
+    exact = [
+        device
+        for device in devices
+        if _fold(device.get("name")) == needle
+        or f"{_fold(device.get('roomName'))}{_fold(device.get('name'))}" == needle
+        or _fold(device.get("pinyinInitials")) == needle
+        or f"{_fold(device.get('roomPinyinInitials'))}{_fold(device.get('pinyinInitials'))}" == needle
+    ]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        return _unique(exact, "设备", query, _device_label)
+    substring = [
+        device
+        for device in devices
+        if needle in _fold(device.get("name"))
+        or needle in f"{_fold(device.get('roomName'))}{_fold(device.get('name'))}"
+    ]
+    return _unique(substring, "设备", query, _device_label)
+
+
+def _scene_label(item: dict) -> str:
+    return f"{item.get('name', '?')} · {item.get('id', '?')}"
+
+
+def _match_in_pool(pool: list, needle: str, *, allow_contains: bool) -> tuple[dict | None, list]:
+    """返回唯一命中，或命中列表（需要用户写得更具体）。"""
+    for item in pool:
+        if _fold(item.get("id")) == needle:
+            return item, []
+    hits = [
+        item
+        for item in pool
+        if _fold(item.get("name")) == needle or _fold(item.get("pinyinInitials")) == needle
+    ]
+    if len(hits) == 1:
+        return hits[0], []
+    if len(hits) > 1:
+        return None, hits
+    if not allow_contains:
+        return None, []
+    hits = [
+        item
+        for item in pool
+        if needle in _fold(item.get("name")) or needle in _fold(item.get("pinyinInitials"))
+    ]
+    if len(hits) == 1:
+        return hits[0], []
+    return None, hits
+
+
+def match_scene(snapshot: dict, query: str) -> tuple[str, dict]:
+    """返回 ("quick", 快捷动作) 或 ("scene", 场景)。"""
+    quick_actions = [item for item in snapshot.get("quickActions") or [] if isinstance(item, dict)]
+    scenes = [item for item in snapshot.get("scenes") or [] if isinstance(item, dict)]
+    needle = _fold(query)
+    if not needle:
+        raise CliError("场景名不能为空")
+
+    if needle.startswith("quick:"):
+        builtin = needle[len("quick:") :].strip()
+        for item in quick_actions:
+            if _fold(item.get("id")) == builtin:
+                return "quick", item
+        raise CliError(f"没有 ID 是「{builtin}」的快捷动作")
+
+    # 名字完全一致优先于「包含」，且两个池子平级比较：快捷动作叫「全屋关灯」时，
+    # 不会因为某个场景名里恰好也含这四个字而被场景抢走。
+    for allow_contains in (False, True):
+        ambiguous: list = []
+        for pool, kind in ((scenes, "scene"), (quick_actions, "quick")):
+            item, hits = _match_in_pool(pool, needle, allow_contains=allow_contains)
+            if item is not None:
+                return kind, item
+            ambiguous.extend(hits)
+        if ambiguous:
+            listing = "\n".join(f"  - {_scene_label(item)}" for item in ambiguous)
+            raise CliError(f"「{query}」匹配到多个场景或快捷动作，请写得更具体或直接用 ID：\n{listing}")
+    raise CliError(f"没有名字是「{query}」的场景或快捷动作")
+
+
+def build_url(route: str, params: list[tuple[str, str]], token: str, request_id: str) -> str:
+    from urllib.parse import quote, urlencode
+
+    query = list(params)
+    query.append(("id", request_id))
+    query.append(("token", token))
+    # quote, not quote_plus: the app reads a literal "+" as part of the text.
+    return f"menumijia://{route}?" + urlencode(query, quote_via=quote)
+
+
+def open_url(url: str) -> None:
+    try:
+        completed = subprocess.run(
+            ["open", url],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as error:
+        raise CliError(f"无法调用 open 打开链接：{error}") from error
+    if completed.returncode != 0:
+        reason = (completed.stderr or "").strip() or f"退出码 {completed.returncode}"
+        raise CliError(f"系统没能打开 menumijia:// 链接（{reason}），请确认 MenuBarMijia 已安装。")
+
+
+def wait_for_feedback(path: Path, request_id: str, timeout: float, now, sleep) -> dict:
+    deadline = now() + max(0.0, timeout)
+    while True:
+        # Writes are atomic, so a read either has the whole file or the previous one. A missing or
+        # unreadable file here is a real problem (integration turned off) and surfaces immediately.
+        snapshot = load_snapshot(path)
+        feedback = snapshot.get("lastCommandFeedback")
+        if isinstance(feedback, dict) and feedback.get("requestId") == request_id:
+            return feedback
+        if now() >= deadline:
+            raise FeedbackTimeout(
+                f"等了 {timeout:g} 秒没收到执行结果。请确认 MenuBarMijia 正在运行、"
+                "「Raycast 集成」仍处于打开状态。"
+            )
+        sleep(POLL_INTERVAL)
+
+
+def _token(snapshot: dict) -> str:
+    token = str(snapshot.get("bridgeToken") or "").strip()
+    if not token:
+        raise CliError("快照里没有本机令牌。请在设置里关闭再打开「Raycast 集成」以重新签发。")
+    return token
+
+
+def send(
+    snapshot: dict,
+    path: Path,
+    route: str,
+    params: list[tuple[str, str]],
+    *,
+    opener,
+    now,
+    sleep,
+    timeout: float,
+    dry_run: bool = False,
+    wait: bool = True,
+    as_json: bool = False,
+) -> int:
+    request_id = uuid.uuid4().hex
+    url = build_url(route, params, _token(snapshot), request_id)
+    if dry_run:
+        print(_redacted(url))
+        return EXIT_OK
+    opener(url)
+    if not wait:
+        print(f"已发送：{url.split('?', 1)[0]}")
+        return EXIT_OK
+    try:
+        feedback = wait_for_feedback(path, request_id, timeout, now, sleep)
+    except FeedbackTimeout as error:
+        print(f"mijia: {error}", file=sys.stderr)
+        return EXIT_TIMEOUT
+    message = str(feedback.get("message") or "")
+    is_error = bool(feedback.get("isError"))
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "requestId": request_id,
+                    "command": feedback.get("command"),
+                    "message": message,
+                    "isError": is_error,
+                },
+                ensure_ascii=False,
+            )
+        )
+    else:
+        print(message or ("完成" if not is_error else "执行失败"))
+    return EXIT_COMMAND_FAILED if is_error else EXIT_OK
+
+
+def _redacted(url: str) -> str:
+    from urllib.parse import quote
+
+    parts = url.split("token=", 1)
+    if len(parts) != 2:
+        return url
+    tail = parts[1]
+    separator = tail.find("&")
+    suffix = "" if separator < 0 else tail[separator:]
+    return f"{parts[0]}token={quote('<本机令牌>')}{suffix}"
+
+
+def _number(value: object) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "?"
+    if round(number) == number:
+        return str(int(number))
+    return f"{number:.1f}"
+
+
+def _width(text: str) -> int:
+    return sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in text)
+
+
+def _pad(text: str, width: int) -> str:
+    return text + " " * max(0, width - _width(text))
+
+
+def _reading_text(reading: dict) -> str:
+    parts = []
+    if reading.get("temperature") is not None:
+        parts.append(f"{_number(reading['temperature'])}°C")
+    if reading.get("humidity") is not None:
+        parts.append(f"{_number(reading['humidity'])}%")
+    if reading.get("battery") is not None:
+        parts.append(f"电量 {reading['battery']}%")
+    return " · ".join(parts) or "无读数"
+
+
+def _room_key(device: dict) -> tuple[int, str, str]:
+    try:
+        rank = int(device.get("roomSortOrder"))
+    except (TypeError, ValueError):
+        rank = 999
+    # 快照本身已按房间和面板顺序排好；排序要稳定，房间内保持应用给的顺序。
+    return rank, str(device.get("roomName") or "")
+
+
+def resolve_room(snapshot: dict, query: str) -> tuple[str, str]:
+    devices = [device for device in snapshot.get("devices") or [] if isinstance(device, dict)]
+    needle = _fold(query)
+    rooms: dict[str, str] = {}
+    for device in devices:
+        room_id = str(device.get("roomId") or "")
+        room_name = str(device.get("roomName") or "")
+        if room_id or room_name:
+            rooms.setdefault(room_id or room_name, room_name)
+    exact = [
+        (room_id, room_name)
+        for room_id, room_name in rooms.items()
+        if _fold(room_id) == needle or _fold(room_name) == needle
+    ]
+    if not exact:
+        exact = [
+            (room_id, room_name)
+            for room_id, room_name in rooms.items()
+            if needle in _fold(room_id) or needle in _fold(room_name)
+        ]
+    if not exact:
+        known = "、".join(sorted({name for name in rooms.values() if name})) or "（空）"
+        raise CliError(f"没有名叫「{query}」的房间；现有房间：{known}")
+    if len(exact) > 1:
+        listing = "\n".join(f"  - {name or room_id}" for room_id, name in exact)
+        raise CliError(f"「{query}」匹配到多个房间：\n{listing}")
+    return exact[0]
+
+
+def command_list(snapshot: dict, room: str | None, as_json: bool) -> int:
+    devices = [device for device in snapshot.get("devices") or [] if isinstance(device, dict)]
+    if room:
+        room_id, room_name = resolve_room(snapshot, room)
+        devices = [
+            device
+            for device in devices
+            if str(device.get("roomId") or "") == room_id
+            or (not device.get("roomId") and str(device.get("roomName") or "") == room_name)
+        ]
+    devices.sort(key=_room_key)
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "updatedAt": snapshot.get("updatedAt"),
+                    "isStale": snapshot.get("isStale"),
+                    "connectionSummary": snapshot.get("connectionSummary"),
+                    "devices": devices,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return EXIT_OK
+
+    if not devices:
+        print("没有符合条件、且面板里可见的设备。")
+        return EXIT_OK
+    header = f"更新于 {snapshot.get('updatedAt') or '?'}"
+    if snapshot.get("isStale"):
+        header += "（数据可能已过期）"
+    print(header)
+    current_room = None
+    for device in devices:
+        room_name = str(device.get("roomName") or "未分配房间")
+        if room_name != current_room:
+            if current_room is not None:
+                print()
+            print(f"{room_name}")
+            current_room = room_name
+        online = bool(device.get("isOnline"))
+        name = str(device.get("name") or "?")
+        state = str(device.get("stateText") or "")
+        if not online:
+            state = "离线"
+        marker = "●" if online and device.get("isActiveOn") else "○"
+        favorite = " ★" if device.get("isFavorite") else ""
+        print(f"  {marker} {_pad(name, 18)}{state}{favorite}")
+    return EXIT_OK
+
+
+def command_status(snapshot: dict, as_json: bool) -> int:
+    devices = [device for device in snapshot.get("devices") or [] if isinstance(device, dict)]
+    online = [device for device in devices if device.get("isOnline")]
+    active = [device for device in devices if device.get("isActiveOn") and device.get("isOnline")]
+    feedback = snapshot.get("lastCommandFeedback") or {}
+    readings = [
+        reading for reading in snapshot.get("environmentReadings") or [] if isinstance(reading, dict)
+    ]
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "updatedAt": snapshot.get("updatedAt"),
+                    "connectionSummary": snapshot.get("connectionSummary"),
+                    "isStale": snapshot.get("isStale"),
+                    "deviceCount": len(devices),
+                    "onlineCount": len(online),
+                    "activeCount": len(active),
+                    "sceneCount": len(snapshot.get("scenes") or []),
+                    "quickActionCount": len(snapshot.get("quickActions") or []),
+                    "lastCommandFeedback": feedback or None,
+                    "environmentReadings": readings,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return EXIT_OK
+    print(f"连接：{snapshot.get('connectionSummary') or '未知'}")
+    print(f"更新：{snapshot.get('updatedAt') or '?'}{'（可能已过期）' if snapshot.get('isStale') else ''}")
+    print(f"设备：{len(devices)} 台，在线 {len(online)} 台，开启 {len(active)} 台")
+    print(f"场景：{len(snapshot.get('scenes') or [])} 个，快捷动作 {len(snapshot.get('quickActions') or [])} 个")
+    if readings:
+        print("环境读数：")
+        for reading in readings:
+            room = str(reading.get("roomName") or "")
+            label = str(reading.get("label") or "?")
+            print(f"  {_pad(f'{room} {label}'.strip(), 24)}{_reading_text(reading)}")
+    if isinstance(feedback, dict) and feedback.get("message"):
+        result = "失败" if feedback.get("isError") else "成功"
+        print(f"上次命令：{feedback.get('command') or '?'} → {result}：{feedback.get('message')}")
+    return EXIT_OK
+
+
+def _require_toggleable(device: dict) -> None:
+    if not device.get("isPrimaryToggleable"):
+        raise CliError(f"{_device_label(device)} 没有可直接开关的功能")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="mijia",
+        description="通过 menumijia:// 链接控制 MenuBarMijia（需在设置里打开「Raycast 集成」）。",
+        epilog=f"快照路径可用环境变量 {SNAPSHOT_ENV} 覆盖。",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    def common(subparser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        subparser.add_argument("--snapshot", help="快照文件路径（默认读应用写出的那份）")
+        subparser.add_argument("--json", action="store_true", help="输出 JSON")
+        subparser.add_argument(
+            "--timeout", type=float, default=DEFAULT_TIMEOUT, help=f"等待结果的秒数（默认 {DEFAULT_TIMEOUT:g}）"
+        )
+        subparser.add_argument("--dry-run", action="store_true", help="只打印将要打开的链接")
+        subparser.add_argument("--no-wait", action="store_true", help="打开链接后不等待执行结果")
+        return subparser
+
+    listing = common(subparsers.add_parser("list", help="列出面板里可见的设备"))
+    listing.add_argument("--room", help="只看某个房间")
+
+    common(subparsers.add_parser("status", help="概览连接、场景与环境读数"))
+
+    toggle = common(subparsers.add_parser("toggle", help="翻转设备主开关"))
+    toggle.add_argument("device", help="设备名、ID 或拼音首字母")
+
+    power_on = common(subparsers.add_parser("on", help="打开设备"))
+    power_on.add_argument("device", help="设备名、ID 或拼音首字母")
+
+    power_off = common(subparsers.add_parser("off", help="关闭设备"))
+    power_off.add_argument("device", help="设备名、ID 或拼音首字母")
+
+    scene = common(subparsers.add_parser("scene", help="执行场景或内置快捷动作"))
+    scene.add_argument("name", help="场景名、快捷动作名或它们对应的 ID")
+
+    ask = common(subparsers.add_parser("ask", help="执行一句话指令"))
+    ask.add_argument("text", help="自然语言指令，例如「把客厅灯调到 40%%」")
+
+    command = common(subparsers.add_parser("command", help="同 ask"))
+    command.add_argument("text", help="自然语言指令")
+    return parser
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    opener=open_url,
+    now=time.monotonic,
+    sleep=time.sleep,
+    env: dict | None = None,
+) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        path = snapshot_path(args.snapshot, env)
+        snapshot = load_snapshot(path)
+        if args.command == "list":
+            return command_list(snapshot, args.room, args.json)
+        if args.command == "status":
+            return command_status(snapshot, args.json)
+        if args.command == "toggle":
+            device = match_device(snapshot, args.device)
+            _require_toggleable(device)
+            return send(
+                snapshot,
+                path,
+                "toggle",
+                [("device", device["id"])],
+                opener=opener,
+                now=now,
+                sleep=sleep,
+                timeout=args.timeout,
+                dry_run=args.dry_run,
+                wait=not args.no_wait,
+                as_json=args.json,
+            )
+        if args.command in ("on", "off"):
+            device = match_device(snapshot, args.device)
+            _require_toggleable(device)
+            return send(
+                snapshot,
+                path,
+                "power",
+                [("device", device["id"]), ("on", "true" if args.command == "on" else "false")],
+                opener=opener,
+                now=now,
+                sleep=sleep,
+                timeout=args.timeout,
+                dry_run=args.dry_run,
+                wait=not args.no_wait,
+                as_json=args.json,
+            )
+        if args.command == "scene":
+            kind, item = match_scene(snapshot, args.name)
+            name = f"quick:{item['id']}" if kind == "quick" else str(item["id"])
+            return send(
+                snapshot,
+                path,
+                "scene",
+                [("name", name)],
+                opener=opener,
+                now=now,
+                sleep=sleep,
+                timeout=args.timeout,
+                dry_run=args.dry_run,
+                wait=not args.no_wait,
+                as_json=args.json,
+            )
+        if args.command in ("ask", "command"):
+            text = args.text.strip()
+            if not text:
+                raise CliError("指令不能为空")
+            return send(
+                snapshot,
+                path,
+                "ask",
+                [("text", text)],
+                opener=opener,
+                now=now,
+                sleep=sleep,
+                timeout=args.timeout,
+                dry_run=args.dry_run,
+                wait=not args.no_wait,
+                as_json=args.json,
+            )
+        raise CliError(f"不认识的命令：{args.command}")
+    except CliError as error:
+        print(f"mijia: {error}", file=sys.stderr)
+        return EXIT_LOCAL_ERROR
+
+
+if __name__ == "__main__":
+    sys.exit(main())

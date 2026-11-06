@@ -26,4 +26,5 @@ check:
   timeout: 45m
   script:
     - (cd windows && npm ci --no-audit --no-fund)
+    - (cd raycast && npm ci --no-audit --no-fund)
     - bash scripts/check.sh

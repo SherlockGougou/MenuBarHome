@@ -100,6 +100,13 @@
       "windows": "unsupported"
     },
     {
+      "id": "raycast-cli",
+      "en": "Raycast Extension & Local CLI",
+      "zh": "Raycast 扩展与本地 CLI",
+      "macos": "supported",
+      "windows": "unsupported"
+    },
+    {
       "id": "sensor-history",
       "en": "Sensor Trend Line Charts",
       "zh": "传感器历史折线图",

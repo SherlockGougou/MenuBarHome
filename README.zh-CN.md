@@ -122,6 +122,7 @@ MenuBarMijia 的 macOS 版本采用 Swift 6 原生开发，Windows 11 版本基�
 | **Mac 状态自动化** | ✅ 支持 | — 暂不支持 | 支持锁屏、唤醒、外接显示器，以及摄像头 / 麦克风占用、电源与电量、Wi-Fi、专注模式、日历与深夜使用等 Mac 专属触发（默认关闭） |
 | **系统快捷指令集成** | ✅ 支持 (4 个动作) | — 暂不支持 | 提供设备切换、执行场景、一句话控制、查询温湿度 4 项 App Intents |
 | **URL Scheme 控制** | ✅ 支持 | — 暂不支持 | `menumijia://toggle` 等调用默认需确认，可在设置中允许直接执行 |
+| **Raycast 扩展与本地 CLI** | ✅ 支持 | — 暂不支持 | `raycast/` 与 `scripts/mijia` 只读应用写出的 `raycast-snapshot.json`（设置 → 自动化与外部控制 → Raycast 集成），通过 `menumijia://` 链接控制设备、场景与快捷动作，不持有任何凭据；高风险二次确认与锁屏拦截仍在应用内执行 |
 | **传感器历史折线图** | ✅ 24h / 7d 趋势 | ⚠️ 基础读数显示 | macOS 可切换温度或湿度及时间范围，Windows 显示基础读数 |
 | **插座电量统计** | ✅ 支持 | — 暂不支持历史统计 | macOS 仅统计插座上报的真实累计电量增量，无数据不凭空估算 |
 | **米家空净 / 新风机 / 加湿器** | ✅ 支持 | ✅ 支持 | 双端合成 `air-purifier`、`air-fresh`、`humidifier` 规格：PM2.5 / 空气质量 / 温湿度 / 滤芯余量，风速 1–100% 联动最爱挡位 |
@@ -208,6 +209,31 @@ MenuBarMijia 的 macOS 版本采用 Swift 6 原生开发，Windows 11 版本基�
 - **温度与风速控制：** 「空调调到 26 度」「调高两度」「风扇开自然风」
 - **延时定时执行：** 「10 分钟后关灯」「半小时后关空调」「取消定时」
 - **撤销误操作：** 「撤销」「刚才那个撤销」（10 分钟内支持语音或快捷撤销）
+
+---
+
+## Raycast 扩展与本地 CLI
+
+打开 **设置 → 自动化与外部控制 → Raycast 集成** 后，应用会把设备、场景、快捷动作、环境读数、上一条命令结果和一个本机随机令牌写到 `~/Library/Application Support/MenuBarMijia/raycast-snapshot.json`（权限 `0600`）。带令牌的 `menumijia://` 链接不再弹外部链接确认；高风险设备仍会先问，锁屏拦截照旧。关闭该开关会删除文件并作废令牌，伴生端拿不到任何米家或 Home Assistant 凭据；契约与取舍见 [ADR-0013](docs/adr/0013-raycast-companion-contract.md)。
+
+### 本地 CLI
+
+`scripts/mijia` 是只依赖 Python 3 标准库的脚本，使用时保持 MenuBarMijia 运行即可。
+
+| 命令 | 作用 |
+| :--- | :--- |
+| `scripts/mijia list [--room 书房] [--json]` | 按房间列出面板里可见的设备、在线状态与读数 |
+| `scripts/mijia status [--json]` | 连接状态、设备数量、环境读数与上一条命令的结果 |
+| `scripts/mijia toggle 书房台灯` | 翻转主开关，支持设备名、ID 或拼音首字母（`sftd`） |
+| `scripts/mijia on 客厅射灯` / `scripts/mijia off 客厅射灯` | 按目标状态开关，不再依赖当前状态 |
+| `scripts/mijia scene 观影模式` | 执行 Home Assistant 场景或内置快捷动作（全屋关灯、一键全关、撤销……） |
+| `scripts/mijia ask "把客厅灯调到 40%"` | 一句话指令，复用应用自己的解析与确认规则 |
+
+退出码：`0` 成功；`1` 应用报告执行失败；`2` 本地错误（快照缺失、设备找不到、集成未开启）；`3` 等待结果超时。`--dry-run` 只打印链接（令牌打码），`--no-wait` 发完不等结果，`MENUBARMIJIA_SNAPSHOT_PATH` 可覆盖快照路径。
+
+### Raycast 扩展
+
+`raycast/` 是标准 Raycast 扩展，提供三个命令：**搜索设备**、**场景与快捷动作**、**问 MenuBarMijia**。在 Raycast 的扩展页按 `+` → **Import Extension** 选择 `raycast/` 即可，或在 Raycast 打开时运行 `cd raycast && npm ci && npm run dev`。开关、亮度、色温、目标温度与风速都按精确值下发（`menumijia://power`、`brightness`、`color-temp`、`temperature`、`fan`），滑条不会靠猜当前状态去翻转设备；每条命令都会用 toast 显示应用的执行结果。
 
 ---
 
