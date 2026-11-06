@@ -261,6 +261,7 @@ public actor MiAccountsProvider: HomeProvider {
         var homeIds = Set<String>()
         var identities: [String: DeviceSourceIdentity] = [:]
         var lightGroupOwners: [String: String] = [:]
+        var facetsByDevice: [String: [FacetControl]] = [:]
         var closesAwayGap = true
         for home in reported {
             closesAwayGap = closesAwayGap && home.closesAwayGap
@@ -269,6 +270,9 @@ public actor MiAccountsProvider: HomeProvider {
                 devices.append(device)
                 if let identity = home.deviceIdentities[device.id] {
                     identities[device.id] = identity
+                }
+                if let facets = home.deviceFacets[device.id] {
+                    facetsByDevice[device.id] = facets
                 }
             }
             for (id, identity) in home.deviceIdentities where identities[id] == nil {
@@ -287,6 +291,7 @@ public actor MiAccountsProvider: HomeProvider {
         merged.homes = homes
         merged.accountStatuses = statuses
         merged.deviceIdentities = identities
+        merged.deviceFacets = facetsByDevice
         merged.lightGroupOwners = lightGroupOwners.filter {
             deviceIds.contains($0.key) && deviceIds.contains($0.value)
         }

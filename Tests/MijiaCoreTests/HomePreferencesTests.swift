@@ -14,6 +14,7 @@ struct HomePreferencesTests {
         let d = fresh()
         #expect(HomePreferences.hideOfflineDevices.load(from: d) == false)
         #expect(HomePreferences.hideGroupedLights.load(from: d) == true)
+        #expect(HomePreferences.allowAdvancedFacetWrites.load(from: d) == false)
         #expect(HomePreferences.enableGlobalHotkey.load(from: d) == true)
         #expect(HomePreferences.isCompactGridMode.load(from: d) == true)
         #expect(HomePreferences.showQuickActionsBar.load(from: d) == true)
@@ -68,8 +69,12 @@ struct HomePreferencesTests {
         let suite = "test.prefs.store.\(UUID().uuidString)"
         let d = UserDefaults(suiteName: suite)!
         d.set(false, forKey: "show_quick_actions_bar")
+        d.set(true, forKey: "allow_advanced_facet_writes")
         let store = HomeStore(provider: MockHomeProvider(snapshot: SynthesizedHome(devices: [])), defaultsSuiteName: suite)
         #expect(store.showQuickActionsBar == false)
+        #expect(store.allowAdvancedFacetWrites)
+        store.allowAdvancedFacetWrites = false
+        #expect(HomePreferences.allowAdvancedFacetWrites.load(from: d) == false)
         store.doorbellPopupSeconds = 45
         #expect(HomePreferences.doorbellPopupSeconds.load(from: d) == 45)
     }

@@ -229,6 +229,9 @@ public struct SynthesizedHome: Equatable, Sendable {
     public var activeBackends: Set<HomeBackend> = []
     /// Per-source connection state for the bottom dual-source summary. Empty on single-source.
     public var sourceStatuses: [HomeBackend: ConnectionStatus] = [:]
+    /// Generic drawer rows under 更多设置, keyed by card id (#5). Empty on backends without MIoT
+    /// specs. Values travel with the snapshot so the drawer never queries the provider directly.
+    public var deviceFacets: [String: [FacetControl]] = [:]
 
     public init(
         rooms: [RoomArea] = [],

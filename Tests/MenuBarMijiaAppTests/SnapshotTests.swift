@@ -232,6 +232,111 @@ struct SnapshotTests {
         )
     }
 
+    @Test("More Settings starts folded, then shows every facet style with closed writes explained")
+    func facetDrawerSnapshots() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+
+        let spec = LightSpec(
+            entityId: "light.facet",
+            isOn: true,
+            brightnessPercent: 60,
+            colorTempKelvin: 4000
+        )
+        let device = SmartDevice(
+            id: "snapshot-facets", name: "客厅灯", roomId: "living", roomName: "客厅",
+            model: "test.facet.light", isOnline: true,
+            kind: .light(spec)
+        )
+        fixture.store.deviceFacets = [device.id: [
+            FacetControl(
+                id: "3.2", kind: .slider, name: "delaytime", title: "延时关闭",
+                serviceName: "setmode", value: .number(3), range: .init(min: 0, max: 20, step: 1),
+                isWritable: true, writesByDefault: true, isHighValue: true,
+                target: .property(entityId: "miot:snapshot-facets:3", piid: 2)
+            ),
+            FacetControl(
+                id: "2.4", kind: .select, name: "default-power-on-state", title: "通电默认状态",
+                serviceName: "light", value: .number(0),
+                options: [
+                    MiotFacetOption(value: 0, label: "开"),
+                    MiotFacetOption(value: 1, label: "记忆"),
+                    MiotFacetOption(value: 2, label: "关"),
+                ],
+                isWritable: true, writesByDefault: false, isHighValue: false,
+                target: .property(entityId: "miot:snapshot-facets:2", piid: 4)
+            ),
+            FacetControl(
+                id: "3.1", kind: .toggle, name: "flex-switch", title: "灵动开关",
+                serviceName: "setmode", value: .bool(true),
+                isWritable: true, writesByDefault: false, isHighValue: false,
+                target: .property(entityId: "miot:snapshot-facets:3", piid: 1)
+            ),
+            FacetControl(
+                id: "3.a1", kind: .button, name: "restart-device", title: "重启设备",
+                serviceName: "setmode",
+                isWritable: true, writesByDefault: false, isHighValue: false,
+                target: .action(entityId: "miot-action:snapshot-facets:3:1")
+            ),
+            FacetControl(
+                id: "3.4", kind: .reading, name: "temperature", title: "温度",
+                serviceName: "setmode", unit: "celsius", value: .number(23.5),
+                isWritable: false, writesByDefault: false, isHighValue: false
+            ),
+            FacetControl(
+                id: "3.5", kind: .reading, name: "relative-humidity", title: "湿度",
+                serviceName: "setmode", unit: "percentage", value: .number(52),
+                isWritable: false, writesByDefault: false, isHighValue: false
+            ),
+            FacetControl(
+                id: "3.6", kind: .reading, name: "battery-level", title: "电量",
+                serviceName: "setmode", unit: "percentage", value: .number(88),
+                isWritable: false, writesByDefault: false, isHighValue: false
+            ),
+            FacetControl(
+                id: "3.7", kind: .reading, name: "left-time", title: "剩余时间",
+                serviceName: "setmode", unit: "minutes", value: .number(12),
+                isWritable: false, writesByDefault: false, isHighValue: false
+            ),
+            FacetControl(
+                id: "3.8", kind: .reading, name: "volume", title: "音量",
+                serviceName: "setmode", value: .number(30),
+                isWritable: false, writesByDefault: false, isHighValue: false
+            ),
+        ]]
+
+        assertRendered(
+            snapshotReady(
+                DeviceFacetSection(
+                    device: device,
+                    store: fixture.store,
+                    accent: DesignTokens.active,
+                    statusColor: DesignTokens.active
+                )
+                .padding(10)
+                .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 64),
+            named: "facet-drawer-collapsed-zh-light"
+        )
+
+        assertRendered(
+            snapshotReady(
+                DeviceFacetSection(
+                    device: device,
+                    store: fixture.store,
+                    accent: DesignTokens.active,
+                    statusColor: DesignTokens.active,
+                    initiallyExpanded: true
+                )
+                .padding(10)
+                .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 380),
+            named: "facet-drawer-expanded-zh-light"
+        )
+    }
+
     @Test("Appliance card shows the water heater controls the spec publishes")
     func applianceCardSnapshots() async throws {
         let fixture = try await SnapshotFixture()

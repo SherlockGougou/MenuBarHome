@@ -68,6 +68,7 @@ public enum HomePreferences {
     public static let hideOfflineDevices = HomePreference.flag("hide_offline_devices", default: false)
     /// Hide lights that belong to a Mi light group while the group card is on screen (#189).
     public static let hideGroupedLights = HomePreference.flag("hide_grouped_lights", default: true)
+    public static let allowAdvancedFacetWrites = HomePreference.flag("allow_advanced_facet_writes", default: false)
     public static let enableGlobalHotkey = HomePreference.flag("enable_global_hotkey", default: true)
     public static let isCompactGridMode = HomePreference.flag("compact_grid_mode", default: true)
     public static let showQuickActionsBar = HomePreference.flag("show_quick_actions_bar", default: true)

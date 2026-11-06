@@ -336,6 +336,55 @@ public enum MiotFacetEngine {
         return value
     }
 
+    /// Drawer rows for 更多设置 (#5). A property the primary card already reads is left out, and so
+    /// is any action of the card's own service: both are already reachable from the main controls.
+    /// An action with inputs has no generic editor here, so it stays on its dedicated card.
+    public static func controls(
+        for spec: MiotDeviceSpec,
+        did: String,
+        values: [MiotPropKey: JSONValue],
+        primaryServiceId: Int?,
+        excluding touched: Set<MiotPropKey> = []
+    ) -> [FacetControl] {
+        facets(for: spec).compactMap { facet in
+            if let propertyId = facet.propertyId,
+               touched.contains(MiotPropKey(did: did, siid: facet.serviceId, piid: propertyId)) {
+                return nil
+            }
+            if facet.actionId != nil, facet.serviceId == primaryServiceId { return nil }
+            if let arguments = facet.arguments, !arguments.isEmpty { return nil }
+            let value = facet.propertyId.flatMap { piid in
+                values[MiotPropKey(did: did, siid: facet.serviceId, piid: piid)]
+            }
+            var target: FacetTarget?
+            if facet.isWritable {
+                if let piid = facet.propertyId {
+                    target = .property(entityId: MiotAddress.make(did: did, siid: facet.serviceId), piid: piid)
+                } else if let aiid = facet.actionId {
+                    target = .action(entityId: MiotAddress.makeAction(did: did, siid: facet.serviceId, aiid: aiid))
+                }
+            }
+            return FacetControl(
+                id: facet.id,
+                kind: facet.kind,
+                name: facet.name,
+                title: facet.title,
+                serviceName: facet.serviceName,
+                unit: facet.unit,
+                scale: facet.scale,
+                value: value,
+                options: facet.options ?? [],
+                range: facet.range,
+                isWritable: facet.isWritable,
+                writesByDefault: facet.writesByDefault && !(facet.name == "mode" && [
+                    "curtain", "window-opener", "airer", "clothes-airer", "garage-door"
+                ].contains(facet.serviceName)),
+                isHighValue: facet.highValue,
+                target: target
+            )
+        }
+    }
+
     /// Matches one short name against a noise or display pattern. Only `*` is special.
     static func matches(_ value: String, anyOf patterns: [String]) -> Bool {
         patterns.contains { matches(value, pattern: $0) }

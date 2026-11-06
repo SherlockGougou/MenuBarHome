@@ -347,6 +347,15 @@ public actor HAWebSocketProvider: HomeProvider {
     // MARK: - Command Execution via REST Service Endpoint
 
     public func execute(_ command: DeviceCommand) async throws {
+        switch command {
+        case .setMiotProperty, .callMiotAction:
+            throw HomeProviderError.serviceCallFailed(
+                400,
+                L10n.tr("该控件需要米家云端连接", "This control needs the Xiaomi cloud backend")
+            )
+        default:
+            break
+        }
         guard allowsToken(baseURLString) else {
             throw HomeProviderError.networkError(HAPlaintextConsent.waitingMessage(baseURLString))
         }
@@ -607,6 +616,10 @@ public actor HAWebSocketProvider: HomeProvider {
             }
             let domain = eid.hasPrefix("script.") ? "script" : "scene"
             return (domain, "turn_on", ["entity_id": eid])
+
+        case .setMiotProperty(let eid, _, _), .callMiotAction(let eid):
+            // `execute` rejects these before reaching here; only the Xiaomi cloud understands MIoT.
+            return ("miot", "unsupported", ["entity_id": eid])
         }
     }
 

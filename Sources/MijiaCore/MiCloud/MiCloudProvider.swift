@@ -462,6 +462,7 @@ public actor MiCloudProvider: HomeProvider {
         for d in scoped where d.isOnline && (dids?.contains(d.miotDid) ?? true) {
             guard let spec = specsByModel[d.model] else { continue }
             keys.append(contentsOf: MiotSynthesizer.requiredProps(for: d, spec: spec))
+            keys.append(contentsOf: MiotSynthesizer.facetProps(for: d, spec: spec))
         }
         return keys
     }

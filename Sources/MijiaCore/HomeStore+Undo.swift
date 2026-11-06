@@ -22,6 +22,7 @@ extension HomeStore {
         optimisticLockUntil.removeAll()
         coverCommandOrigins.removeAll()
         lastCoverPositions.removeAll()
+        cancelFacetWrites(for: nil)
         // A different home is a different suggestion context even at the same ambient signature (Codex #116 review).
         lastProactiveRefreshSignature = nil
         for task in debounceTasks.values { task.cancel() }
@@ -370,6 +371,7 @@ extension HomeStore {
         self.undoBanner = nil
         let undoRevision = undoStateRevision
         let preUndoById = Dictionary(uniqueKeysWithValues: devices.map { ($0.id, $0) })
+        let preUndoFacetsById = deviceFacets
         let applicable = applyUndoCommands(banner.restoreCommands, previousDevices: banner.previousDevices)
         if applicable.isEmpty, !banner.restoreCommands.isEmpty {
             showToast(L10n.tr("设备状态已变化，无法撤销", "Device state changed; cannot undo"), isError: true)
@@ -409,7 +411,10 @@ extension HomeStore {
                 return
             }
 
-            rollbackFailedUndoDevices(failedDeviceIds, applicable: applicable, preUndoById: preUndoById)
+            rollbackFailedUndoDevices(
+                failedDeviceIds, applicable: applicable, preUndoById: preUndoById,
+                preUndoFacetsById: preUndoFacetsById
+            )
 
             var remainingReceipt: UserHabitMemory.RecordingReceipt?
             if let receipt = banner.habitReceipt {
@@ -458,6 +463,37 @@ extension HomeStore {
     ) -> [UndoApplicableCommand] {
         var applicable: [UndoApplicableCommand] = []
         for command in commands {
+            // A 更多设置 write has no card-state effect; undo restores the facet value it carries.
+            if case .setMiotProperty(let entityId, let piid, let value) = command {
+                let target = FacetTarget.property(entityId: entityId, piid: piid)
+                let facetOwner = devices.first { device in
+                    deviceFacets[device.id]?.contains { $0.target == target } == true
+                }
+                let did = MiotAddress.parse(entityId)?.did
+                let fallbackOwners = devices.filter { device in
+                    did.map { device.id == $0 || device.miotCommandDids.contains($0) } == true
+                }
+                guard let device = facetOwner ?? (fallbackOwners.count == 1 ? fallbackOwners.first : nil),
+                      device.isOnline else {
+                    continue
+                }
+                if var facets = deviceFacets[device.id],
+                   let index = facets.firstIndex(where: { $0.target == target }) {
+                    cancelFacetWrite(deviceId: device.id, controlId: facets[index].id)
+                    facets[index].value = value
+                    deviceFacets[device.id] = facets
+                }
+                let rev = lockOptimistic(device.id, duration: .seconds(3.0))
+                applicable.append(
+                    UndoApplicableCommand(
+                        command: command,
+                        deviceId: device.id,
+                        deviceName: device.name,
+                        lockRevision: rev
+                    )
+                )
+                continue
+            }
             if let idx = devices.indices.first(where: { Self.undoEffect(of: command, on: devices[$0]) != nil }),
                let restored = Self.undoEffect(of: command, on: devices[idx]) {
                 let name = devices[idx].name
@@ -497,7 +533,8 @@ extension HomeStore {
     func rollbackFailedUndoDevices(
         _ failedDeviceIds: Set<String>,
         applicable: [UndoApplicableCommand],
-        preUndoById: [String: SmartDevice]
+        preUndoById: [String: SmartDevice],
+        preUndoFacetsById: [String: [FacetControl]]
     ) {
         var expectedRevisions: [String: UInt64] = [:]
         for item in applicable {
@@ -511,6 +548,8 @@ extension HomeStore {
                 revision: expectedRevisions[failedId],
                 isShown: true
             )
+            guard ownsRow(write) else { continue }
+            deviceFacets[failedId] = preUndoFacetsById[failedId]
             revert(write)
         }
     }

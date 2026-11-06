@@ -166,7 +166,7 @@ public struct DeviceCardView: View {
                     .frame(maxHeight: isExpanded ? nil : .infinity)
             }
 
-            if isExpanded && device.hasDetailDrawer {
+            if isExpanded && store.hasDetailDrawer(for: device) {
                 Rectangle()
                     .fill(Color.primary.opacity(0.08))
                     .frame(height: 1)
@@ -319,7 +319,7 @@ public struct DeviceCardView: View {
                 }
             }
 
-            if device.hasDetailDrawer {
+            if store.hasDetailDrawer(for: device) {
                 Button {
                     withAnimation(AppleMotion.snappySpring) {
                         store.toggleExpanded(device.id)
@@ -385,7 +385,7 @@ public struct DeviceCardView: View {
                 HStack(alignment: .top) {
                     iconBadge
                     Spacer(minLength: 0)
-                    if device.hasDetailDrawer {
+                    if store.hasDetailDrawer(for: device) {
                         Button {
                             guard !isEditingLayout else { return }
                             withAnimation(AppleMotion.snappySpring) { store.toggleExpanded(device.id) }
@@ -469,7 +469,7 @@ public struct DeviceCardView: View {
                         }
                         store.openCameraLiveView(device.id)
                         if device.isOnline, device.kind.canTogglePower { SoundFeedback.playSuccess() }
-                    } else if device.hasDetailDrawer {
+                    } else if store.hasDetailDrawer(for: device) {
                         store.toggleExpanded(device.id)
                     } else if device.kind.canTogglePower {
                         _ = store.togglePrimary(device)
@@ -495,7 +495,7 @@ public struct DeviceCardView: View {
 
                     if let quickIndex, shouldShowQuickBadge {
                         quickIndexPill(quickIndex)
-                    } else if device.hasDetailDrawer {
+                    } else if store.hasDetailDrawer(for: device) {
                         Image(systemName: "chevron.right")
                             .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                             .foregroundStyle(statusColor)
@@ -504,10 +504,10 @@ public struct DeviceCardView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(Text(device.hasDetailDrawer
+            .accessibilityLabel(Text(store.hasDetailDrawer(for: device)
                 ? L10n.tr("\(device.name)，详细控制", "\(device.name), controls")
                 : accessibilitySummary))
-            .panelHelp(device.hasDetailDrawer ? L10n.tr("点击展开详细控制", "Click to expand controls") : device.name)
+            .panelHelp(store.hasDetailDrawer(for: device) ? L10n.tr("点击展开详细控制", "Click to expand controls") : device.name)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 8.5)
@@ -527,7 +527,7 @@ public struct DeviceCardView: View {
                         store.openCameraLiveView(device.id)
                     } else if device.kind.canTogglePower {
                         _ = store.togglePrimary(device)
-                    } else if device.hasDetailDrawer {
+                    } else if store.hasDetailDrawer(for: device) {
                         store.toggleExpanded(device.id)
                     }
                 }
@@ -621,7 +621,7 @@ public struct DeviceCardView: View {
                     .panelHelp(isFavorite ? L10n.tr("从常用中移除", "Remove from Favorites") : L10n.tr("加入常用", "Add to Favorites"))
                 }
 
-                if device.hasDetailDrawer {
+                if store.hasDetailDrawer(for: device) {
                     Button {
                         guard !isEditingLayout else { return }
                         withAnimation(AppleMotion.snappySpring) {
@@ -692,6 +692,19 @@ public struct DeviceCardView: View {
 
     @ViewBuilder
     private var detailDrawer: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            detailControls
+            DeviceFacetSection(
+                device: device,
+                store: store,
+                accent: accent,
+                statusColor: statusColor
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var detailControls: some View {
         switch device.kind {
         case .light(let spec):
             lightDrawer(spec)
