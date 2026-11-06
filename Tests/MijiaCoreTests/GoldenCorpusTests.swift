@@ -668,7 +668,7 @@ struct GoldenCorpusTests {
         let decisionHeadCriteriaKeys: [String: [String]]
     }
 
-    private static func locateGoldenFixture(_ relativePath: String = "Tests/Fixtures/intent_golden.json") throws -> URL {
+    static func locateGoldenFixture(_ relativePath: String = "Tests/Fixtures/intent_golden.json") throws -> URL {
         var dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         for _ in 0..<8 {
             let candidate = dir.appendingPathComponent(relativePath)

@@ -1006,15 +1006,14 @@ public struct DeviceCardView: View {
         return "—"
     }
 
+    /// Colour for the grade core derives; an unrecognised raw grade stays neutral.
     private func airQualityColor(pm25: Int?, raw: String?) -> Color {
-        let lower = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if lower == "excellent" || lower == "good" || (pm25 != nil && pm25! <= 75) {
-            return DesignTokens.Purifier.good
+        switch AirQualityLevel(raw: raw, pm25: pm25)?.tone {
+        case .good: return DesignTokens.Purifier.good
+        case .moderate: return DesignTokens.Purifier.moderate
+        case .poor: return DesignTokens.Purifier.poor
+        case nil: return .secondary
         }
-        if lower == "moderate" || (pm25 != nil && pm25! <= 115) {
-            return DesignTokens.Purifier.moderate
-        }
-        return DesignTokens.Purifier.poor
     }
 
     // MARK: - 4. Smart Plug (Coffee Machine) Controls

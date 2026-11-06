@@ -89,6 +89,7 @@ import {
   deviceStatusSummary,
   type CoverSpec,
   type SmartDevice,
+  airQualityLevel,
 } from "../src/core/models.js";
 import { applyCommand } from "../src/ui/commandDispatch.js";
 import { executeSingleCommand } from "../src/ui/intentExecution.js";
@@ -4566,5 +4567,15 @@ describe("Windows curtain control (#279)", () => {
       mention: { kind: "none" },
     });
     assert.equal(context.activeDevicesSummary, "全屋设备均关闭");
+  });
+});
+
+describe("Air-quality grade (shared golden)", () => {
+  it("matches Tests/Fixtures/air_quality_golden.json used by both apps", () => {
+    const raw = readFileSync(resolve(process.cwd(), "../Tests/Fixtures/air_quality_golden.json"), "utf8");
+    const golden = JSON.parse(raw) as { cases: Array<{ raw: string | null; pm25: number | null; level: string | null }> };
+    for (const item of golden.cases) {
+      assert.equal(airQualityLevel(item.raw, item.pm25), item.level, `raw ${item.raw} pm25 ${item.pm25}`);
+    }
   });
 });
