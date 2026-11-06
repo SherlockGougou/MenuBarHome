@@ -391,14 +391,8 @@ public actor DualSourceHomeProvider: HomeProvider {
         tasks.removeAll()
         continuation?.finish()
         continuation = nil
-        if let ha = homeAssistant as? HAWebSocketProvider {
-            Task { await ha.shutdown() }
-        }
-        if let mi = xiaomiCloud as? MiAccountsProvider {
-            Task { await mi.shutdown() }
-        } else if let mi = xiaomiCloud as? MiCloudProvider {
-            Task { await mi.shutdown() }
-        }
+        if let homeAssistant { Task { await homeAssistant.shutdown() } }
+        if let xiaomiCloud { Task { await xiaomiCloud.shutdown() } }
     }
 }
 

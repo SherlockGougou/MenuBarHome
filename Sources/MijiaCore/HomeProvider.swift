@@ -90,6 +90,9 @@ public protocol HomeProvider: Sendable {
     /// Releases any active live stream session (such as a single-session P2P bridge) for a camera device.
     func stopCameraStream(for device: SmartDevice) async
     func readBack(deviceId: String) async -> ControlReadBack
+    /// Stops sockets and polling and finishes the event stream. The store calls it on the provider
+    /// it is replacing; a provider is not used again afterwards.
+    func shutdown() async
 }
 
 extension HomeProvider {
@@ -105,6 +108,8 @@ extension HomeProvider {
         try await resolveCameraStream(for: device)
     }
     public func stopCameraStream(for device: SmartDevice) async {}
+    /// Providers with nothing running in the background have nothing to stop.
+    public func shutdown() async {}
 }
 
 // MARK: - Live Home Assistant WebSocket + REST Provider
