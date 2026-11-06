@@ -147,6 +147,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
     python3 scripts/check_design_tokens.py
     python3 scripts/test_check_capability_matrix.py
+    python3 scripts/test_mijia_cli.py
     python3 scripts/check_capability_matrix.py
     # Swift 与 Windows 测试都断言合成结果等于这份基线，所以这里直接读基线出报告（#295）。
     python3 scripts/miot_coverage_report.py
@@ -245,16 +246,21 @@ else
     swift test || swift_status=$?
 fi
 
-echo "🧪 [4/4] 运行 Windows 前端测试与类型检查..."
+echo "🧪 [4/4] 运行 Windows 前端测试与 Raycast 扩展类型检查..."
 windows_status=0
 if [ -x "windows/node_modules/.bin/tsc" ]; then
     (cd windows && npm test && npm run typecheck) || windows_status=$?
 else
     echo "⏭️  跳过 Windows 门槛：未找到 windows/node_modules（先 cd windows && npm ci）"
 fi
+if [ -x "raycast/node_modules/.bin/tsc" ]; then
+    (cd raycast && npm test && npm run typecheck) || windows_status=$?
+else
+    echo "⏭️  跳过 Raycast 门槛：未找到 raycast/node_modules（先 cd raycast && npm ci）"
+fi
 
 if [ "$swift_status" -ne 0 ] || [ "$windows_status" -ne 0 ]; then
-    echo "❌ 门禁未通过：swift=$swift_status windows=$windows_status" >&2
+    echo "❌ 门禁未通过：swift=$swift_status windows/raycast=$windows_status" >&2
     exit 1
 fi
 

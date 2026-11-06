@@ -399,7 +399,8 @@ public enum IntentReply {
         }
     }
 
-    static func formatTemperature(_ t: Double) -> String {
+    /// Formats 26 → "26" and 25.5 → "25.5"; URL-command replies and assistant text share one style.
+    public static func formatTemperature(_ t: Double) -> String {
         t.rounded() == t ? String(Int(t)) : String(format: "%.1f", t)
     }
 }

@@ -18,6 +18,18 @@ final class URLCommandHandler {
         case scene(HomeScene)
         case builtInScene(BuiltInURLScene)
         case ask(String)
+        case power(SmartDevice, Bool)
+        case brightness(SmartDevice, Int)
+        case colorTemp(SmartDevice, Int)
+        case temperature(SmartDevice, Double)
+        case fan(SmartDevice, Int?, String?)
+        case focus(SmartDevice)
+
+        /// Navigation-only commands run without the external-link confirmation sheet.
+        var controlsDevice: Bool {
+            if case .focus = self { return false }
+            return true
+        }
     }
 
     private var pendingURLs: [URL] = []
@@ -95,11 +107,12 @@ final class URLCommandHandler {
             expectedToken: store.raycastBridgeToken
         )
 
-        if URLDirectControl.requiresConfirmation(
-            in: store.userDefaults,
-            providedToken: envelope.token,
-            expectedToken: store.raycastBridgeToken
-        ) {
+        if resolved.controlsDevice,
+           URLDirectControl.requiresConfirmation(
+               in: store.userDefaults,
+               providedToken: envelope.token,
+               expectedToken: store.raycastBridgeToken
+           ) {
             let prompt = description(for: resolved)
             let approved = confirmationHandler?(prompt) ?? confirm(prompt)
             guard approved else {
@@ -114,8 +127,9 @@ final class URLCommandHandler {
         }
 
         // Keep Raycast/Tinycast keyboard focus when invoked with a valid local bridgeToken;
-        // only open the menu-bar window upfront for untrusted external links.
-        if !isTrustedBridge {
+        // only open the menu-bar window upfront for untrusted external links. `focus` opens it
+        // itself after it has moved the panel to the device.
+        if !isTrustedBridge, resolved.controlsDevice {
             openMenuBarWindowIfNeeded()
         }
         await execute(resolved, envelope: envelope, isTrustedBridge: isTrustedBridge, store: store)
@@ -155,7 +169,31 @@ final class URLCommandHandler {
             return nil
         case .ask(let text):
             return .ask(text)
+        case .power(let deviceId, let isOn):
+            guard let device = Self.device(deviceId, in: store) else { return nil }
+            return .power(device, isOn)
+        case .brightness(let deviceId, let percent):
+            guard let device = Self.device(deviceId, in: store) else { return nil }
+            return .brightness(device, percent)
+        case .colorTemp(let deviceId, let kelvin):
+            guard let device = Self.device(deviceId, in: store) else { return nil }
+            return .colorTemp(device, kelvin)
+        case .temperature(let deviceId, let celsius):
+            guard let device = Self.device(deviceId, in: store) else { return nil }
+            return .temperature(device, celsius)
+        case .fan(let deviceId, let percent, let preset):
+            guard let device = Self.device(deviceId, in: store) else { return nil }
+            return .fan(device, percent, preset)
+        case .focus(let deviceId):
+            guard let device = Self.device(deviceId, in: store) else { return nil }
+            return .focus(device)
         }
+    }
+
+    /// Parameterized commands address a device by its snapshot id only: a slider must never land on
+    /// a different device whose name happens to match.
+    private static func device(_ deviceId: String, in store: HomeStore) -> SmartDevice? {
+        store.devices.first(where: { $0.id == deviceId })
     }
 
     private func description(for resolved: Resolved) -> String {
@@ -183,6 +221,40 @@ final class URLCommandHandler {
             return L10n.format("执行快捷动作「%@」", "Run quick action \"%@\"", builtIn.displayTitle)
         case .ask(let text):
             return L10n.format("执行指令：「%@」", "Run command: \"%@\"", text)
+        case .power(let device, let isOn):
+            let room = L10n.displayRoomName(device.roomName)
+            let verb = isOn ? L10n.tr("打开", "Turn on") : L10n.tr("关闭", "Turn off")
+            return L10n.format("%@「%@」（%@）", "%@ \"%@\" (%@)", verb, device.name, room)
+        case .brightness(let device, let percent):
+            let room = L10n.displayRoomName(device.roomName)
+            if percent == 0 {
+                return L10n.format("关闭「%@」（%@）", "Turn off \"%@\" (%@)", device.name, room)
+            }
+            return L10n.tr(
+                "把\(device.name)亮度调到 \(percent)%（\(room)）",
+                "Set \(device.name) brightness to \(percent)% (\(room))"
+            )
+        case .colorTemp(let device, let kelvin):
+            return L10n.tr(
+                "把\(device.name)色温调到 \(kelvin)K",
+                "Set \(device.name) colour temperature to \(kelvin)K"
+            )
+        case .temperature(let device, let celsius):
+            let text = IntentReply.formatTemperature(celsius)
+            return L10n.tr("把\(device.name)温度调到 \(text)°C", "Set \(device.name) to \(text) °C")
+        case .fan(let device, let percent, let preset):
+            if let percent {
+                return L10n.tr(
+                    "把\(device.name)风速调到 \(percent)%",
+                    "Set \(device.name) fan speed to \(percent)%"
+                )
+            }
+            return L10n.tr(
+                "把\(device.name)风速切换到「\(preset ?? "")」",
+                "Set \(device.name) fan mode to \"\(preset ?? "")\""
+            )
+        case .focus(let device):
+            return L10n.format("打开「%@」详情", "Open \"%@\" details", device.name)
         }
     }
 
@@ -353,6 +425,25 @@ final class URLCommandHandler {
                     )
                 }
             }
+        case .power(let device, let isOn):
+            let outcome = await store.executeRaycastPower(deviceId: device.id, isOn: isOn)
+            finish(outcome.message, isError: outcome.isError, envelope: envelope, store: store)
+        case .brightness(let device, let percent):
+            let outcome = await store.executeRaycastBrightness(deviceId: device.id, percent: percent)
+            finish(outcome.message, isError: outcome.isError, envelope: envelope, store: store)
+        case .colorTemp(let device, let kelvin):
+            let outcome = await store.executeRaycastColorTemp(deviceId: device.id, kelvin: kelvin)
+            finish(outcome.message, isError: outcome.isError, envelope: envelope, store: store)
+        case .temperature(let device, let celsius):
+            let outcome = await store.executeRaycastTemperature(deviceId: device.id, celsius: celsius)
+            finish(outcome.message, isError: outcome.isError, envelope: envelope, store: store)
+        case .fan(let device, let percent, let preset):
+            let outcome = await store.executeRaycastFan(deviceId: device.id, percent: percent, preset: preset)
+            finish(outcome.message, isError: outcome.isError, envelope: envelope, store: store)
+        case .focus(let device):
+            let outcome = store.focusRaycastDevice(deviceId: device.id)
+            finish(outcome.message, isError: outcome.isError, envelope: envelope, store: store)
+            if !outcome.isError { openMenuBarWindowIfNeeded() }
         }
     }
 
@@ -361,6 +452,15 @@ final class URLCommandHandler {
         case .toggle(let deviceId): return "toggle:\(deviceId)"
         case .scene(let name): return "scene:\(name)"
         case .ask(let text): return "ask:\(text)"
+        case .power(let deviceId, let isOn): return "power:\(deviceId):\(isOn ? "on" : "off")"
+        case .brightness(let deviceId, let percent): return "brightness:\(deviceId):\(percent)"
+        case .colorTemp(let deviceId, let kelvin): return "color-temp:\(deviceId):\(kelvin)"
+        case .temperature(let deviceId, let celsius):
+            return "temperature:\(deviceId):\(IntentReply.formatTemperature(celsius))"
+        case .fan(let deviceId, let percent, let preset):
+            if let percent { return "fan:\(deviceId):\(percent)" }
+            return "fan:\(deviceId):\(preset ?? "")"
+        case .focus(let deviceId): return "focus:\(deviceId)"
         }
     }
 

@@ -47,6 +47,7 @@
 - **控制中心面板拆开（[#184](https://github.com/jryang1997/MenuBarMijia/issues/184)）**：面板主文件拆成布局拖拽和顶栏底栏两份，回到 1500 行以下。房间、分组、拖拽和底栏的行为不变。issue 里点名的 Windows 文件此前已经拆完。
 
 ### 自动化
+- **Raycast 扩展与本地 CLI（[#20](https://gitlab.com/jryang1997/MenuBarMijia/-/work_items/20)）**：设置 → 自动化与外部控制新增「Raycast 集成」的配套客户端。`raycast/` 是标准 Raycast 扩展（搜索设备并开关、调亮度 / 色温 / 目标温度 / 风速、搜索并执行场景与快捷动作、一句话指令、打开设备详情），`scripts/mijia` 把同一套能力搬进终端（`list` / `status` / `toggle` / `on` / `off` / `scene` / `ask`）。两者都只读应用写出的 `raycast-snapshot.json`（`0600`）并用 `menumijia://` 链接回传执行，不持有米家或 Home Assistant 凭据；高风险设备仍需二次确认，锁屏拦截照旧，命令结果写回 `lastCommandFeedback` 后由客户端显示。新增按值控制的链接 `power` / `brightness` / `color-temp` / `temperature` / `fan` 与只做导航的 `focus`，滑条按目标值下发，不再靠当前状态推测；关灯用 `power` 而不是 0% 亮度，避免 Home Assistant 把 0 夹到 1% 后反而开灯。
 - **更多 Mac 上下文触发（[#174](https://github.com/jryang1997/MenuBarMijia/issues/174)）**：自动化规则新增摄像头 / 麦克风开始与停止使用、接通 / 断开电源、电量低于阈值、Wi-Fi 连接 / 离开（可指定 SSID）、深夜使用电脑（以 Mac 唤醒且未锁屏为准）、专注模式开关与日历会议开始前触发。全部默认关闭，需在「自动化与外部控制」中逐条添加；沿用既有的确认、乐观更新、失败回滚与 5 分钟撤销横幅。深夜规则每晚最多执行一次；日历规则按事件去重并忽略全天 / 已拒绝的事件。摄像头 / 麦克风通过 CoreMediaIO / CoreAudio 的 `IsRunningSomewhere` 读取，无需额外权限；Wi-Fi 名称需要「定位」权限，专注状态需要「专注状态」权限，日历需要完整日历访问权限，未授权时对应规则保持静默。公开 API 只提供「是否处于专注」而不提供具体专注模式名称，因此专注触发是开关而非按模式区分；摄像头 / 麦克风检测也会看到本应用自己的录音 / 录像。
 
 ### 安全

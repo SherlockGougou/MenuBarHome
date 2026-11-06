@@ -310,6 +310,15 @@ func writeWindowsIcons(master: CGImage, cache: [Int: Data]) throws {
     try ico.write(to: winIconsDir.appendingPathComponent("icon.ico"))
 }
 
+/// Raycast extensions need a 512×512 PNG; it renders from the same master as the Windows icon so
+/// the store listing and the app can never drift apart.
+func writeRaycastIcon(cache: [Int: Data]) throws {
+    let assetsDir = rootURL.appendingPathComponent("raycast/assets", isDirectory: true)
+    guard FileManager.default.fileExists(atPath: rootURL.appendingPathComponent("raycast").path) else { return }
+    try FileManager.default.createDirectory(at: assetsDir, withIntermediateDirectories: true)
+    try cache[512]!.write(to: assetsDir.appendingPathComponent("icon.png"))
+}
+
 let squirclePath = try parseSquircleCGPath(from: darkSVGURL)
 let darkMaster = try renderMasterIcon(svgURL: darkSVGURL, squirclePath: squirclePath, isLight: false)
 let lightMaster = try renderMasterIcon(svgURL: lightSVGURL, squirclePath: squirclePath, isLight: true)
@@ -329,6 +338,7 @@ try FileManager.default.copyItem(at: darkICNSURL, to: defaultICNSURL)
 
 try buildAssetsCar(lightCache: lightCache, darkCache: darkCache, outputCarURL: assetsCarURL)
 try writeWindowsIcons(master: darkMaster, cache: darkCache)
+try writeRaycastIcon(cache: darkCache)
 
 let docsAssetsDir = rootURL.appendingPathComponent("docs/assets", isDirectory: true)
 let logoDarkURL = docsAssetsDir.appendingPathComponent("logo-dark.svg")
@@ -347,4 +357,4 @@ for svg in [darkSVGURL, lightSVGURL, appIconAdaptiveURL, logoDarkURL, logoLightU
     try run("/usr/bin/xmllint", ["--noout", svg.path])
 }
 
-print("Generated AppIcon.icns, AppIcon-Dark.icns, AppIcon-Light.icns, Assets.car, synced SVG logos, and Windows icons.")
+print("Generated AppIcon.icns, AppIcon-Dark.icns, AppIcon-Light.icns, Assets.car, synced SVG logos, Windows icons, and the Raycast icon.")

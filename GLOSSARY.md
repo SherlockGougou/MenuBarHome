@@ -22,6 +22,14 @@ _Avoid_: Data mapping（数据映射）、Parsing（解析）
 驱动 `HomeStore` 的底层数据源配置，支持局域网 `Home Assistant`（`HAWebSocketProvider`）与免网关的 `米家云端直连`（`MiCloudProvider`）；当 macOS 客户端同时配置并登录两端时自动并行连接并合并设备，仅配置一端时单源运行，演示模式由 `DemoHomeProvider` 提供。Windows 采用互斥数据源选择，HA 通过原生 `ha_snapshot`、`ha_execute` 与 `HomeAssistantClient` 接入，不进行双源合并。
 _Avoid_: Server type（服务器类型）、Mode（模式）
 
+**RaycastSnapshot（伴生快照）**：
+启用「Raycast 集成」后由 `MenuBarMijia` 写到 `~/Library/Application Support/MenuBarMijia/raycast-snapshot.json`（`0600`）的只读设备、场景、快捷动作、环境读数与 `lastCommandFeedback`，供 `raycast/` 扩展和 `scripts/mijia` 搜索与展示，伴生端因此不需要接触米家或 Home Assistant 凭据。字段随 `RaycastSnapshot.currentSchemaVersion` 演进，改名即破坏契约。
+_Avoid_: 缓存文件、数据库
+
+**BridgeToken（伴生令牌）**：
+本机生成、随伴生快照一起写出的随机令牌。`menumijia://` 链接带上它就跳过外部链接确认，比较为常量时间；关闭「Raycast 集成」即作废，再次开启重新签发。它只证明请求来自本机已授权的伴生端，不改变高风险操作仍需二次确认与锁屏拦截的规则。
+_Avoid_: API Key、密码
+
 **LocalNetworkEndpoint（局域网端点）**：
 流量不离开本机或家庭网络的服务地址：回环地址、私有网段、Tailscale 网段、`.local`/`.lan`/`.home.arpa`/`.internal` 后缀，以及不带点的单段主机名（两个字母或 `xn--` 开头的国家顶级域除外，它们可能自己解析到公网）。凭据（HA token、AI key）只发往 https 地址或局域网端点；Home Assistant 的其余明文 http 地址须由用户逐个同意明文传输后才能使用。
 _Avoid_: Intranet（内网）、Trusted host（可信主机）

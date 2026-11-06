@@ -122,6 +122,7 @@ The macOS version is built natively in Swift 6, while the Windows 11 client is a
 | **Mac Event Automation** | ✅ Supported | — Not yet | Triggers on lock, sleep, wake, external displays, camera/microphone use, power/battery, Wi-Fi, Focus, Calendar, and late-night use (all Mac-only signals off by default) |
 | **Apple Shortcuts (App Intents)** | ✅ Supported (4 actions) | — Not yet | Toggle Device, Run Scene, Voice Command, Query Room Climate |
 | **URL Scheme Control** | ✅ Supported | — Not yet | `menumijia://toggle` calls require confirmation by default; direct control can be enabled in settings |
+| **Raycast Extension & Local CLI** | ✅ Supported | — Not yet | `raycast/` and `scripts/mijia` read the 0600 `raycast-snapshot.json` (Settings → 自动化与外部控制 → Raycast 集成) and control devices, scenes and quick actions through `menumijia://` links, so neither holds credentials; high-risk confirmation and the lock-screen block still run in the app |
 | **Sensor Trend Line Charts** | ✅ 24h / 7d trends | ⚠️ Real-time value only | macOS charts temperature or humidity over selectable periods; Windows shows current readings |
 | **Smart Plug Energy Logs** | ✅ Supported | — No history yet | macOS counts changes in cumulative hardware readings; missing data is not estimated |
 | **Mi Air Purifiers, Air Fresheners & Humidifiers** | ✅ Supported | ✅ Supported | Both platforms synthesize `air-purifier`, `air-fresh`, and `humidifier` specs: PM2.5, air quality, temp/humidity, filter life, and a 1–100% fan slider driving the favorite level |
@@ -208,6 +209,31 @@ These phrases are parsed locally **without any AI API key** or cloud model token
 - **Climate & Fan:** "set ac to 24 degrees", "warmer", "fan natural wind"
 - **Timers:** "in 10 minutes turn off study light", "cancel timer"
 - **Undo:** "undo", "revert" (active for 10 minutes after any batch execution)
+
+---
+
+## Raycast Extension & Local CLI
+
+MenuBarMijia can hand its device list to a companion without sharing any credential. Turn on **Settings → 自动化与外部控制 → Raycast 集成**: the app writes `~/Library/Application Support/MenuBarMijia/raycast-snapshot.json` (mode `0600`) with your devices, scenes, quick actions, environment readings, the last command result, and a random local bridge token. Links that carry the token skip the external-link confirmation sheet; high-risk devices still ask, and the lock-screen block still applies. Turning the integration off deletes the file and revokes the token. The contract and the trade-offs behind it are in [ADR-0013](docs/adr/0013-raycast-companion-contract.md).
+
+### Local CLI
+
+`scripts/mijia` is a dependency-free Python 3 script. Keep MenuBarMijia running while you use it.
+
+| Command | What it does |
+| :--- | :--- |
+| `scripts/mijia list [--room 书房] [--json]` | Visible devices grouped by room, with online state and readings |
+| `scripts/mijia status [--json]` | Connection, device counts, environment readings, and the last command's result |
+| `scripts/mijia toggle 书房台灯` | Flip the primary switch by name, id, or pinyin initials (`sftd`) |
+| `scripts/mijia on 客厅射灯` / `scripts/mijia off 客厅射灯` | Set an exact power state instead of flipping |
+| `scripts/mijia scene 观影模式` | Run a Home Assistant scene or a built-in quick action (全屋关灯, 一键全关, 撤销…) |
+| `scripts/mijia ask "把客厅灯调到 40%"` | One natural-language command, with the app's own parsing and confirmation |
+
+Exit codes: `0` success, `1` the app reported a failure, `2` local error (snapshot missing, unknown device, integration off), `3` no result in time. `--dry-run` prints the link with the token masked, `--no-wait` sends it without waiting, and `MENUBARMIJIA_SNAPSHOT_PATH` overrides the snapshot path.
+
+### Raycast
+
+`raycast/` is a standard Raycast extension with three commands: **Search Devices**, **Scenes & Quick Actions**, and **Ask MenuBarMijia**. Import it with Raycast → Extensions → `+` → **Import Extension**, or run `cd raycast && npm ci && npm run dev` while Raycast is open. Power, brightness, colour temperature, thermostat target and fan speed are sent as exact values (`menumijia://power`, `brightness`, `color-temp`, `temperature`, `fan`), so a slider never flips a device by guessing its state; each command shows a toast with the app's result.
 
 ---
 
