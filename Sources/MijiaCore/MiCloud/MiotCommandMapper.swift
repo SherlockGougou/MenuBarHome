@@ -33,6 +33,32 @@ public enum MiotCommandMapper {
         if MiotSynthesizer.isMainsBreaker(spec) {
             throw MiotCommandError.unsupported("electronic-valve")
         }
+        if case .setMiotProperty(let entityId, let piid, let value) = command {
+            guard let address = MiotAddress.parse(entityId) else {
+                throw MiotCommandError.invalidAddress(entityId)
+            }
+            guard let service = spec.service(iid: address.siid),
+                  let property = service.properties.first(where: { $0.iid == piid }),
+                  property.isWritable else {
+                throw MiotCommandError.unsupported("property \(piid)")
+            }
+            let ctx = Context(did: address.did, spec: spec, service: service)
+            return .setProps([MiotPropWrite(
+                did: address.did,
+                siid: address.siid,
+                piid: piid,
+                value: ctx.coerce(value, for: property)
+            )])
+        }
+        if case .callMiotAction(let entityId) = command {
+            guard let address = MiotAddress.parseAction(entityId),
+                  let service = spec.service(iid: address.siid),
+                  let action = service.actions.first(where: { $0.iid == address.aiid }),
+                  action.inputProperties.isEmpty else {
+                throw MiotCommandError.unsupported("action")
+            }
+            return .action(MiotActionCall(did: address.did, siid: address.siid, aiid: address.aiid))
+        }
         let entityId = command.targetEntityId
         if let address = MiotAddress.parseAction(entityId) {
             guard let service = spec.service(iid: address.siid),
@@ -178,7 +204,8 @@ public enum MiotCommandMapper {
             return .setProps([try ctx.write("target-temperature", .number(value))])
 
         case .setClimateSwingMode, .mediaSelectSource,
-             .pressButton, .sendNotifyMessage, .activateScene:
+             .pressButton, .sendNotifyMessage, .activateScene,
+             .setMiotProperty, .callMiotAction:
             throw MiotCommandError.unsupported(String(describing: command).components(separatedBy: "(").first ?? "")
         }
     }
@@ -336,7 +363,8 @@ extension DeviceCommand {
              .setFanPower(let id, _), .setFanPercentage(let id, _), .setFanPresetMode(let id, _), .setFanOscillating(let id, _),
              .setSwitch(let id, _), .setSelectOption(let id, _), .setNumberValue(let id, _),
              .vacuumAction(let id, _), .mediaSetVolume(let id, _), .mediaSelectSource(let id, _),
-             .pressButton(let id), .sendNotifyMessage(let id, _), .activateScene(let id):
+             .pressButton(let id), .sendNotifyMessage(let id, _), .activateScene(let id),
+             .setMiotProperty(let id, _, _), .callMiotAction(let id):
             return id
         }
     }

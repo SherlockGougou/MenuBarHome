@@ -309,6 +309,12 @@ public enum DeviceDeduplicator {
         home.deviceBackends = deviceBackends
         home.pairedDeviceIDs = pairedDeviceIDs
         let mergedIDs = Set(mergedDevices.map(\.id))
+        // Facets arrive keyed by Mi source dids; a paired card may be drawn under the HA id.
+        home.deviceFacets = (xiaomiCloud?.deviceFacets ?? [:]).reduce(into: [:]) { facets, entry in
+            let cardID = miCanonicalIDs[entry.key] ?? entry.key
+            guard mergedIDs.contains(cardID) else { return }
+            facets[cardID] = entry.value
+        }
         // Ownership arrives keyed by Mi source dids. A member or group paired with an HA card is
         // shown under the canonical id, so translate both endpoints before keeping the pair (#189).
         home.lightGroupOwners = (xiaomiCloud?.lightGroupOwners ?? [:]).reduce(into: [:]) { owners, entry in

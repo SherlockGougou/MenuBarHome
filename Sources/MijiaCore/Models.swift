@@ -1222,6 +1222,10 @@ public enum DeviceCommand: Equatable, Sendable {
     case pressButton(entityId: String)
     case sendNotifyMessage(entityId: String, message: String)
     case activateScene(entityId: String)
+    /// Generic write from a 更多设置 facet (#5): the entity carries `did` and `siid`.
+    case setMiotProperty(entityId: String, piid: Int, value: JSONValue)
+    /// Generic no-argument action from a 更多设置 button.
+    case callMiotAction(entityId: String)
 }
 
 public enum VacuumAction: String, Equatable, Sendable {

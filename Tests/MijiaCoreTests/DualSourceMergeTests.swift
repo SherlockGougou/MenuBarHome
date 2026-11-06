@@ -229,6 +229,50 @@ struct DualSourceMergeTests {
         #expect(result.canonical.canonicalID(forKeys: ["pair:ha-living-light|123456789"]) == "ha-living-light")
     }
 
+    @Test("Facets follow a paired Mi card to its canonical Home Assistant id")
+    func facetsFollowCanonicalID() throws {
+        let haLight = makeLight(id: "ha-living-light", name: "客厅灯", roomId: "living_room", roomName: "客厅")
+        let miLight = makeLight(
+            id: "123456789",
+            name: "书房灯",
+            roomId: "mi_room_2",
+            roomName: "书房",
+            model: "xiaomi.light"
+        )
+        let haIdentity = makeIdentity(
+            dids: DeviceIdentityNormalizer.didCandidates(from: ["xiaomi_home_123456789"]),
+            uniqueIds: ["xiaomi_home_123456789"],
+            model: haLight.model,
+            name: haLight.name,
+            roomName: haLight.roomName,
+            kind: .light
+        )
+        let miIdentity = makeIdentity(
+            dids: ["123456789"],
+            model: miLight.model,
+            name: miLight.name,
+            roomName: miLight.roomName,
+            kind: .light
+        )
+        var miHome = makeHome(devices: [miLight], identities: [miLight.id: miIdentity])
+        miHome.deviceFacets = [miLight.id: [
+            FacetControl(
+                id: "3.1", kind: .toggle, name: "on", title: "开关",
+                serviceName: "fresh-air", value: .bool(true),
+                isWritable: true, writesByDefault: false, isHighValue: false
+            ),
+        ]]
+
+        let result = DeviceDeduplicator.merge(
+            homeAssistant: makeHome(devices: [haLight], identities: [haLight.id: haIdentity]),
+            xiaomiCloud: miHome
+        )
+
+        #expect(result.home.devices.first?.id == "ha-living-light")
+        #expect(result.home.deviceFacets["ha-living-light"]?.map(\.id) == ["3.1"])
+        #expect(result.home.deviceFacets["123456789"] == nil)
+    }
+
     @Test("Light-group ownership follows canonical ids when both endpoints pair with HA")
     func lightGroupOwnersFollowCanonicalIDs() throws {
         let haGroup = makeLight(id: "ha-living-group", name: "客厅灯组", roomId: "living_room", roomName: "客厅")

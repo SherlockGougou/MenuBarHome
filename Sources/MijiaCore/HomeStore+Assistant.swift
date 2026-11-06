@@ -490,6 +490,7 @@ extension HomeStore {
         undoBanner = nil
         let undoRevision = undoStateRevision
         let preUndoById = Dictionary(uniqueKeysWithValues: devices.map { ($0.id, $0) })
+        let preUndoFacetsById = deviceFacets
         let applicable = applyUndoCommands(last.restore, previousDevices: last.previous)
         if applicable.isEmpty, !last.restore.isEmpty {
             setAssistantState(.failed(L10n.tr("设备状态已变化，无法撤销", "Device state changed; cannot undo")))
@@ -517,7 +518,10 @@ extension HomeStore {
         }
         guard context == controlContextID else { return }
         if !failedCommands.isEmpty {
-            rollbackFailedUndoDevices(failedDeviceIds, applicable: applicable, preUndoById: preUndoById)
+            rollbackFailedUndoDevices(
+                failedDeviceIds, applicable: applicable, preUndoById: preUndoById,
+                preUndoFacetsById: preUndoFacetsById
+            )
             var remainingReceipt: UserHabitMemory.RecordingReceipt?
             if let receipt = last.habitReceipt {
                 let (succeededPart, remainingPart) = Self.partitionHabitReceipt(receipt, failedDeviceIds: failedDeviceIds)

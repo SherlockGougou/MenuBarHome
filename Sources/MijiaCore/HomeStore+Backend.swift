@@ -297,6 +297,7 @@ extension HomeStore {
                 let backendChanged = previousBackends[incoming.id] != nil
                     && previousBackends[incoming.id] != snapshot.deviceBackends[incoming.id]
                 if backendChanged {
+                    cancelFacetWrites(for: incoming.id)
                     optimisticLockUntil.removeValue(forKey: incoming.id)
                     coverCommandOrigins.removeValue(forKey: incoming.id)
                     lastCoverPositions.removeValue(forKey: incoming.id)
@@ -338,6 +339,20 @@ extension HomeStore {
                     merged.insert(lgDev, at: 0)
                 }
             }
+            // 更多设置 rows follow the same optimistic lock as the card: a write in flight keeps
+            // the local value until the read-back snapshot can confirm it (#5).
+            var nextFacets: [String: [FacetControl]] = [:]
+            for device in snapshot.devices {
+                let locked = optimisticLockUntil[device.id].map { now < $0 } ?? false
+                if locked, !waitingDeviceIds.contains(device.id),
+                   !readBackTickets.isInFlight(device.id) {
+                    if let local = deviceFacets[device.id] { nextFacets[device.id] = local }
+                } else if let incoming = snapshot.deviceFacets[device.id] {
+                    nextFacets[device.id] = incoming
+                }
+            }
+            if deviceFacets != nextFacets { deviceFacets = nextFacets }
+
             // Compare the displayed names so aliases do not cause two observable writes per snapshot.
             let nextDevices = devicesWithAliases(merged)
             if devices != nextDevices { devices = nextDevices }
@@ -689,6 +704,7 @@ extension HomeStore {
         if homeBackend == .xiaomiCloud || provider is DualSourceHomeProvider {
             invalidateUndoContext()
             self.devices = []
+            self.deviceFacets = [:]
             self.rooms = []
             self.environmentReadings = []
             self.scenes = []
@@ -771,6 +787,10 @@ extension HomeStore {
         if homeBackend == .xiaomiCloud || provider is DualSourceHomeProvider {
             let removedDeviceIds = Set(devices.filter { $0.accountId == id }.map(\.id))
             devices.removeAll { $0.accountId == id }
+            for removedId in removedDeviceIds {
+                cancelFacetWrites(for: removedId)
+                deviceFacets.removeValue(forKey: removedId)
+            }
             environmentReadings.removeAll { removedDeviceIds.contains($0.id) }
             rooms.removeAll { MiAccountScope.isOwned($0.id, by: id) }
             // Its homes leave too, so the home menu cannot offer a home nobody owns any more.

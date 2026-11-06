@@ -61,6 +61,9 @@ public final class HomeStore {
     public internal(set) var devices: [SmartDevice] = [] {
         didSet { scheduleRaycastSnapshotExport() }
     }
+    /// Generic drawer rows under 更多设置, keyed by card id (#5). Values follow the snapshot except
+    /// while an optimistic write is locked.
+    public internal(set) var deviceFacets: [String: [FacetControl]] = [:]
     /// Member did → Mi light-group did from the current snapshot; folding reads it (#189).
     public internal(set) var lightGroupOwners: [String: String] = [:]
     public internal(set) var environmentReadings: [EnvironmentReading] = [] {
@@ -133,6 +136,14 @@ public final class HomeStore {
             scheduleRaycastSnapshotExport()
         }
     }
+
+    /// Allow 更多设置 writes outside the low-risk whitelist (#5). Off by default: the facet engine
+    /// only opens brightness, mode and fan-level until the owner opts in.
+    public var allowAdvancedFacetWrites: Bool {
+        didSet { HomePreferences.allowAdvancedFacetWrites.save(allowAdvancedFacetWrites, to: userDefaults) }
+    }
+
+    public static let allowAdvancedFacetWritesKey = HomePreferences.allowAdvancedFacetWrites.key
 
     public var enableGlobalHotkey: Bool {
         didSet {
@@ -597,6 +608,12 @@ public final class HomeStore {
     public internal(set) var pollingContext = PollingContext()
     var pollingContextSync: Task<Void, Never>?
     var debounceTasks: [String: Task<Void, Never>] = [:]
+    struct FacetWriteState {
+        let token: UUID
+        let origin: JSONValue?
+        var bannerID: UUID?
+    }
+    var facetWrites: [String: FacetWriteState] = [:]
     var undoTimerTask: Task<Void, Never>?
     private var toastTimerTask: Task<Void, Never>?
     var optimisticLockUntil: [String: ContinuousClock.Instant] = [:]
@@ -723,6 +740,7 @@ public final class HomeStore {
         self.askWhenUnsureBeforeAIActions = boolOrDefaultTrue(Self.askWhenUnsureKey)
         self.hideOfflineDevices = HomePreferences.hideOfflineDevices.load(from: ud)
         self.hideGroupedLights = HomePreferences.hideGroupedLights.load(from: ud)
+        self.allowAdvancedFacetWrites = HomePreferences.allowAdvancedFacetWrites.load(from: ud)
         self.enableGlobalHotkey = HomePreferences.enableGlobalHotkey.load(from: ud)
         self.enableSafetyAlerts = HomePreferences.enableSafetyAlerts.load(from: ud)
         self.doorbellAutoPopup = HomePreferences.doorbellAutoPopup.load(from: ud)

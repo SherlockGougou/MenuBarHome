@@ -24,7 +24,7 @@ extension HomeStore {
             return nil
         }
         guard device.isPrimaryToggleable else {
-            if device.hasDetailDrawer { toggleExpanded(device.id) }
+            if hasDetailDrawer(for: device) { toggleExpanded(device.id) }
             return nil
         }
         guard let idx = devices.firstIndex(where: { $0.id == device.id }) else { return nil }
@@ -560,6 +560,124 @@ extension HomeStore {
         }
         coverCommandOrigins.removeValue(forKey: deviceId)
         return fallback
+    }
+
+    public func hasDetailDrawer(for device: SmartDevice) -> Bool {
+        device.hasDetailDrawer || deviceFacets[device.id]?.isEmpty == false
+    }
+
+    // MARK: - Generic Facet Controls (#5)
+
+    public func setFacetValue(_ deviceId: String, controlId: String, value: JSONValue) {
+        guard let device = controllableDevice(deviceId), device.isOnline,
+              var facets = deviceFacets[deviceId],
+              let index = facets.firstIndex(where: { $0.id == controlId }),
+              facetWriteAllowed(facets[index]),
+              case .property(let entityId, let piid) = facets[index].target,
+              facets[index].value != value else { return }
+        let control = facets[index]
+        let key = facetWriteKey(deviceId, controlId)
+        let previous = facetWrites[key]
+        guard previous != nil || allowManualControl(facet: control, value: value, for: device) else { return }
+        let origin = if let previous { previous.origin } else { control.value }
+        var pending = FacetWriteState(token: UUID(), origin: origin, bannerID: previous?.bannerID)
+        facets[index].value = value
+        deviceFacets[deviceId] = facets
+        extendFacetLock(deviceId, duration: .seconds(2.2))
+        if previous == nil, let origin {
+            let rawTitle = control.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let title = rawTitle.isEmpty ? control.name : rawTitle
+            scheduleUndoBanner(
+                title: L10n.tr("已更新 \(device.name) 的\(title)", "Updated \(device.name): \(title)"),
+                restoreCommands: [.setMiotProperty(entityId: entityId, piid: piid, value: origin)],
+                previousDevices: [device], deviceCount: 1
+            )
+            pending.bannerID = undoBanner?.id
+        }
+        facetWrites[key] = pending
+        dispatchFacetWrite(
+            device: device, controlId: controlId, pending: pending,
+            command: .setMiotProperty(entityId: entityId, piid: piid, value: value),
+            adjustment: control.kind == .slider
+        )
+    }
+
+    public func runFacetAction(_ deviceId: String, controlId: String) {
+        guard let device = controllableDevice(deviceId), device.isOnline,
+              let control = deviceFacets[deviceId]?.first(where: { $0.id == controlId }),
+              facetWriteAllowed(control), case .action(let entityId) = control.target,
+              allowManualControl(facet: control, value: nil, for: device) else { return }
+        extendFacetLock(deviceId, duration: .seconds(2.0))
+        let pending = FacetWriteState(token: UUID(), origin: nil, bannerID: nil)
+        facetWrites[facetWriteKey(deviceId, controlId)] = pending
+        dispatchFacetWrite(device: device, controlId: controlId, pending: pending,
+                           command: .callMiotAction(entityId: entityId), adjustment: false)
+    }
+
+    private func facetWriteAllowed(_ control: FacetControl) -> Bool {
+        control.isWritable && control.target != nil
+            && (control.writesByDefault || allowAdvancedFacetWrites)
+    }
+
+    private func facetWriteKey(_ deviceId: String, _ controlId: String) -> String {
+        "\(deviceId).facet.\(controlId)"
+    }
+
+    func cancelFacetWrite(deviceId: String, controlId: String) {
+        let key = facetWriteKey(deviceId, controlId)
+        facetWrites.removeValue(forKey: key)
+        debounceTasks.removeValue(forKey: key)?.cancel()
+    }
+
+    func cancelFacetWrites(for deviceId: String?) {
+        let prefix = deviceId.map { "\($0).facet." }
+        for key in Array(facetWrites.keys) where prefix.map({ key.hasPrefix($0) }) ?? true {
+            facetWrites.removeValue(forKey: key)
+            debounceTasks.removeValue(forKey: key)?.cancel()
+        }
+    }
+
+    private func extendFacetLock(_ deviceId: String, duration: Duration) {
+        let until = ContinuousClock.now.advanced(by: duration)
+        optimisticLockUntil[deviceId] = max(optimisticLockUntil[deviceId] ?? until, until)
+    }
+
+    private func dispatchFacetWrite(
+        device: SmartDevice, controlId: String, pending: FacetWriteState,
+        command: DeviceCommand, adjustment: Bool
+    ) {
+        let deviceId = device.id
+        let key = facetWriteKey(deviceId, controlId)
+        let context = controlContextID
+        debounceTasks[key]?.cancel()
+        debounceTasks[key] = Task { [weak self] in
+            defer {
+                if let self, self.facetWrites[key]?.token == pending.token {
+                    self.facetWrites.removeValue(forKey: key)
+                    self.debounceTasks.removeValue(forKey: key)
+                }
+            }
+            if adjustment {
+                try? await Task.sleep(for: self?.controlDebounceInterval ?? .milliseconds(280))
+            }
+            guard !Task.isCancelled, let self, self.controlContextID == context,
+                  self.facetWrites[key]?.token == pending.token else { return }
+            do {
+                try await self.executeDeviceCommand(command)
+            } catch {
+                guard self.controlContextID == context,
+                      self.facetWrites[key]?.token == pending.token else { return }
+                if case .setMiotProperty = command,
+                   let index = self.deviceFacets[deviceId]?.firstIndex(where: { $0.id == controlId }) {
+                    self.deviceFacets[deviceId]?[index].value = pending.origin
+                }
+                if let bannerID = pending.bannerID, self.undoBanner?.id == bannerID {
+                    self.undoTimerTask?.cancel()
+                    self.undoBanner = nil
+                }
+                self.showControlFailure(error, device: device, adjustment: adjustment)
+            }
+        }
     }
 
     public func setPlugChildLock(_ deviceId: String, locked: Bool) {

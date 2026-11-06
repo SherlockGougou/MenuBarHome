@@ -46,6 +46,10 @@ _Avoid_: Schema（模式）、Profile（配置表）
 按「格式 + 读写」从 MIoT 规格自动合成的辅助控件（开关、下拉、滑块、读数、按钮），带 `siid.piid`（属性）或 `siid.aiid`（动作）稳定标识、写入风险等级与高价值标记。没有专用卡片的设备靠它保留可控项；噪声服务与属性、高价值名单、低风险写入白名单都存于双端共读的 `deviceProfiles.json`。
 _Avoid_: Widget（小组件）、Generic control（泛指控件）
 
+**MoreSettings（更多设置）**：
+详情抽屉里的辅助控件区，由 `FacetControl` 渲染：默认折叠，高价值控件在前，超出的次要项再折叠一层。主卡片已经展示的属性与主服务动作不重复出现；低风险白名单之外的写入显示为禁用，需在设置里显式打开。
+_Avoid_: Advanced panel（高级面板）、Extra controls（额外控件）
+
 **RoomArea（房间区域）**：
 物理空间的归属划分（如客厅、书房、卧室、次卧、厨房），以 Home Assistant 的区域注册表或米家家庭房间列表为准并经过名称归一化。
 _Avoid_: Zone（防区）、Group（分组）

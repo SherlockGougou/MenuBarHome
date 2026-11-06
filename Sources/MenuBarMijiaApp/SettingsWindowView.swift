@@ -377,6 +377,27 @@ private struct GeneralSettingsTab: View {
                     }
                 }
 
+                SettingsSection(title: L10n.tr("设备控制", "Device Controls")) {
+                    SettingsToggleRow(
+                        title: L10n.tr(
+                            "允许「更多设置」写入次要控件",
+                            "Allow secondary controls under More Settings"
+                        ),
+                        isOn: Binding(
+                            get: { store.allowAdvancedFacetWrites },
+                            set: { store.allowAdvancedFacetWrites = $0 }
+                        )
+                    )
+
+                    Text(L10n.tr(
+                        "默认只放开亮度、模式、风速这类低风险写入。「更多设置」里的其他开关、滑块和按钮会显示为不可用；开启后它们也可以操作，请先确认设备确实支持该项。",
+                        "Brightness, mode and fan level are the only writes open by default. Other switches, sliders and buttons under More Settings stay disabled until you turn this on; check that the device really supports the setting first."
+                    ))
+                    .font(.system(size: DesignTokens.TypeSize.caption))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+
                 SettingsSection(title: L10n.tr("全局快捷键", "Global Shortcut")) {
                     SettingsToggleRow(
                         title: L10n.tr(

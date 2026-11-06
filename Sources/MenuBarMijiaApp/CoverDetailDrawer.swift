@@ -3,7 +3,8 @@ import SwiftUI
 
 /// Position, open/stop/close, battery and fault for a cover (window opener, curtain or airer). An
 /// airer reads as height with raise/stop/lower (#299). Kept out of `DeviceCardView` so that file
-/// stays under the line-count gate (#184).
+/// stays under the line-count gate (#184). Its slider and buttons render through the shared detail
+/// controls, the same ones 更多设置 uses (#5).
 struct CoverDetailDrawer: View {
     let device: SmartDevice
     let spec: CoverSpec
@@ -25,22 +26,17 @@ struct CoverDetailDrawer: View {
                     .foregroundStyle(.secondary)
             }
             if spec.positionWritable {
-                LiquidGlassSlider(
-                    value: Binding(
-                        get: { position },
-                        set: { store.setCoverPosition(device.id, percent: Int($0.rounded())) }
-                    ),
-                    in: 0...100,
+                DetailSliderControl(
+                    value: position,
+                    range: 0...100,
                     step: 1,
                     iconName: spec.subtype == .clothesAirer ? "hanger" : "window.vertical.open",
                     iconColor: statusColor,
-                    trackFill: LinearGradient(
-                        colors: [accent.opacity(0.55), accent.opacity(0.92)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
+                    trackColors: [accent.opacity(0.55), accent.opacity(0.92)],
                     formattedValue: "\(Int(position))%"
-                )
+                ) { percent in
+                    store.setCoverPosition(device.id, percent: Int(percent.rounded()))
+                }
                 .disabled(!device.isOnline)
             }
             if spec.canMove || spec.batteryPercent != nil {
@@ -56,10 +52,10 @@ struct CoverDetailDrawer: View {
                     }
                     if let battery = spec.batteryPercent {
                         Spacer(minLength: 0)
-                        Text(L10n.tr("电量 \(battery)%", "Battery \(battery)%"))
-                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
-                            .foregroundStyle(statusColor)
-                            .monospacedDigit()
+                        DetailValueText(
+                            text: L10n.tr("电量 \(battery)%", "Battery \(battery)%"),
+                            color: statusColor
+                        )
                     }
                 }
             }
@@ -67,10 +63,9 @@ struct CoverDetailDrawer: View {
     }
 
     private func motorButton(_ description: String) -> some View {
-        Button(Self.actionTitle(description, subtype: spec.subtype)) {
+        DetailPillButton(title: Self.actionTitle(description, subtype: spec.subtype)) {
             store.setCoverMotor(device.id, description: description)
         }
-        .buttonStyle(PillActionButtonStyle())
         .disabled(!device.isOnline)
     }
 

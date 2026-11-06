@@ -92,6 +92,7 @@ public enum MiotSynthesizer {
         var smartDevices: [SmartDevice] = []
         var readings: [EnvironmentReading] = []
         var identities: [String: DeviceSourceIdentity] = [:]
+        var facetsByDevice: [String: [FacetControl]] = [:]
 
         for record in devices where !splitParents.contains(record.did) {
             guard let spec = specs[record.model] else { continue }
@@ -131,6 +132,23 @@ public enum MiotSynthesizer {
                 if let reading = device.environmentReading {
                     readings.append(reading)
                 }
+
+                // A split key or a dual-track motor gets only its own service; everything else
+                // may offer controls from sibling services (fresh air, floor heat, …).
+                let facetSpec = splitPerService
+                    ? MiotDeviceSpec(type: spec.type, services: spec.services.filter { $0.iid == service.iid })
+                    : scopedSpec
+                // A mains breaker stays read-only even with advanced writes on (#265).
+                let facets = Self.isMainsBreaker(spec) ? [] : MiotFacetEngine.controls(
+                    for: facetSpec,
+                    did: record.miotDid,
+                    values: values,
+                    primaryServiceId: service.iid,
+                    excluding: reader.consumed
+                )
+                if !facets.isEmpty {
+                    facetsByDevice[device.id] = facets
+                }
             }
         }
 
@@ -141,6 +159,7 @@ public enum MiotSynthesizer {
             roomNameOrder: DeviceSynthesizer.roomNameOrder(from: rooms.map(\.name))
         )
         home.deviceIdentities = identities
+        home.deviceFacets = facetsByDevice
         return home
     }
 
@@ -154,6 +173,36 @@ public enum MiotSynthesizer {
             _ = build(reader, service)
         }
         return reader.touched
+    }
+
+    /// Readable properties behind the 更多设置 rows (#5), polled so the drawer's values arrive with
+    /// the snapshot instead of showing empty rows until a write. Card properties are excluded here
+    /// because `requiredProps` already covers them.
+    public static func facetProps(for device: MiDeviceRecord, spec: MiotDeviceSpec) -> [MiotPropKey] {
+        guard !Self.isMainsBreaker(spec) else { return [] }
+        let plans = plans(for: device, spec: spec)
+        guard !plans.isEmpty else { return [] }
+        let scopedSpec = specForRecord(device, spec: spec)
+        let reader = MiotReader(did: device.miotDid, spec: scopedSpec, values: [:])
+        var keys: [MiotPropKey] = []
+        var seen: Set<MiotPropKey> = []
+        for (service, build) in plans {
+            _ = build(reader, service)
+            let touched = Set(reader.touched)
+            let facetSpec = plans.count > 1
+                ? MiotDeviceSpec(type: spec.type, services: spec.services.filter { $0.iid == service.iid })
+                : scopedSpec
+            for facet in MiotFacetEngine.facets(for: facetSpec) {
+                guard let piid = facet.propertyId,
+                      let property = facetSpec.service(iid: facet.serviceId)?
+                          .properties.first(where: { $0.iid == piid }),
+                      property.isReadable else { continue }
+                let key = MiotPropKey(did: device.miotDid, siid: facet.serviceId, piid: piid)
+                guard !touched.contains(key), seen.insert(key).inserted else { continue }
+                keys.append(key)
+            }
+        }
+        return keys
     }
 
     /// MIoT `<siid>.<piid>` keys for a sensor's temperature and relative-humidity properties,
@@ -533,8 +582,8 @@ public enum MiotSynthesizer {
         let status = r.ref("status", in: s)
         let fault = r.ref("device-fault", in: s) ?? r.ref("fault", in: s)
         let battery = r.first("battery-level", in: r.spec.services(named: "battery"))
-        let motor = s.properties.first { $0.shortName == "motor-control" && $0.isWritable }
-        let items = motor?.valueList ?? []
+        let motor = r.ref("motor-control", in: s, includingWriteOnly: true)
+        let items = motor?.property.isWritable == true ? motor?.property.valueList ?? [] : []
         // An airer reports how far it has lowered (0 at the top); the card shows height (#299).
         let inverted = CoverSubtype(miotServiceShortName: s.shortName).invertsMiotPosition
         let currentPosition = coverPosition(current).map { inverted ? 100 - $0 : $0 }
@@ -1135,6 +1184,7 @@ final class MiotReader {
     let spec: MiotDeviceSpec
     private let values: [MiotPropKey: JSONValue]
     private(set) var touched: [MiotPropKey] = []
+    private(set) var consumed: Set<MiotPropKey> = []
 
     init(did: String, spec: MiotDeviceSpec, values: [MiotPropKey: JSONValue]) {
         self.did = did
@@ -1142,8 +1192,9 @@ final class MiotReader {
         self.values = values
     }
 
-    func ref(_ name: String, in service: MiotService) -> Ref? {
-        refs(name, in: service).first
+    func ref(_ name: String, in service: MiotService, includingWriteOnly: Bool = false) -> Ref? {
+        guard includingWriteOnly else { return refs(name, in: service).first }
+        return service.properties.first(where: { $0.shortName == name }).map { make(service, $0) }
     }
 
     func refs(_ name: String, in service: MiotService) -> [Ref] {
@@ -1167,7 +1218,8 @@ final class MiotReader {
 
     private func make(_ service: MiotService, _ property: MiotProperty) -> Ref {
         let key = MiotPropKey(did: did, siid: service.iid, piid: property.iid)
-        if !touched.contains(key) { touched.append(key) }
+        consumed.insert(key)
+        if property.isReadable, !touched.contains(key) { touched.append(key) }
         return Ref(service: service, property: property, value: values[key])
     }
 }

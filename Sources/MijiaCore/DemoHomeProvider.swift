@@ -433,6 +433,16 @@ public actor DemoHomeProvider: HomeProvider {
     /// Applies a command to the virtual devices so the demo panel reflects what was clicked.
     static func applying(_ command: DeviceCommand, to home: SynthesizedHome) -> SynthesizedHome {
         var next = home
+        if case .setMiotProperty(let entityId, let piid, let value) = command {
+            for (deviceId, facets) in next.deviceFacets {
+                guard let index = facets.firstIndex(where: {
+                    $0.target == .property(entityId: entityId, piid: piid)
+                }) else { continue }
+                var updated = facets
+                updated[index].value = value
+                next.deviceFacets[deviceId] = updated
+            }
+        }
         for idx in next.devices.indices {
             switch next.devices[idx].kind {
             case .light(var spec):

@@ -54,6 +54,71 @@ public enum ManualControlPolicy {
         )
     }
 
+    /// The whitelist controls availability; confirmation follows the operation's meaning.
+    public static func confirmation(facet: FacetControl, value: JSONValue?, for device: SmartDevice) -> ManualControlConfirmation? {
+        guard facetRequiresConfirmation(facet, value: value, for: device) else { return nil }
+        let title = facet.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = title.flatMap { $0.isEmpty ? nil : $0 } ?? facet.name
+        return ManualControlConfirmation(
+            title: L10n.tr("确认修改更多设置？", "Change this additional setting?"),
+            message: L10n.format(
+                "执行「%@」的「%@」可能改变设备运行，请再次确认。",
+                "Confirm changing an additional setting on %@: %@. It may affect device operation.",
+                device.name,
+                label
+            ),
+            confirmTitle: L10n.tr("确认执行", "Confirm"),
+            cancelTitle: L10n.tr("取消", "Cancel")
+        )
+    }
+
+    private static func facetRequiresConfirmation(_ facet: FacetControl, value: JSONValue?, for device: SmartDevice) -> Bool {
+        if facet.kind == .button { return true }
+        if case .action = facet.target { return true }
+        let service = facet.serviceName.lowercased()
+        let name = facet.name.lowercased()
+        let coverServices = ["curtain", "window-opener", "airer", "clothes-airer", "garage-door"]
+        if name == "mode", device.kind.isCover || coverServices.contains(service) { return true }
+
+        let category = IntentDeviceCategory(device)
+        let selectedMode = (value?.intValue).flatMap { selected in
+            facet.options.first { $0.value == selected }?.label
+        } ?? value?.stringValue
+        let isPower = ["on", "power", "power-switch"].contains(name)
+        if category == .heater {
+            if isPower, let isOn = value?.miotBool { return isOn }
+            if name == "mode" { return selectedMode?.caseInsensitiveCompare("off") != .orderedSame }
+            return true
+        }
+
+        // These services' on/off properties power an indicator or sound, never the appliance.
+        let lowRiskServices = ["indicator-light", "night-light", "buzzer", "speaker", "physical-controls-locked"]
+        if lowRiskServices.contains(service) { return false }
+        let heatingService = ["heater", "ptc", "floor-heat", "heating", "water-heater", "electric-water-heater", "gas-water-heater"]
+            .contains(service)
+        if isPower, let isOn = value?.miotBool {
+            if heatingService { return isOn }
+            return requiresConfirmation(.power(isOn), for: device)
+        }
+
+        let waterHeater: Bool
+        switch device.kind {
+        case .appliance: waterHeater = true
+        case .climate: waterHeater = device.name.contains("热水器")
+        default: waterHeater = false
+        }
+        if name == "target-temperature", let requested = value?.doubleValue,
+           heatingService || waterHeater {
+            if let current = facet.value?.doubleValue { return requested > current }
+            if heatingService { return true }
+            return requiresConfirmation(.targetTemperature(requested), for: device)
+        }
+        if name == "mode", heatingService || waterHeater {
+            return selectedMode?.caseInsensitiveCompare("off") != .orderedSame
+        }
+        return false
+    }
+
     /// The lock-screen preference guard: off by default would leave every external control path open
     /// after the Mac locks, so the app ships with it on and lets people opt out in Settings (#143).
     public static func isScreenLockBlocked(isLocked: Bool, blockWhileLocked: Bool) -> Bool {

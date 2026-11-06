@@ -37,6 +37,15 @@ extension HomeStore {
             DeviceIntent(targetId: device.id, operation: operation),
             devices: devices
         ) else { return true }
+        return presentManualControlConfirmation(prompt, for: device)
+    }
+
+    func allowManualControl(facet: FacetControl, value: JSONValue?, for device: SmartDevice) -> Bool {
+        guard let prompt = ManualControlPolicy.confirmation(facet: facet, value: value, for: device) else { return true }
+        return presentManualControlConfirmation(prompt, for: device)
+    }
+
+    private func presentManualControlConfirmation(_ prompt: ManualControlConfirmation, for device: SmartDevice) -> Bool {
         guard let handler = manualControlConfirmationHandler, handler(prompt) else {
             showToast(
                 L10n.format("已取消「%@」的操作", "Cancelled the action for %@", device.name),
