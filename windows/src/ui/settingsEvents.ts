@@ -10,7 +10,7 @@ import {
 } from "../core/assistant.js";
 import { homeAssistantIdentity } from "../core/homeAssistant.js";
 import { normalizeMiCloudRegion } from "../core/miCloudClient.js";
-import { joinsAllOffByDefault, type AssistantSuggestion, type EnvironmentReading, type HomeScene, type SmartDevice } from "../core/models.js";
+import { joinsAllOffByDefault, type AssistantSuggestion, type EnvironmentReading, type FacetControl, type HomeScene, type SmartDevice } from "../core/models.js";
 import { withAliases, type HomeOption, type LayoutPrefs } from "./panelPrefs.js";
 import type { ConnectionMode, PersistedSettings, ReplyBannerState } from "./appTypes.js";
 import { demoDevices, demoScenes } from "./demo.js";
@@ -28,6 +28,14 @@ export interface SettingsEventsHost {
   aiProactiveSignature: string | null;
   aiProactiveSuggestions: AssistantSuggestion[] | null;
   cloudValuesStale: boolean;
+  /** 更多设置 rows from the latest snapshot; a backend switch drops them (#5). */
+  deviceFacets: Readonly<Record<string, readonly FacetControl[]>>;
+  /** A high-risk write armed by its first tap; a backend switch disarms it. */
+  pendingHighRisk: {
+    readonly deviceId: string;
+    readonly actionKey: string;
+    readonly expiresAtMs: number;
+  } | null;
   groupOwnerByMemberDid: Map<string, string>;
   hotkeyNeedsHint: boolean;
   isRecordingHotkey: boolean;
@@ -158,6 +166,9 @@ export function bindSettingsEvents(host: SettingsEventsHost): void {
         host.environmentReadings = [];
         host.homes = [];
         host.groupOwnerByMemberDid = new Map();
+        host.deviceFacets = {};
+        // An armed high-risk write belongs to the backend it was armed on.
+        host.pendingHighRisk = null;
         host.replyBanner = null;
         host.settings.connectionMode = mode;
         if (mode !== "xiaomiCloud") host.cloudValuesStale = false;

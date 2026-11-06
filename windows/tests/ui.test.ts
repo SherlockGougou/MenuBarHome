@@ -12,7 +12,7 @@ import { SKINS } from "../src/ui/panelPrefs.js";
 import { cloudFixture } from "./cloudFixture.js";
 import { MiCloudClient, MiotSynthesizer, inferFallbackSpec } from "../src/core/miCloudClient.js";
 import { MiCloudCrypto } from "../src/core/miCloudCrypto.js";
-import type { SmartDevice } from "../src/core/models.js";
+import type { FacetControl, GenericSpec, SmartDevice } from "../src/core/models.js";
 
 let dom: Window;
 
@@ -4348,5 +4348,305 @@ describe("Panel opacity (#252)", () => {
     }));
     new MenuMijiaWindowsApp(element("#app"));
     assert.equal(element("#app").style.getPropertyValue("--panel-opacity"), "0.6");
+  });
+});
+
+describe("Appliance and generic cards (#9)", () => {
+  const washer: SmartDevice = {
+    id: "miot:did_washer",
+    name: "洗衣机",
+    roomId: "room_balcony",
+    roomName: "阳台",
+    model: "bshcn.washer.fixture",
+    isOnline: true,
+    kind: {
+      kind: "appliance",
+      entityId: "miot:did_washer:2",
+      isOn: true,
+      powerPresent: true,
+      powerWritable: true,
+      currentMode: "Standard",
+      availableModes: ["Standard", "Quick"],
+      modeWritable: true,
+      targetTemperature: 40,
+      currentTemperature: null,
+      minTemp: 20,
+      maxTemp: 60,
+      step: 1,
+      temperatureWritable: true,
+      statusText: "洗涤中",
+      faultText: null,
+      remainingMinutes: 42,
+      startAction: { kind: "start", entityId: "miot-action:did_washer:2:1" },
+      pauseAction: { kind: "pause", entityId: "miot-action:did_washer:2:2" },
+      stopAction: null,
+      powerEntityId: "miot:did_washer:2",
+      modeEntityId: "miot:did_washer:2",
+      temperatureEntityId: "miot:did_washer:2",
+      light: null,
+      fanLevel: null,
+      currentHumidity: null,
+      symbolName: null,
+      roomReading: false,
+      heats: false,
+    },
+  };
+
+  const tank: SmartDevice = {
+    id: "miot:did_tank",
+    name: "鱼缸",
+    roomId: "room_living",
+    roomName: "客厅",
+    model: "fixture.fish.tank",
+    isOnline: true,
+    kind: {
+      kind: "generic",
+      deviceType: "fish-tank",
+      typeTitle: "鱼缸",
+      isOn: true,
+      powerControl: {
+        id: "2.1",
+        kind: "toggle",
+        name: "on",
+        title: null,
+        serviceName: "fish-tank",
+        unit: null,
+        scale: null,
+        value: true,
+        options: [],
+        range: null,
+        isWritable: true,
+        writesByDefault: true,
+        isHighValue: false,
+        target: { kind: "property", entityId: "miot:did_tank:2", piid: 1 },
+      },
+      isReadOnly: false,
+      readouts: ["88%"],
+      symbolName: "fish.fill",
+    },
+  };
+
+  const childLock = {
+    id: "2.4",
+    kind: "toggle" as const,
+    name: "child-lock",
+    title: null,
+    serviceName: "fish-tank",
+    unit: null,
+    scale: null,
+    value: false,
+    options: [],
+    range: null,
+    isWritable: true,
+    writesByDefault: false,
+    isHighValue: false,
+    target: { kind: "property" as const, entityId: "miot:did_tank:2", piid: 4 },
+  };
+
+  /** One app on a demo connection, so its own listeners own the injected cards. */
+  const mount = (devices: SmartDevice[], facets: Record<string, readonly FacetControl[]> = {}) => {
+    localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
+      connectionMode: "demo",
+      hasCompletedOnboarding: true,
+    }));
+    const app = new MenuMijiaWindowsApp(element("#app"));
+    // Optimistic writes mutate the rows they address, so every test gets its own copies.
+    app.devices = devices.map((device) => structuredClone(device));
+    app.deviceFacets = structuredClone(facets);
+    app.render();
+    return app;
+  };
+
+  it("shows an appliance card and writes its programme from the drawer", async () => {
+    mount([washer]);
+
+    assert.match(tile("miot:did_washer"), /洗涤中 · 剩余 42 分/);
+    await click('[data-body-device="miot:did_washer"]');
+    await click('[data-appliancemode="miot:did_washer|Quick"]');
+    assert.match(tile("miot:did_washer"), /快速/);
+    assert.match(document.body.textContent ?? "", /已将洗衣机设为快速/);
+  });
+
+  it("keeps a generic card's readings on the tile and its gated rows behind the switch", async () => {
+    const app = mount([tank], { [tank.id]: [childLock] });
+
+    assert.match(tile("miot:did_tank"), /88%/);
+    await click('[data-body-device="miot:did_tank"]');
+    const gated = () => element('[data-facet-toggle="miot:did_tank|2.4"]') as HTMLButtonElement;
+    assert.equal(gated().disabled, true, "a high-risk row needs 允许写入高级属性 first");
+
+    app.settings.allowAdvancedFacetWrites = true;
+    app.render();
+    assert.equal(gated().disabled, false);
+    gated().click();
+    await setImmediate();
+    assert.match(document.body.textContent ?? "", /再点一次确认执行/, "the first tap only asks");
+    gated().click();
+    await setImmediate();
+    assert.match(gated().textContent ?? "", /开/);
+  });
+
+  const facet = (overrides: Partial<FacetControl>): FacetControl => ({
+    ...childLock,
+    ...overrides,
+  });
+
+  it("writes a 更多设置 option when its pill is tapped", async () => {
+    const mode = facet({
+      id: "2.2",
+      kind: "select",
+      name: "mode",
+      value: 0,
+      options: [
+        { value: 0, label: "自动" },
+        { value: 1, label: "手动" },
+      ],
+      writesByDefault: true,
+      target: { kind: "property", entityId: "miot:did_tank:2", piid: 2 },
+    });
+    mount([tank], { [tank.id]: [mode] });
+    await click('[data-body-device="miot:did_tank"]');
+    await click('[data-facet-select="miot:did_tank|2.2|1"]');
+
+    assert.match(document.body.textContent ?? "", /已设置鱼缸的模式为 手动/);
+    assert.ok(
+      element('[data-facet-select="miot:did_tank|2.2|1"]').classList.contains("is-active"),
+      "the row shows the value the write asked for",
+    );
+  });
+
+  it("never spends one high-risk confirmation on a different write", async () => {
+    const reset = facet({
+      id: "2.9",
+      kind: "button",
+      name: "reset-filter",
+      value: null,
+      target: { kind: "action", entityId: "miot-action:did_tank:2:9" },
+    });
+    const app = mount([tank], { [tank.id]: [childLock, reset] });
+    app.settings.allowAdvancedFacetWrites = true;
+    app.render();
+    await click('[data-body-device="miot:did_tank"]');
+
+    const lockRow = () => element('[data-facet-toggle="miot:did_tank|2.4"]');
+    const resetRow = () => element('[data-facet-action="miot:did_tank|2.9"]');
+
+    lockRow().click();
+    await setImmediate();
+    assert.match(document.body.textContent ?? "", /再点一次确认执行/, "the first tap only asks");
+
+    resetRow().click();
+    await setImmediate();
+    assert.match(document.body.textContent ?? "", /再点一次确认执行/, "a different write asks again");
+    assert.match(lockRow().textContent ?? "", /关/, "and the armed write never ran");
+    assert.doesNotMatch(document.body.textContent ?? "", /已执行鱼缸/);
+
+    resetRow().click();
+    await setImmediate();
+    assert.match(document.body.textContent ?? "", /已执行鱼缸/, "the same write twice runs it");
+  });
+
+  it("writes a plug's sibling-service 更多设置 row through the cloud", async () => {
+    const plugSpec = {
+      type: "urn:miot-spec-v2:device:outlet:0000A002:cuco-plug:1",
+      services: [
+        {
+          iid: 2,
+          type: "urn:miot-spec-v2:service:switch:00007806:cuco-plug:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:cuco-plug:1", format: "bool", access: ["read", "write"] },
+          ],
+          actions: [],
+        },
+        {
+          iid: 3,
+          type: "urn:miot-spec-v2:service:indicator-light:00007805:cuco-plug:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:cuco-plug:1", format: "bool", access: ["read", "write"] },
+          ],
+          actions: [],
+        },
+      ],
+    };
+    const security = "AQIDBAUGBwgJCgsMDQ4PEA==";
+    const writes: Array<{ siid: number; piid: number; value: unknown }> = [];
+    const invoke = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
+      if (name !== "native_http") return undefined;
+      const url = String(args["url"] ?? "");
+      if (url.includes("/instance?")) {
+        return { status: 200, headers: {}, body: JSON.stringify(plugSpec) };
+      }
+      if (url.includes("/instances?")) {
+        return { status: 200, headers: {}, body: JSON.stringify({ instances: [{ model: "cuco.plug.v3", type: plugSpec.type }] }) };
+      }
+      let result: unknown = {};
+      if (url.includes("device_list")) {
+        result = {
+          list: [{ did: "plug-1", name: "桌面插座", model: "cuco.plug.v3", isOnline: true, spec_type: plugSpec.type }],
+          has_more: false,
+        };
+      } else if (url.includes("homeroom/")) {
+        result = { homelist: [{ id: "1", name: "家", dids: [], roomlist: [{ id: "10", name: "客厅", dids: ["plug-1"] }] }] };
+      } else if (url.includes("miotspec/prop/set")) {
+        const fields = new URLSearchParams(String(args["body"] ?? ""));
+        const nonce = fields.get("_nonce") ?? "";
+        const encrypted = fields.get("data") ?? "";
+        const payload = JSON.parse(
+          MiCloudCrypto.decryptResponse(encrypted, MiCloudCrypto.signedNonce(security, nonce)),
+        ) as { params?: Array<{ siid: number; piid: number; value: unknown }> };
+        for (const item of payload.params ?? []) {
+          writes.push({ siid: item.siid, piid: item.piid, value: item.value });
+        }
+        result = [{ code: 0 }];
+      } else if (url.includes("miotspec/prop/")) {
+        result = [{ did: "plug-1", siid: 2, piid: 1, code: 0, value: true }];
+      }
+      return { status: 200, headers: {}, body: JSON.stringify({ code: 0, result }) };
+    };
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: { invoke }, configurable: true });
+    localStorage.setItem(
+      "menumijia.windows.settings.v2",
+      JSON.stringify({
+        connectionMode: "xiaomiCloud",
+        hasCompletedOnboarding: true,
+        miSession: { userId: "100", cUserId: "c100", ssecurity: security, serviceToken: "tok", passToken: "", region: "cn" },
+        cachedModelTypes: { "cuco.plug.v3": plugSpec.type },
+      }),
+    );
+    const app = new MenuMijiaWindowsApp(element("#app"));
+    await waitFor(() => app.devices.some((device) => device.id === "plug-1"));
+    app.deviceFacets = {
+      "plug-1": [facet({
+        id: "3.1",
+        name: "indicator-light",
+        serviceName: "indicator-light",
+        value: true,
+        writesByDefault: true,
+        target: { kind: "property", entityId: "miot:plug-1:3", piid: 1 },
+      })],
+    };
+    app.render();
+
+    // A plug's body toggles its power, so the 更多设置 rows live behind the chevron.
+    await click('[data-expand-device="plug-1"]');
+    await click('[data-facet-toggle="plug-1|3.1"]');
+    await waitFor(() => writes.length > 0);
+    assert.deepEqual(writes, [{ siid: 3, piid: 1, value: false }], "the sibling-service row reaches the cloud");
+  });
+
+  it("labels a read-only generic card", async () => {
+    const readOnly: GenericSpec = {
+      kind: "generic",
+      deviceType: "fish-tank",
+      typeTitle: "鱼缸",
+      isOn: false,
+      powerControl: null,
+      isReadOnly: true,
+      readouts: [],
+      symbolName: "fish.fill",
+    };
+    mount([{ ...tank, kind: readOnly }]);
+    assert.match(tile("miot:did_tank"), /只读 · 鱼缸/);
+    assert.match(element('[data-tile-id="miot:did_tank"]').textContent ?? "", /只读/);
   });
 });

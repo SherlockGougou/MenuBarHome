@@ -1697,6 +1697,218 @@
           ]
         }
       ]
+    },
+    "fixture.airer.inverted": {
+      "type": "urn:miot-spec-v2:device:airer:0000A00D:fixture-airer:1",
+      "services": [
+        {
+          "iid": 2,
+          "type": "urn:miot-spec-v2:service:airer:0000A00D:fixture-airer:1",
+          "description": "Airer",
+          "properties": [
+            {
+              "iid": 1,
+              "type": "urn:miot-spec-v2:property:motor-control:00000038:fixture-airer:1",
+              "format": "uint8",
+              "access": ["write"],
+              "value-list": [
+                { "value": 0, "description": "Pause" },
+                { "value": 1, "description": "Up" },
+                { "value": 2, "description": "Down" }
+              ]
+            },
+            {
+              "iid": 2,
+              "type": "urn:miot-spec-v2:property:current-position:00000039:fixture-airer:1",
+              "format": "uint8",
+              "access": ["read", "notify"],
+              "value-range": [0, 100, 1]
+            },
+            {
+              "iid": 3,
+              "type": "urn:miot-spec-v2:property:target-position:0000003A:fixture-airer:1",
+              "format": "uint8",
+              "access": ["read", "write", "notify"],
+              "value-range": [0, 100, 1]
+            },
+            {
+              "iid": 4,
+              "type": "urn:miot-spec-v2:property:status:00000007:fixture-airer:1",
+              "format": "uint8",
+              "access": ["read", "notify"],
+              "value-list": [
+                { "value": 0, "description": "Stop" },
+                { "value": 1, "description": "Up" },
+                { "value": 2, "description": "Down" }
+              ]
+            },
+            {
+              "iid": 5,
+              "type": "urn:miot-spec-v2:property:mode:00000008:fixture-airer:1",
+              "format": "uint8",
+              "access": ["read", "write"],
+              "value-list": [
+                { "value": 0, "description": "Normal" },
+                { "value": 1, "description": "Calibration" }
+              ]
+            }
+          ],
+          "actions": []
+        }
+      ]
+    },
+    "fixture.washer.activity": {
+      "type": "urn:miot-spec-v2:device:washer:0000A01A:fixture-washer:1",
+      "services": [
+        {
+          "iid": 2,
+          "type": "urn:miot-spec-v2:service:washer:0000A01A:fixture-washer:1",
+          "description": "Washer",
+          "properties": [
+            { "iid": 1, "type": "urn:miot-spec-v2:property:on:00000006:fixture-washer:1", "format": "bool", "access": ["read", "write"] },
+            {
+              "iid": 2,
+              "type": "urn:miot-spec-v2:property:mode:00000008:fixture-washer:1",
+              "format": "uint8",
+              "access": ["read", "write"],
+              "value-list": [
+                { "value": 0, "description": "Standard" },
+                { "value": 1, "description": "Quick" }
+              ]
+            },
+            {
+              "iid": 3,
+              "type": "urn:miot-spec-v2:property:target-temperature:00000020:fixture-washer:1",
+              "format": "uint8",
+              "access": ["read", "write"],
+              "value-range": [20, 60, 1],
+              "unit": "celsius"
+            },
+            {
+              "iid": 4,
+              "type": "urn:miot-spec-v2:property:status:00000007:fixture-washer:1",
+              "format": "uint8",
+              "access": ["read", "notify"],
+              "value-list": [
+                { "value": 0, "description": "Off" },
+                { "value": 1, "description": "Washing" }
+              ]
+            },
+            { "iid": 5, "type": "urn:miot-spec-v2:property:left-time:0000003C:fixture-washer:1", "format": "uint16", "access": ["read", "notify"], "unit": "minutes" },
+            {
+              "iid": 6,
+              "type": "urn:miot-spec-v2:property:fault:00000009:fixture-washer:1",
+              "format": "uint8",
+              "access": ["read", "notify"],
+              "value-list": [
+                { "value": 0, "description": "No Faults" }
+              ]
+            },
+            { "iid": 7, "type": "urn:miot-spec-v2:property:child-lock:00000015:fixture-washer:1", "format": "bool", "access": ["read", "write"] }
+          ],
+          "actions": [
+            { "iid": 1, "type": "urn:miot-spec-v2:action:start-wash:00002808:fixture-washer:1", "in": [] },
+            { "iid": 2, "type": "urn:miot-spec-v2:action:pause:0000280A:fixture-washer:1", "in": [] },
+            { "iid": 3, "type": "urn:miot-spec-v2:action:stop-wash:00002809:fixture-washer:1", "in": [] }
+          ]
+        }
+      ]
+    },
+    "fixture.bath.heater": {
+      "type": "urn:miot-spec-v2:device:bath-heater:0000A028:fixture-bath:1",
+      "services": [
+        {
+          "iid": 2,
+          "type": "urn:miot-spec-v2:service:ptc-bath-heater:00007836:fixture-bath:1",
+          "description": "PTC Bath Heater",
+          "properties": [
+            { "iid": 1, "type": "urn:miot-spec-v2:property:heating:0000000C:fixture-bath:1", "format": "bool", "access": ["read", "write"] },
+            {
+              "iid": 2,
+              "type": "urn:miot-spec-v2:property:target-temperature:00000020:fixture-bath:1",
+              "format": "uint8",
+              "access": ["read", "write"],
+              "value-range": [30, 45, 1],
+              "unit": "celsius"
+            },
+            {
+              "iid": 3,
+              "type": "urn:miot-spec-v2:property:mode:00000008:fixture-bath:1",
+              "format": "uint8",
+              "access": ["read", "write"],
+              "value-list": [
+                { "value": 0, "description": "Off" },
+                { "value": 1, "description": "Heat" },
+                { "value": 2, "description": "Ventilate" }
+              ]
+            },
+            { "iid": 4, "type": "urn:miot-spec-v2:property:indicator-light:0000000A:fixture-bath:1", "format": "bool", "access": ["read", "write"] }
+          ],
+          "actions": []
+        },
+        {
+          "iid": 3,
+          "type": "urn:miot-spec-v2:service:light:00007802:fixture-bath:1",
+          "description": "Light",
+          "properties": [
+            { "iid": 1, "type": "urn:miot-spec-v2:property:on:00000006:fixture-bath:1", "format": "bool", "access": ["read", "write"] }
+          ],
+          "actions": []
+        },
+        {
+          "iid": 4,
+          "type": "urn:miot-spec-v2:service:fan-control:00007809:fixture-bath:1",
+          "description": "Fan Control",
+          "properties": [
+            {
+              "iid": 1,
+              "type": "urn:miot-spec-v2:property:fan-level:00000016:fixture-bath:1",
+              "format": "uint8",
+              "access": ["read", "write"],
+              "value-list": [
+                { "value": 1, "description": "Low" },
+                { "value": 2, "description": "High" }
+              ]
+            }
+          ],
+          "actions": []
+        },
+        {
+          "iid": 5,
+          "type": "urn:miot-spec-v2:service:environment:0000780A:fixture-bath:1",
+          "description": "Environment",
+          "properties": [
+            { "iid": 1, "type": "urn:miot-spec-v2:property:temperature:00000020:fixture-bath:1", "format": "float", "access": ["read", "notify"] },
+            { "iid": 2, "type": "urn:miot-spec-v2:property:relative-humidity:00000022:fixture-bath:1", "format": "uint8", "access": ["read", "notify"], "unit": "percentage" }
+          ],
+          "actions": []
+        }
+      ]
+    },
+    "fixture.fish.tank": {
+      "type": "urn:miot-spec-v2:device:fish-tank:0000A02B:fixture-tank:1",
+      "services": [
+        {
+          "iid": 2,
+          "type": "urn:miot-spec-v2:service:fish-tank:0000A02B:fixture-tank:1",
+          "description": "Fish Tank",
+          "properties": [
+            { "iid": 1, "type": "urn:miot-spec-v2:property:on:00000006:fixture-tank:1", "format": "bool", "access": ["read", "write"] },
+            {
+              "iid": 2,
+              "type": "urn:miot-spec-v2:property:mode:00000008:fixture-tank:1",
+              "format": "uint8",
+              "access": ["read", "write"],
+              "value-list": [
+                { "value": 0, "description": "Auto" },
+                { "value": 1, "description": "Manual" }
+              ]
+            },
+            { "iid": 3, "type": "urn:miot-spec-v2:property:battery-level:00000024:fixture-tank:1", "format": "uint8", "access": ["read", "notify"], "unit": "percentage" }
+          ],
+          "actions": []
+        }
+      ]
     }
   },
   "fallbackSpecs":   [
@@ -3046,6 +3258,24 @@
       "name": "卧室窗帘",
       "model": "fixture.curtain.dual",
       "isOnline": true
+    },
+    {
+      "did": "did_airer",
+      "name": "阳台晾衣架",
+      "model": "fixture.airer.inverted",
+      "isOnline": true
+    },
+    {
+      "did": "did_washer",
+      "name": "洗衣机",
+      "model": "fixture.washer.activity",
+      "isOnline": true
+    },
+    {
+      "did": "did_bath",
+      "name": "浴霸",
+      "model": "fixture.bath.heater",
+      "isOnline": true
     }
   ],
   "rooms": [
@@ -3264,7 +3494,27 @@
     { "did": "did_curtain_dual", "siid": 2, "piid": 10, "value": 1 },
     { "did": "did_curtain_dual", "siid": 3, "piid": 2, "value": 2 },
     { "did": "did_curtain_dual", "siid": 3, "piid": 3, "value": 90 },
-    { "did": "did_curtain_dual", "siid": 3, "piid": 4, "value": 90 }
+    { "did": "did_curtain_dual", "siid": 3, "piid": 4, "value": 90 },
+    { "did": "did_airer", "siid": 2, "piid": 1, "value": 0 },
+    { "did": "did_airer", "siid": 2, "piid": 2, "value": 30 },
+    { "did": "did_airer", "siid": 2, "piid": 3, "value": 30 },
+    { "did": "did_airer", "siid": 2, "piid": 4, "value": 0 },
+    { "did": "did_airer", "siid": 2, "piid": 5, "value": 0 },
+    { "did": "did_washer", "siid": 2, "piid": 1, "value": true },
+    { "did": "did_washer", "siid": 2, "piid": 2, "value": 1 },
+    { "did": "did_washer", "siid": 2, "piid": 3, "value": 40 },
+    { "did": "did_washer", "siid": 2, "piid": 4, "value": 1 },
+    { "did": "did_washer", "siid": 2, "piid": 5, "value": 42 },
+    { "did": "did_washer", "siid": 2, "piid": 6, "value": 0 },
+    { "did": "did_washer", "siid": 2, "piid": 7, "value": false },
+    { "did": "did_bath", "siid": 2, "piid": 1, "value": true },
+    { "did": "did_bath", "siid": 2, "piid": 2, "value": 38 },
+    { "did": "did_bath", "siid": 2, "piid": 3, "value": 1 },
+    { "did": "did_bath", "siid": 2, "piid": 4, "value": true },
+    { "did": "did_bath", "siid": 3, "piid": 1, "value": true },
+    { "did": "did_bath", "siid": 4, "piid": 1, "value": 2 },
+    { "did": "did_bath", "siid": 5, "piid": 1, "value": 24.5 },
+    { "did": "did_bath", "siid": 5, "piid": 2, "value": 55 }
   ],
   "expectedKinds": {
     "did_light": {
@@ -3559,6 +3809,81 @@
       "batteryPercent": null,
       "faultText": null,
       "motion": "stopped"
+    },
+    "did_airer": {
+      "kind": "cover",
+      "entityId": "miot:did_airer:2",
+      "subtype": "clothes-airer",
+      "positionPercent": 70,
+      "positionWritable": true,
+      "openDescription": "Up",
+      "closeDescription": "Down",
+      "pauseDescription": "Pause",
+      "batteryPercent": null,
+      "faultText": null,
+      "motion": "stopped"
+    },
+    "did_washer": {
+      "kind": "appliance",
+      "entityId": "miot:did_washer:2",
+      "isOn": true,
+      "powerPresent": true,
+      "powerWritable": true,
+      "currentMode": "Quick",
+      "availableModes": ["Standard", "Quick"],
+      "modeWritable": true,
+      "targetTemperature": 40,
+      "currentTemperature": null,
+      "minTemp": 20,
+      "maxTemp": 60,
+      "step": 1,
+      "temperatureWritable": true,
+      "statusText": "洗涤中",
+      "faultText": null,
+      "remainingMinutes": 42,
+      "startAction": { "kind": "start", "entityId": "miot-action:did_washer:2:1" },
+      "pauseAction": { "kind": "pause", "entityId": "miot-action:did_washer:2:2" },
+      "stopAction": null,
+      "powerEntityId": "miot:did_washer:2",
+      "modeEntityId": "miot:did_washer:2",
+      "temperatureEntityId": "miot:did_washer:2",
+      "light": null,
+      "fanLevel": null,
+      "currentHumidity": null,
+      "symbolName": null,
+      "roomReading": false,
+      "heats": false
+    },
+    "did_bath": {
+      "kind": "appliance",
+      "entityId": "miot:did_bath:2",
+      "isOn": true,
+      "powerPresent": true,
+      "powerWritable": true,
+      "currentMode": "Heat",
+      "availableModes": ["Off", "Heat", "Ventilate"],
+      "modeWritable": true,
+      "targetTemperature": 38,
+      "currentTemperature": 24.5,
+      "minTemp": 30,
+      "maxTemp": 45,
+      "step": 1,
+      "temperatureWritable": true,
+      "statusText": null,
+      "faultText": null,
+      "remainingMinutes": null,
+      "startAction": null,
+      "pauseAction": null,
+      "stopAction": null,
+      "powerEntityId": "miot:did_bath:2",
+      "modeEntityId": "miot:did_bath:2",
+      "temperatureEntityId": "miot:did_bath:2",
+      "light": { "entityId": "miot:did_bath:3", "isOn": true, "writable": true },
+      "fanLevel": { "entityId": "miot:did_bath:4", "current": "High", "options": ["Low", "High"], "writable": true },
+      "currentHumidity": 55,
+      "symbolName": "heater.vertical",
+      "roomReading": true,
+      "heats": true
     }
   },
   "expectedEnvironmentReadings": [
@@ -3592,6 +3917,14 @@
       "roomName": "客厅",
       "temperature": 27.2,
       "humidity": null,
+      "battery": null
+    },
+    {
+      "id": "did_bath",
+      "label": "浴霸",
+      "roomName": "全屋",
+      "temperature": 24.5,
+      "humidity": 55,
       "battery": null
     }
   ],
@@ -3829,6 +4162,28 @@
       { "did": "did_curtain_dual", "siid": 3, "piid": 3 },
       { "did": "did_curtain_dual", "siid": 3, "piid": 4 },
       { "did": "did_curtain_dual", "siid": 3, "piid": 2 }
+    ],
+    "did_airer": [
+      { "did": "did_airer", "siid": 2, "piid": 2 },
+      { "did": "did_airer", "siid": 2, "piid": 3 },
+      { "did": "did_airer", "siid": 2, "piid": 4 }
+    ],
+    "did_washer": [
+      { "did": "did_washer", "siid": 2, "piid": 1 },
+      { "did": "did_washer", "siid": 2, "piid": 2 },
+      { "did": "did_washer", "siid": 2, "piid": 3 },
+      { "did": "did_washer", "siid": 2, "piid": 4 },
+      { "did": "did_washer", "siid": 2, "piid": 6 },
+      { "did": "did_washer", "siid": 2, "piid": 5 }
+    ],
+    "did_bath": [
+      { "did": "did_bath", "siid": 2, "piid": 1 },
+      { "did": "did_bath", "siid": 2, "piid": 3 },
+      { "did": "did_bath", "siid": 2, "piid": 2 },
+      { "did": "did_bath", "siid": 5, "piid": 1 },
+      { "did": "did_bath", "siid": 5, "piid": 2 },
+      { "did": "did_bath", "siid": 3, "piid": 1 },
+      { "did": "did_bath", "siid": 4, "piid": 1 }
     ]
   },
   "expectedNames": {
@@ -4214,6 +4569,74 @@
           "inputs": []
         }
       }
+    },
+    {
+      "model": "fixture.airer.inverted",
+      "command": { "kind": "setNumberValue", "entityId": "miot:did_airer:2", "value": 70 },
+      "expected": {
+        "kind": "setProps",
+        "writes": [
+          { "did": "did_airer", "siid": 2, "piid": 3, "value": 30 }
+        ]
+      }
+    },
+    {
+      "model": "fixture.washer.activity",
+      "command": { "kind": "pressButton", "entityId": "miot-action:did_washer:2:1" },
+      "expected": {
+        "kind": "action",
+        "call": { "did": "did_washer", "siid": 2, "aiid": 1, "inputs": [] }
+      }
+    },
+    {
+      "model": "fixture.bath.heater",
+      "command": { "kind": "setSwitch", "entityId": "miot:did_bath:2", "isOn": false },
+      "expected": {
+        "kind": "setProps",
+        "writes": [
+          { "did": "did_bath", "siid": 2, "piid": 1, "value": false }
+        ]
+      }
+    },
+    {
+      "model": "fixture.washer.activity",
+      "command": { "kind": "setSelectOption", "entityId": "miot:did_washer:2", "option": "Standard" },
+      "expected": {
+        "kind": "setProps",
+        "writes": [
+          { "did": "did_washer", "siid": 2, "piid": 2, "value": 0 }
+        ]
+      }
+    },
+    {
+      "model": "fixture.washer.activity",
+      "command": { "kind": "setClimateTemperature", "entityId": "miot:did_washer:2", "temperature": 45 },
+      "expected": {
+        "kind": "setProps",
+        "writes": [
+          { "did": "did_washer", "siid": 2, "piid": 3, "value": 45 }
+        ]
+      }
+    },
+    {
+      "model": "fixture.bath.heater",
+      "command": { "kind": "setClimateFanMode", "entityId": "miot:did_bath:2", "fanMode": "Low" },
+      "expected": {
+        "kind": "setProps",
+        "writes": [
+          { "did": "did_bath", "siid": 4, "piid": 1, "value": 1 }
+        ]
+      }
+    },
+    {
+      "model": "fixture.fish.tank",
+      "command": { "kind": "setMiotProperty", "entityId": "miot:did_fish_tank:2", "piid": 2, "value": 1 },
+      "expected": {
+        "kind": "setProps",
+        "writes": [
+          { "did": "did_fish_tank", "siid": 2, "piid": 2, "value": 1 }
+        ]
+      }
     }
   ],
   "selectionCases": [
@@ -4299,6 +4722,53 @@
         "did_power_unknown",
         "did_cooker"
       ]
+    }
+  ],
+  "facetCases": [
+    {
+      "did": "did_airer",
+      "model": "fixture.airer.inverted",
+      "expected": [
+        { "id": "2.5", "kind": "select", "name": "mode", "serviceName": "airer", "isWritable": true, "writesByDefault": false, "isHighValue": true }
+      ]
+    },
+    {
+      "did": "did_washer",
+      "model": "fixture.washer.activity",
+      "expected": [
+        { "id": "2.7", "kind": "toggle", "name": "child-lock", "serviceName": "washer", "isWritable": true, "writesByDefault": false, "isHighValue": false }
+      ]
+    },
+    {
+      "did": "did_bath",
+      "model": "fixture.bath.heater",
+      "expected": [
+        { "id": "2.4", "kind": "toggle", "name": "indicator-light", "serviceName": "ptc-bath-heater", "isWritable": true, "writesByDefault": false, "isHighValue": false }
+      ]
+    }
+  ],
+  "genericCases": [
+    {
+      "did": "did_fish_tank",
+      "model": "fixture.fish.tank",
+      "values": [
+        { "siid": 2, "piid": 1, "value": true },
+        { "siid": 2, "piid": 2, "value": 0 },
+        { "siid": 2, "piid": 3, "value": 88 }
+      ],
+      "expected": {
+        "deviceType": "fish-tank",
+        "typeTitle": "鱼缸",
+        "isOn": true,
+        "isReadOnly": false,
+        "readouts": ["88%"],
+        "symbolName": "fish.fill",
+        "powerFacet": { "id": "2.1", "kind": "toggle", "name": "on", "serviceName": "fish-tank", "isWritable": true, "writesByDefault": true, "isHighValue": false },
+        "facets": [
+          { "id": "2.2", "kind": "select", "name": "mode", "serviceName": "fish-tank", "isWritable": true, "writesByDefault": true, "isHighValue": false },
+          { "id": "2.3", "kind": "reading", "name": "battery-level", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false }
+        ]
+      }
     }
   ]
 }

@@ -82,11 +82,13 @@ import {
   type DeviceCommand,
   type DeviceIntent,
   type EnvironmentReading,
+  type FacetControl,
   type HomeScene,
   type IntentPlan,
   type ScheduledCommand,
   type SmartDevice,
   allOffTargets,
+  applianceModeStartsHeating,
   cloudRefreshDue,
   deviceAcceptsControlWrites,
   deviceCanTogglePower,
@@ -98,6 +100,8 @@ import {
   isDeviceActiveOn,
   joinsAllOff,
   joinsAllOffByDefault,
+  localizeApplianceFanLevel,
+  localizeApplianceMode,
   localizeNightShot,
   localizeAirQuality,
   localizeFanPreset,
@@ -180,6 +184,8 @@ import { createTransport, invokeTauriVoid } from "./transport.js";
 import { loadSettings, stripCredentialFieldsFromStoredCopies, upgradeCachedDevices, writeSettingsForStorage } from "./settings.js";
 import { CameraLiveController } from "./cameraLive.js";
 import { renderClimateStrip, renderDeviceDrawer, renderSensorCard } from "./deviceViews.js";
+import { facetWriteEnabled, facetWriteIsHazardous } from "./facetViews.js";
+import { facetTitle, facetValue } from "../core/miotFacetText.js";
 import { renderSettingsModal } from "./settingsViews.js";
 import { bindLayoutGestures } from "./layoutGestures.js";
 import { bindSettingsEvents } from "./settingsEvents.js";
@@ -480,6 +486,11 @@ import type { MenuMijiaWindowsApp } from "./app.js";
       host.saveSettings();
       host.render();
     });
+    host.root.querySelector<HTMLInputElement>("#settings-allow-advanced-facets")?.addEventListener("change", (e) => {
+      host.settings.allowAdvancedFacetWrites = (e.target as HTMLInputElement).checked;
+      host.saveSettings();
+      host.render();
+    });
     host.root.querySelector<HTMLInputElement>("#settings-quick-actions")?.addEventListener("change", (e) => {
       host.settings.showQuickActionsBar = (e.target as HTMLInputElement).checked;
       host.saveSettings();
@@ -685,6 +696,42 @@ import type { MenuMijiaWindowsApp } from "./app.js";
       });
     });
 
+    /**
+     * A high-risk manual write asks for one more tap on the same card within a few seconds, and
+     * the arm is bound to that exact command: a different high-risk write on the same device
+     * re-arms instead of spending the previous tap. The window expires so an old tap can never
+     * authorise a later write (macOS 再点一次确认).
+     */
+    const confirmHighRisk = (deviceId: string, command: DeviceCommand, label: string): boolean => {
+      const actionKey = JSON.stringify(command);
+      const armed = host.pendingHighRisk;
+      if (
+        armed &&
+        armed.deviceId === deviceId &&
+        armed.actionKey === actionKey &&
+        armed.expiresAtMs > Date.now()
+      ) {
+        host.pendingHighRisk = null;
+        return true;
+      }
+      host.pendingHighRisk = { deviceId, actionKey, expiresAtMs: Date.now() + 8000 };
+      host.replyBanner = {
+        text: t("「{action}」属于高风险设备，再点一次确认执行", { action: label }),
+        source: t("需要确认"),
+      };
+      host.render();
+      return false;
+    };
+
+    /** Three `|`-separated parts, for rows whose value is itself a segment (`id|control|value`). */
+    const splitChoice = (raw: string | undefined): [string, string, string] | null => {
+      if (!raw) return null;
+      const first = raw.indexOf("|");
+      const second = first < 0 ? -1 : raw.indexOf("|", first + 1);
+      if (first <= 0 || second <= 0) return null;
+      return [raw.slice(0, first), raw.slice(first + 1, second), raw.slice(second + 1)];
+    };
+
     const toggleDeviceById = (id: string) => {
       const dev = host.devices.find((d) => d.id === id);
       if (!dev || dev.kind.kind === "sensor" || !deviceCanTogglePower(dev)) return;
@@ -695,13 +742,21 @@ import type { MenuMijiaWindowsApp } from "./app.js";
       }
       if (host.waitingDeviceIds.has(id)) return;
       const nextOn = !isDeviceActiveOn(dev);
-      host.poppedDeviceId = dev.id;
       const cmds = IntentValidator.commandsForIntent(
         { targetId: dev.id, operation: { kind: "power", isOn: nextOn } },
         dev,
       );
       const firstCmd = cmds[0];
       if (!firstCmd) return;
+      // A window opener, an airer, a garage door, a heater or a water heater asks first (#9).
+      const groupHazard =
+        (dev.kind.kind === "cover" || dev.kind.kind === "appliance") &&
+        ManualControlPolicy.requiresConfirmation(
+          { targetId: dev.id, operation: { kind: "power", isOn: nextOn } },
+          host.devices,
+        );
+      if (groupHazard && !confirmHighRisk(dev.id, firstCmd, `${nextOn ? t("打开") : t("关闭")}${dev.name}`)) return;
+      host.poppedDeviceId = dev.id;
       const waitsForCloud = host.settings.connectionMode !== "demo";
       if (waitsForCloud) {
         host.waitingDeviceIds.add(id);
@@ -751,6 +806,13 @@ import type { MenuMijiaWindowsApp } from "./app.js";
             (dev.kind.kind === "climate" &&
               (dev.kind.temperatureWritable !== false || dev.kind.availableModes.length > 0 || dev.kind.availableFanModes.length > 0));
           if (!canExpand) return;
+          host.expandedDeviceId = host.expandedDeviceId === id ? null : id;
+          host.render();
+        } else if (
+          (k === "appliance" || k === "generic") &&
+          (deviceAcceptsControlWrites(dev) || (host.deviceFacets[id]?.length ?? 0) > 0)
+        ) {
+          // An appliance or a generic card opens its drawer from the body; its orb is the switch.
           host.expandedDeviceId = host.expandedDeviceId === id ? null : id;
           host.render();
         } else if (writable) {
@@ -1010,6 +1072,218 @@ import type { MenuMijiaWindowsApp } from "./app.js";
           { kind: "setNumberValue", entityId, value: next },
           t("已将{name}设为 {temp}", { name: dev.name, temp: formatTemperature(next) }),
         );
+      });
+    });
+
+    /** The `deviceId|value` pair every drawer control encodes. */
+    const splitControlId = (raw: string | undefined): [string, string] | null => {
+      if (!raw) return null;
+      const sep = raw.indexOf("|");
+      if (sep <= 0) return null;
+      return [raw.slice(0, sep), raw.slice(sep + 1)];
+    };
+
+    const applianceFor = (id: string) => {
+      const dev = host.devices.find((d) => d.id === id);
+      return dev && dev.kind.kind === "appliance" ? dev : null;
+    };
+
+    host.root.querySelectorAll<HTMLElement>("[data-appliancetemp]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const pair = splitControlId(btn.dataset.appliancetemp);
+        if (!pair) return;
+        const [id, delta] = pair;
+        const dev = applianceFor(id);
+        if (!dev || dev.kind.kind !== "appliance") return;
+        const spec = dev.kind;
+        if (!spec.temperatureWritable || spec.targetTemperature === null) return;
+        // One tap moves one degree in Fahrenheit, the spec's own step in Celsius (macOS parity).
+        const step = stepCelsius(spec.step > 0 ? spec.step : 1);
+        const raw = spec.targetTemperature + Number(delta) * step;
+        const next = Math.min(spec.maxTemp, Math.max(spec.minTemp, Number((Math.round(raw / step) * step).toFixed(2))));
+        if (next === spec.targetTemperature) return;
+        const command: DeviceCommand = {
+          kind: "setClimateTemperature",
+          entityId: spec.temperatureEntityId,
+          temperature: next,
+        };
+        if (
+          spec.heats &&
+          next > spec.targetTemperature &&
+          !confirmHighRisk(dev.id, command, t("设为 {temp}", { temp: formatTemperature(next) }))
+        ) {
+          return;
+        }
+        void host.executeSingleCommand(
+          dev,
+          command,
+          t("已将{name}设为 {temp}", { name: dev.name, temp: formatTemperature(next) }),
+        );
+      });
+    });
+
+    host.root.querySelectorAll<HTMLElement>("[data-appliancemode]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const pair = splitControlId(btn.dataset.appliancemode);
+        if (!pair) return;
+        const [id, mode] = pair;
+        const dev = applianceFor(id);
+        if (!dev || dev.kind.kind !== "appliance" || !dev.kind.modeWritable) return;
+        const command: DeviceCommand = { kind: "setSelectOption", entityId: dev.kind.modeEntityId, option: mode };
+        // Picking a heat mode from standby starts the heater, so it asks like the power button.
+        if (
+          dev.kind.heats &&
+          !dev.kind.isOn &&
+          applianceModeStartsHeating(mode) &&
+          !confirmHighRisk(dev.id, command, t("切换到{mode}", { mode: localizeApplianceMode(mode) }))
+        ) {
+          return;
+        }
+        void host.executeSingleCommand(
+          dev,
+          command,
+          t("已将{name}设为{mode}", { name: dev.name, mode: localizeApplianceMode(mode) }),
+        );
+      });
+    });
+
+    host.root.querySelectorAll<HTMLElement>("[data-appliancefan]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const pair = splitControlId(btn.dataset.appliancefan);
+        if (!pair) return;
+        const [id, level] = pair;
+        const dev = applianceFor(id);
+        if (!dev || dev.kind.kind !== "appliance" || !dev.kind.fanLevel?.writable) return;
+        void host.executeSingleCommand(
+          dev,
+          { kind: "setClimateFanMode", entityId: dev.kind.fanLevel.entityId, fanMode: level },
+          t("已将{name}风速调为 {level}", { name: dev.name, level: localizeApplianceFanLevel(level) }),
+        );
+      });
+    });
+
+    host.root.querySelectorAll<HTMLElement>("[data-appliancelight]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.appliancelight;
+        if (!id) return;
+        const dev = applianceFor(id);
+        if (!dev || dev.kind.kind !== "appliance" || !dev.kind.light?.writable) return;
+        const isOn = !dev.kind.light.isOn;
+        void host.executeSingleCommand(
+          dev,
+          { kind: "setSwitch", entityId: dev.kind.light.entityId, isOn },
+          isOn ? t("已打开{name}的灯光", { name: dev.name }) : t("已关闭{name}的灯光", { name: dev.name }),
+        );
+      });
+    });
+
+    host.root.querySelectorAll<HTMLElement>("[data-applianceaction]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const pair = splitControlId(btn.dataset.applianceaction);
+        if (!pair) return;
+        const [id, kind] = pair;
+        const dev = applianceFor(id);
+        if (!dev || dev.kind.kind !== "appliance") return;
+        const action =
+          kind === "start"
+            ? dev.kind.startAction
+            : kind === "pause"
+              ? dev.kind.pauseAction
+              : dev.kind.stopAction;
+        if (!action) return;
+        const command: DeviceCommand = { kind: "pressButton", entityId: action.entityId };
+        // Starting a cycle is the hazardous direction; pausing and stopping wind it down.
+        if (kind === "start" && !confirmHighRisk(dev.id, command, `${t("开始")}${dev.name}`)) return;
+        void host.executeSingleCommand(
+          dev,
+          command,
+          action.kind === "start"
+            ? t("已开始{name}", { name: dev.name })
+            : action.kind === "pause"
+              ? t("已暂停{name}", { name: dev.name })
+              : t("已停止{name}", { name: dev.name }),
+        );
+      });
+    });
+
+    /** The 更多设置 row a write came from, or null when the cache is stale. */
+    const facetFor = (deviceId: string, controlId: string): { dev: SmartDevice; control: FacetControl } | null => {
+      const dev = host.devices.find((d) => d.id === deviceId);
+      const control = host.deviceFacets[deviceId]?.find((item) => item.id === controlId);
+      return dev && control ? { dev, control } : null;
+    };
+
+    const writeFacet = (deviceId: string, controlId: string, value: unknown) => {
+      const found = facetFor(deviceId, controlId);
+      if (!found) return;
+      const { dev, control } = found;
+      if (!facetWriteEnabled(control, host.settings.allowAdvancedFacetWrites)) return;
+      const target = control.target;
+      if (!target) return;
+      const command: DeviceCommand =
+        target.kind === "action"
+          ? { kind: "pressButton", entityId: target.entityId }
+          : { kind: "setMiotProperty", entityId: target.entityId, piid: target.piid, value };
+      if (facetWriteIsHazardous(control, value) && !confirmHighRisk(dev.id, command, facetTitle(control))) {
+        return;
+      }
+      if (target.kind === "action") {
+        void host.executeSingleCommand(
+          dev,
+          command,
+          t("已执行{name}的{control}", { name: dev.name, control: facetTitle(control) }),
+        );
+        return;
+      }
+      void host.executeSingleCommand(
+        dev,
+        command,
+        t("已设置{name}的{control}为 {value}", {
+          name: dev.name,
+          control: facetTitle(control),
+          value: facetValue({ ...control, value }),
+        }),
+      );
+    };
+
+    host.root.querySelectorAll<HTMLElement>("[data-facet-toggle]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const pair = splitControlId(btn.dataset.facetToggle);
+        if (!pair) return;
+        const [id, controlId] = pair;
+        const found = facetFor(id, controlId);
+        if (!found) return;
+        const isOn = found.control.value === true || found.control.value === 1;
+        writeFacet(id, controlId, isOn ? false : true);
+      });
+    });
+
+    host.root.querySelectorAll<HTMLElement>("[data-facet-select]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const choice = splitChoice(btn.dataset.facetSelect);
+        if (!choice) return;
+        const [deviceId, controlId, rawValue] = choice;
+        const value = Number(rawValue);
+        if (!Number.isFinite(value)) return;
+        writeFacet(deviceId, controlId, value);
+      });
+    });
+
+    host.root.querySelectorAll<HTMLInputElement>("[data-facet-number]").forEach((slider) => {
+      slider.addEventListener("change", () => {
+        const pair = splitControlId(slider.dataset.facetNumber);
+        if (!pair) return;
+        const value = Number(slider.value);
+        if (!Number.isFinite(value)) return;
+        writeFacet(pair[0], pair[1], value);
+      });
+    });
+
+    host.root.querySelectorAll<HTMLElement>("[data-facet-action]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const pair = splitControlId(btn.dataset.facetAction);
+        if (!pair) return;
+        writeFacet(pair[0], pair[1], null);
       });
     });
 

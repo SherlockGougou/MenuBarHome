@@ -121,6 +121,8 @@ export function loadSettings(): LoadedSettings {
           isCompactGridMode: parsed.isCompactGridMode ?? true,
           hideOfflineDevices: typeof parsed.hideOfflineDevices === "boolean" ? parsed.hideOfflineDevices : false,
           hideGroupedLights: typeof parsed.hideGroupedLights === "boolean" ? parsed.hideGroupedLights : true,
+          allowAdvancedFacetWrites:
+            typeof parsed.allowAdvancedFacetWrites === "boolean" ? parsed.allowAdvancedFacetWrites : false,
           cachedXiaomiDevices: Array.isArray(parsed.cachedXiaomiDevices)
             ? upgradeCachedDevices(
                 parsed.cachedXiaomiDevices,
@@ -193,6 +195,7 @@ export function loadSettings(): LoadedSettings {
       isCompactGridMode: true,
       hideOfflineDevices: false,
       hideGroupedLights: true,
+      allowAdvancedFacetWrites: false,
       cachedXiaomiDevices: [],
       cachedDevicesVersion: CACHED_DEVICES_VERSION,
       cachedHAHome: null,

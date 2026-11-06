@@ -2,7 +2,7 @@ import type { MenuMijiaWindowsApp } from "./app.js";
 import { t } from "../core/i18n.js";
 import { HomeAssistantClient, homeAssistantCommand } from "../core/homeAssistant.js";
 import { MiCloudClient, MiotCommandMapper, propKeyString } from "../core/miCloudClient.js";
-import { readMiotPower, type DeviceCommand } from "../core/models.js";
+import { readMiotPower, type DeviceCommand, type DeviceKind, type FacetControl, type SmartDevice } from "../core/models.js";
 import { applyCommandToDevices } from "../core/commandEffects.js";
 
 function withReadPower(command: DeviceCommand, isOn: boolean): DeviceCommand {
@@ -36,7 +36,7 @@ export async function applyCommand(host: MenuMijiaWindowsApp, command: DeviceCom
     }
     if (sourceRevision !== host.sourceRevision) return false;
     host.localControlRevision += 1;
-    for (const change of applyCommandToDevices(host.devices, command, host.settings.connectionMode)) {
+    for (const change of applyCommandToDevices(host.devices, command, host.settings.connectionMode, host.deviceFacets)) {
       if (host.cameraLive.activeLiveCameraId !== change.deviceId || host.cameraLive.liveCameraHidden) continue;
       if (change.isOn) {
         host.cameraLive.reconnectCameraLiveView();
@@ -48,6 +48,62 @@ export async function applyCommand(host: MenuMijiaWindowsApp, command: DeviceCom
 
     return true;
   }
+
+/**
+ * The card that owns a MIoT entity id, or null when none does. A card's own controls and every
+ * 更多设置 row count: a plug's auxiliary control lives on a sibling service (#5), so the drawer
+ * address must resolve to the card even though the card's main switch has another one.
+ */
+export function deviceOwningEntityId(
+  devices: readonly SmartDevice[],
+  facets: Readonly<Record<string, readonly FacetControl[]>>,
+  entityId: string,
+): string | null {
+  const owner = devices.find((device) => {
+    if (kindOwnsEntity(device.kind, entityId)) return true;
+    return (facets[device.id] ?? []).some((facet) => facet.target?.entityId === entityId);
+  });
+  return owner?.id ?? null;
+}
+
+/** The entity ids a card's own controls address, before 更多设置 rows are considered. */
+function kindOwnsEntity(kind: DeviceKind, entityId: string): boolean {
+  switch (kind.kind) {
+    case "plug":
+      return kind.switchEntityId === entityId || kind.childLockEntityId === entityId;
+    case "camera":
+      return kind.entityId === entityId || kind.motionDetectionEntityId === entityId;
+    case "fridge":
+      return (
+        kind.modeEntityId === entityId ||
+        kind.fridgeTargetEntityId === entityId ||
+        kind.freezerTargetEntityId === entityId
+      );
+    case "speaker":
+      return [kind.mediaEntityId, kind.muteSwitchEntityId, kind.sleepModeEntityId].includes(entityId);
+    case "appliance":
+      // An appliance card addresses several services: main function, power, mode, temperature,
+      // light, fan speed and the no-argument actions (#300, #3, #4).
+      return [
+        kind.entityId,
+        kind.powerEntityId,
+        kind.modeEntityId,
+        kind.temperatureEntityId,
+        kind.light?.entityId,
+        kind.fanLevel?.entityId,
+        kind.startAction?.entityId,
+        kind.pauseAction?.entityId,
+        kind.stopAction?.entityId,
+      ].includes(entityId);
+    case "generic":
+      // A generic card has no primary service; its switch and 更多设置 rows own the addresses (#6).
+      return kind.powerControl?.target?.entityId === entityId;
+    case "sensor":
+      return false;
+    default:
+      return kind.entityId === entityId;
+  }
+}
 
 export async function dispatchCloudCommand(host: MenuMijiaWindowsApp, command: DeviceCommand, readBackPower = false): Promise<boolean | null> {
     const sourceRevision = host.sourceRevision;
@@ -61,23 +117,8 @@ export async function dispatchCloudCommand(host: MenuMijiaWindowsApp, command: D
     }
     if (!host.settings.miSession) throw new Error(t("请先扫码登录米家"));
     const session = host.settings.miSession;
-    const dev = host.devices.find((d) => {
-      const k = d.kind;
-      if (k.kind === "plug") return k.switchEntityId === command.entityId || k.childLockEntityId === command.entityId;
-      if (k.kind === "camera") return k.entityId === command.entityId || k.motionDetectionEntityId === command.entityId;
-      if (k.kind === "fridge") {
-        return (
-          k.modeEntityId === command.entityId ||
-          k.fridgeTargetEntityId === command.entityId ||
-          k.freezerTargetEntityId === command.entityId
-        );
-      }
-      if (k.kind === "sensor") return false;
-      if (k.kind === "speaker") {
-        return [k.mediaEntityId, k.muteSwitchEntityId, k.sleepModeEntityId].includes(command.entityId);
-      }
-      return k.entityId === command.entityId;
-    });
+    const deviceId = deviceOwningEntityId(host.devices, host.deviceFacets, command.entityId);
+    const dev = host.devices.find((d) => d.id === deviceId);
     if (!dev) throw new Error(t("无法找到指令对应的设备"));
 
     const spec = await host.specResolver.resolve({

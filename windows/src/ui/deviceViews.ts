@@ -1,5 +1,6 @@
 import { t } from "../core/i18n.js";
 import { IntentReply } from "../core/assistant.js";
+import { renderMoreSettings } from "./facetViews.js";
 import {
   deviceAcceptsControlWrites,
   deviceCanTogglePower,
@@ -11,7 +12,10 @@ import {
   localizeFridgeMode,
   localizeNightShot,
   type EnvironmentReading,
+  type FacetControl,
   type SmartDevice,
+  localizeApplianceFanLevel,
+  localizeApplianceMode,
 } from "../core/models.js";
 import {
   TILE_SIZES,
@@ -184,7 +188,8 @@ import { SF_ICONS } from "./appConstants.js";
       </div>`;
   }
 
-export function renderDeviceDrawer(dev: SmartDevice, escapeHtml: (value: string) => string): string {
+/** The card's own detailed controls; 更多设置 is appended by `renderDeviceDrawer` (#5). */
+function renderPrimaryDrawer(dev: SmartDevice, escapeHtml: (value: string) => string): string {
     const k = dev.kind;
     if (k.kind === "light") {
       const showBrightness = k.brightnessWritable !== false;
@@ -383,6 +388,79 @@ export function renderDeviceDrawer(dev: SmartDevice, escapeHtml: (value: string)
         </div>
       `;
     }
+    if (k.kind === "appliance") {
+      const id = escapeHtml(dev.id);
+      const rows: string[] = [];
+      if (k.faultText) {
+        rows.push(`<div class="cc-appliance-fault">${escapeHtml(k.faultText)}</div>`);
+      }
+      if (k.temperatureWritable && k.targetTemperature !== null) {
+        rows.push(`<div class="cc-segmented-pills">
+          <button class="cc-seg-pill" data-appliancetemp="${id}|-1" aria-label="${t("降低目标温度")}">−</button>
+          <span class="cc-pill-label">${formatTemperature(k.targetTemperature)}</span>
+          <button class="cc-seg-pill" data-appliancetemp="${id}|1" aria-label="${t("升高目标温度")}">＋</button>
+        </div>`);
+      }
+      if (k.modeWritable && k.availableModes.length > 0) {
+        rows.push(`<div class="cc-segmented-pills">
+          ${k.availableModes
+            .map(
+              (mode) => `<button class="cc-seg-pill ${k.currentMode === mode ? "is-active" : ""}"
+                data-appliancemode="${id}|${escapeHtml(mode)}" aria-pressed="${k.currentMode === mode}">
+                ${escapeHtml(localizeApplianceMode(mode))}
+              </button>`,
+            )
+            .join("")}
+        </div>`);
+      }
+      if (k.fanLevel?.writable && k.fanLevel.options.length > 0) {
+        rows.push(`<div class="cc-segmented-pills">
+          ${k.fanLevel.options
+            .map(
+              (level) => `<button class="cc-seg-pill ${k.fanLevel?.current === level ? "is-active" : ""}"
+                data-appliancefan="${id}|${escapeHtml(level)}" aria-pressed="${k.fanLevel?.current === level}">
+                ${escapeHtml(localizeApplianceFanLevel(level))}
+              </button>`,
+            )
+            .join("")}
+        </div>`);
+      }
+      if (k.light?.writable) {
+        rows.push(`<div class="cc-segmented-pills">
+          <button class="cc-seg-pill ${k.light.isOn ? "is-active" : ""}" data-appliancelight="${id}" aria-pressed="${k.light.isOn}">
+            ${k.light.isOn ? t("灯光：开") : t("灯光：关")}
+          </button>
+        </div>`);
+      }
+      if (k.roomReading && k.currentHumidity !== null) {
+        rows.push(`<div class="cc-slider-label"><span>${t("湿度")}</span><strong>${Math.round(k.currentHumidity)}%</strong></div>`);
+      }
+      if (k.statusText) {
+        rows.push(`<div class="cc-slider-label"><span>${t("状态")}</span><span>${escapeHtml(k.statusText)}</span></div>`);
+      }
+      if (k.remainingMinutes !== null) {
+        rows.push(`<div class="cc-slider-label"><span>${t("剩余时间")}</span><span>${t("{minutes} 分钟", { minutes: k.remainingMinutes })}</span></div>`);
+      }
+      const actions = (
+        [
+          ["start", k.startAction, t("开始")],
+          ["pause", k.pauseAction, t("暂停")],
+          ["stop", k.stopAction, t("停止")],
+        ] as const
+      ).filter(([, action]) => action !== null);
+      if (actions.length > 0) {
+        rows.push(`<div class="cc-segmented-pills">
+          ${actions
+            .map(
+              ([kind, , label]) =>
+                `<button class="cc-seg-pill" data-applianceaction="${id}|${kind}">${label}</button>`,
+            )
+            .join("")}
+        </div>`);
+      }
+      if (rows.length === 0) return "";
+      return `<div class="cc-tile-drawer">${rows.join("")}</div>`;
+    }
     if (k.kind === "fridge") {
       const id = escapeHtml(dev.id);
       const fridgeStep = k.fridgeTargetEntityId
@@ -422,6 +500,19 @@ export function renderDeviceDrawer(dev: SmartDevice, escapeHtml: (value: string)
     return "";
   }
 
+/** Detailed controls plus the 更多设置 rows (#5); empty when the card has nothing to expand. */
+export function renderDeviceDrawer(
+  dev: SmartDevice,
+  escapeHtml: (value: string) => string,
+  facets: readonly FacetControl[] = [],
+  allowAdvanced = false,
+): string {
+  return (
+    renderPrimaryDrawer(dev, escapeHtml) +
+    renderMoreSettings({ deviceId: dev.id, facets, allowAdvanced, escapeHtml })
+  );
+}
+
 function devicePaletteClass(dev: SmartDevice): string {
   switch (dev.kind.kind) {
     case "light":
@@ -443,6 +534,10 @@ function devicePaletteClass(dev: SmartDevice): string {
       return "palette-teal";
     case "speaker":
       return "palette-indigo";
+    case "appliance":
+      return "palette-blue";
+    case "generic":
+      return "palette-teal";
   }
 }
 
@@ -467,6 +562,10 @@ function deviceSvgIcon(dev: SmartDevice): string {
       return SF_ICONS.sensorFill;
     case "speaker":
       return SF_ICONS.speakerFill;
+    case "appliance":
+      return SF_ICONS.sensorFill;
+    case "generic":
+      return SF_ICONS.sensorFill;
   }
 }
 
@@ -485,6 +584,8 @@ export interface DeviceTileViewState {
   readonly waitingDeviceIds: ReadonlySet<string>;
   readonly compactGrid: boolean;
   readonly dimPreview: { readonly id: string; readonly percent: number } | null;
+  readonly deviceFacets: Readonly<Record<string, readonly FacetControl[]>>;
+  readonly allowAdvancedFacetWrites: boolean;
   readonly escapeHtml: (value: string) => string;
 }
 
@@ -531,7 +632,9 @@ export function renderDeviceTile(dev: SmartDevice, state: DeviceTileViewState): 
     (dev.kind.kind === "camera" &&
       (writable || dev.kind.availableNightShots.length > 0 || dev.kind.motionDetectionEntityId !== null)) ||
     (dev.kind.kind === "vacuum" && dev.kind.actionsWritable !== false) ||
-    (dev.kind.kind === "speaker" && deviceAcceptsControlWrites(dev));
+    (dev.kind.kind === "speaker" && deviceAcceptsControlWrites(dev)) ||
+    (dev.kind.kind === "appliance" && deviceAcceptsControlWrites(dev)) ||
+    (state.deviceFacets[dev.id]?.length ?? 0) > 0;
   const subtitle =
     state.selectedRoom === "全部"
       ? `${dev.roomName} · ${deviceStatusSummary(dev)}`
@@ -554,6 +657,11 @@ export function renderDeviceTile(dev: SmartDevice, state: DeviceTileViewState): 
         ${fill > 0 ? `<span class="cc-tile-fill" style="width:${fill}%"></span>` : ""}
         ${badge}
         <div class="cc-tile-header">
+          ${
+            dev.kind.kind === "generic" && dev.kind.isReadOnly
+              ? `<span class="cc-readonly-badge">${t("只读")}</span>`
+              : ""
+          }
           ${
             writable
               ? `<button
@@ -593,7 +701,11 @@ export function renderDeviceTile(dev: SmartDevice, state: DeviceTileViewState): 
               : ""
           }
         </div>
-        ${isExpanded && hasDrawer ? renderDeviceDrawer(dev, escape) : ""}
+        ${
+          isExpanded && hasDrawer
+            ? renderDeviceDrawer(dev, escape, state.deviceFacets[dev.id] ?? [], state.allowAdvancedFacetWrites)
+            : ""
+        }
       </div>
     `;
 }

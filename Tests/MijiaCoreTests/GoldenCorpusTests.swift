@@ -52,6 +52,7 @@ struct GoldenCorpusTests {
         case camera(CameraPayload)
         case sensor(SensorPayload)
         case cover(CoverPayload)
+        case appliance(AppliancePayload)
         private enum CodingKeys: String, CodingKey { case kind }
 
         struct LightPayload: Decodable {
@@ -155,6 +156,59 @@ struct GoldenCorpusTests {
             let statusText: String?
         }
 
+        struct ApplianceActionPayload: Decodable {
+            let kind: String
+            let entityId: String
+
+            func toAction() -> ApplianceAction {
+                ApplianceAction(kind: ApplianceActionKind(rawValue: kind) ?? .start, entityId: entityId)
+            }
+        }
+
+        struct ApplianceLightPayload: Decodable {
+            let entityId: String
+            let isOn: Bool
+            let writable: Bool
+        }
+
+        struct ApplianceFanLevelPayload: Decodable {
+            let entityId: String
+            let current: String?
+            let options: [String]
+            let writable: Bool
+        }
+
+        struct AppliancePayload: Decodable {
+            let entityId: String
+            let isOn: Bool
+            let powerPresent: Bool
+            let powerWritable: Bool
+            let currentMode: String?
+            let availableModes: [String]
+            let modeWritable: Bool
+            let targetTemperature: Double?
+            let currentTemperature: Double?
+            let minTemp: Double
+            let maxTemp: Double
+            let step: Double
+            let temperatureWritable: Bool
+            let statusText: String?
+            let faultText: String?
+            let remainingMinutes: Int?
+            let startAction: ApplianceActionPayload?
+            let pauseAction: ApplianceActionPayload?
+            let stopAction: ApplianceActionPayload?
+            let powerEntityId: String
+            let modeEntityId: String
+            let temperatureEntityId: String
+            let light: ApplianceLightPayload?
+            let fanLevel: ApplianceFanLevelPayload?
+            let currentHumidity: Double?
+            let symbolName: String?
+            let roomReading: Bool
+            let heats: Bool
+        }
+
         struct CoverPayload: Decodable {
             let entityId: String
             let subtype: String
@@ -192,6 +246,8 @@ struct GoldenCorpusTests {
                 self = .sensor(try SensorPayload(from: decoder))
             case "cover":
                 self = .cover(try CoverPayload(from: decoder))
+            case "appliance":
+                self = .appliance(try AppliancePayload(from: decoder))
             default:
                 throw DecodingError.dataCorruptedError(
                     forKey: .kind,
@@ -320,6 +376,46 @@ struct GoldenCorpusTests {
                         statusText: p.statusText
                     )
                 )
+            case .appliance(let p):
+                return .appliance(
+                    ApplianceSpec(
+                        entityId: p.entityId,
+                        isOn: p.isOn,
+                        powerPresent: p.powerPresent,
+                        powerWritable: p.powerWritable,
+                        currentMode: p.currentMode,
+                        availableModes: p.availableModes,
+                        modeWritable: p.modeWritable,
+                        targetTemperature: p.targetTemperature,
+                        currentTemperature: p.currentTemperature,
+                        minTemp: p.minTemp,
+                        maxTemp: p.maxTemp,
+                        step: p.step,
+                        temperatureWritable: p.temperatureWritable,
+                        statusText: p.statusText,
+                        faultText: p.faultText,
+                        remainingMinutes: p.remainingMinutes,
+                        startAction: p.startAction?.toAction(),
+                        pauseAction: p.pauseAction?.toAction(),
+                        powerEntityId: p.powerEntityId,
+                        modeEntityId: p.modeEntityId,
+                        temperatureEntityId: p.temperatureEntityId,
+                        light: p.light.map { ApplianceLight(entityId: $0.entityId, isOn: $0.isOn, writable: $0.writable) },
+                        fanLevel: p.fanLevel.map {
+                            ApplianceFanLevel(
+                                entityId: $0.entityId,
+                                current: $0.current,
+                                options: $0.options,
+                                writable: $0.writable
+                            )
+                        },
+                        currentHumidity: p.currentHumidity,
+                        symbolName: p.symbolName,
+                        roomReading: p.roomReading,
+                        heats: p.heats,
+                        stopAction: p.stopAction?.toAction()
+                    )
+                )
             case .cover(let p):
                 return .cover(
                     CoverSpec(
@@ -446,6 +542,53 @@ struct GoldenCorpusTests {
         let expectedRequiredProps: [String: [MiotKeyEntry]]
         let commandCases: [MiotCommandCase]
         let fallbackSpecs: [MiotFallbackEntry]
+        let facetCases: [MiotFacetCase]?
+        let genericCases: [MiotGenericCase]?
+    }
+
+    /// One 更多设置 row, as the drawer and the generic card list it (#5, #6).
+    private struct MiotFacetSummary: Decodable, Equatable {
+        let id: String
+        let kind: String
+        let name: String
+        let serviceName: String
+        let isWritable: Bool
+        let writesByDefault: Bool
+        let isHighValue: Bool
+
+        init(_ control: FacetControl) {
+            id = control.id
+            kind = control.kind.rawValue
+            name = control.name
+            serviceName = control.serviceName
+            isWritable = control.isWritable
+            writesByDefault = control.writesByDefault
+            isHighValue = control.isHighValue
+        }
+    }
+
+    private struct MiotFacetCase: Decodable {
+        let did: String
+        let model: String
+        let expected: [MiotFacetSummary]
+    }
+
+    private struct MiotGenericExpectation: Decodable {
+        let deviceType: String
+        let typeTitle: String
+        let isOn: Bool
+        let isReadOnly: Bool
+        let readouts: [String]
+        let symbolName: String?
+        let powerFacet: MiotFacetSummary?
+        let facets: [MiotFacetSummary]
+    }
+
+    private struct MiotGenericCase: Decodable {
+        let did: String
+        let model: String
+        let values: [MiotFallbackValueEntry]
+        let expected: MiotGenericExpectation
     }
 
     private struct MiotSelectionCase: Decodable {
@@ -533,7 +676,8 @@ struct GoldenCorpusTests {
         let presetMode: String?
         let oscillating: Bool?
         let option: String?
-        let value: Double?
+        let value: JSONValue?
+        let piid: Int?
         let action: String?
         func toDeviceCommand() throws -> DeviceCommand {
             switch kind {
@@ -566,7 +710,11 @@ struct GoldenCorpusTests {
             case "setSelectOption":
                 return .setSelectOption(entityId: entityId, option: option ?? "")
             case "setNumberValue":
-                return .setNumberValue(entityId: entityId, value: value ?? 0)
+                return .setNumberValue(entityId: entityId, value: value?.doubleValue ?? 0)
+            case "pressButton":
+                return .pressButton(entityId: entityId)
+            case "setMiotProperty":
+                return .setMiotProperty(entityId: entityId, piid: piid ?? 0, value: value ?? .null)
             case "vacuumAction":
                 let vAction: VacuumAction = switch action {
                 case "start": .start
@@ -817,6 +965,44 @@ struct GoldenCorpusTests {
             let cmd = try item.command.toDeviceCommand()
             let actualWrite = try MiotCommandMapper.map(cmd, spec: spec)
             #expect(actualWrite == item.expected.toMiotWrite(), "\(item.model) \(item.command.kind)")
+        }
+
+        // 更多设置 rows come from the same shared rules on both platforms (#5).
+        for item in corpus.facetCases ?? [] {
+            let actual = (home.deviceFacets[item.did] ?? []).map(MiotFacetSummary.init)
+            #expect(actual == item.expected, "facet drawer drift on \(item.model)")
+        }
+
+        // A spec with no dedicated builder still shows its generic card (#6).
+        for item in corpus.genericCases ?? [] {
+            var entryValues: [MiotPropKey: JSONValue] = [:]
+            for value in item.values {
+                entryValues[MiotPropKey(did: item.did, siid: value.siid, piid: value.piid)] = value.value
+            }
+            let record = MiDeviceRecord(did: item.did, name: item.did, model: item.model, isOnline: true)
+            let spec = try #require(corpus.specs[item.model], "Missing spec \(item.model)")
+            let genericHome = MiotSynthesizer.synthesize(
+                devices: [record],
+                rooms: [],
+                specs: [item.model: spec],
+                values: entryValues
+            )
+            let synthesized = try #require(genericHome.devices.first?.kind, "missing card \(item.model)")
+            guard case .generic(let generic) = synthesized else {
+                Issue.record("\(item.model) synthesized \(synthesized) instead of a generic card")
+                continue
+            }
+            #expect(generic.deviceType == item.expected.deviceType, "\(item.model) type")
+            #expect(generic.typeTitle == item.expected.typeTitle, "\(item.model) title")
+            #expect(generic.isOn == item.expected.isOn, "\(item.model) power")
+            #expect(generic.isReadOnly == item.expected.isReadOnly, "\(item.model) read-only")
+            #expect(generic.readouts.map(\.value) == item.expected.readouts, "\(item.model) readouts")
+            #expect(generic.symbolName == item.expected.symbolName, "\(item.model) symbol")
+            #expect(generic.powerControl.map(MiotFacetSummary.init) == item.expected.powerFacet, "\(item.model) power facet")
+            #expect(
+                (genericHome.deviceFacets[item.did] ?? []).map(MiotFacetSummary.init) == item.expected.facets,
+                "\(item.model) drawer"
+            )
         }
     }
 

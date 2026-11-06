@@ -147,6 +147,131 @@ export interface SpeakerSpec {
   readonly volumeWritable: boolean;
 }
 
+export type ApplianceActionKind = "start" | "pause" | "stop";
+
+/** One no-argument appliance action addressed on the MIoT service that declares it (#300). */
+export interface ApplianceAction {
+  readonly kind: ApplianceActionKind;
+  readonly entityId: string;
+}
+
+/** A hood's or bath heater's light service, merged into the appliance card as a secondary switch (#4). */
+export interface ApplianceLight {
+  readonly entityId: string;
+  isOn: boolean;
+  readonly writable: boolean;
+}
+
+/** A hood's exhaust speed (`fan-level`), merged into the appliance card as a second select (#4). */
+export interface ApplianceFanLevel {
+  readonly entityId: string;
+  current: string | null;
+  readonly options: readonly string[];
+  readonly writable: boolean;
+}
+
+/**
+ * The shared appliance card (GLOSSARY `ApplianceDevice`): water heater, bath heater, hood, washer,
+ * dryer and dishwasher. Every control is optional and driven by what the spec publishes.
+ */
+export interface ApplianceSpec {
+  readonly kind: "appliance";
+  readonly entityId: string;
+  isOn: boolean;
+  readonly powerPresent: boolean;
+  readonly powerWritable: boolean;
+  currentMode: string | null;
+  readonly availableModes: readonly string[];
+  readonly modeWritable: boolean;
+  targetTemperature: number | null;
+  readonly currentTemperature: number | null;
+  readonly minTemp: number;
+  readonly maxTemp: number;
+  readonly step: number;
+  readonly temperatureWritable: boolean;
+  readonly statusText: string | null;
+  readonly faultText: string | null;
+  readonly remainingMinutes: number | null;
+  readonly startAction: ApplianceAction | null;
+  readonly pauseAction: ApplianceAction | null;
+  readonly stopAction: ApplianceAction | null;
+  /** A companion service may own a control while `entityId` stays the main function's service. */
+  readonly powerEntityId: string;
+  readonly modeEntityId: string;
+  readonly temperatureEntityId: string;
+  readonly light: ApplianceLight | null;
+  readonly fanLevel: ApplianceFanLevel | null;
+  readonly currentHumidity: number | null;
+  readonly symbolName: string | null;
+  /** The current temperature is the room's, not the appliance's own tank or cavity. */
+  readonly roomReading: boolean;
+  /** The card can start a heater; high-risk confirmation applies to power-on and warmer targets. */
+  readonly heats: boolean;
+}
+
+export type FacetKind = "toggle" | "select" | "slider" | "reading" | "button";
+
+export interface FacetOption {
+  readonly value: number;
+  readonly label: string;
+}
+
+export interface FacetRange {
+  readonly min: number;
+  readonly max: number;
+  readonly step: number;
+}
+
+/** Where a facet write goes: a MIoT property with the new value, or a no-argument action. */
+export type FacetTarget =
+  | { readonly kind: "property"; readonly entityId: string; readonly piid: number }
+  | { readonly kind: "action"; readonly entityId: string };
+
+/** One row under 更多设置 (#5): a generic facet plus the value the last snapshot carried. */
+export interface FacetControl {
+  /** Stable facet id inside one device (`siid.piid` for properties, `siid.aAiid` for actions). */
+  readonly id: string;
+  readonly kind: FacetKind;
+  /** MIoT short name, kept for localization and for tests. */
+  readonly name: string;
+  /** Spec description; often Chinese or English depending on the vendor, so the UI may override. */
+  readonly title: string | null;
+  /** Service short name, used to tell same-named facets apart. */
+  readonly serviceName: string;
+  readonly unit: string | null;
+  /** Display scale from a spec comment (`0.01平方米`); readings multiply the raw value by it. */
+  readonly scale: number | null;
+  value: unknown;
+  readonly options: readonly FacetOption[];
+  readonly range: FacetRange | null;
+  readonly isWritable: boolean;
+  /** False when the facet writes outside the low-risk whitelist in `deviceProfiles.json`. */
+  readonly writesByDefault: boolean;
+  readonly isHighValue: boolean;
+  readonly target: FacetTarget | null;
+}
+
+/**
+ * The fallback card for a controllable MIoT device whose type has no dedicated builder (#6).
+ * It keeps the few readings the card can show and one low-risk main switch; everything else
+ * lives in the 更多设置 drawer.
+ */
+export interface GenericSpec {
+  readonly kind: "generic";
+  /** MIoT device type short name, e.g. `fish-tank`. */
+  readonly deviceType: string;
+  /** Device-type label used while there is no reading to show. */
+  readonly typeTitle: string;
+  isOn: boolean;
+  /** A low-risk writable `on` facet; null when the card has no safe main switch. */
+  readonly powerControl: FacetControl | null;
+  /** No facet accepts any write, so the card is a status surface and says 只读. */
+  readonly isReadOnly: boolean;
+  /** At most two readings on the card, high-value facets first. */
+  readonly readouts: readonly string[];
+  readonly symbolName: string | null;
+}
+
 export type DeviceKind =
   | LightSpec
   | ClimateSpec
@@ -157,7 +282,9 @@ export type DeviceKind =
   | CameraSpec
   | SensorSpec
   | CoverSpec
-  | SpeakerSpec;
+  | SpeakerSpec
+  | ApplianceSpec
+  | GenericSpec;
 export interface SmartDevice {
   readonly id: string;
   readonly name: string;
@@ -195,6 +322,8 @@ export interface SynthesizedHome {
   readonly rooms: RoomCategory[];
   readonly environmentReadings: EnvironmentReading[];
   readonly scenes: HomeScene[];
+  /** Device id → 更多设置 rows (#5). Absent means the card has no auxiliary controls. */
+  readonly deviceFacets?: Readonly<Record<string, readonly FacetControl[]>>;
 }
 
 export type VacuumAction = "start" | "pause" | "returnToBase";
@@ -218,6 +347,10 @@ export type DeviceCommand =
   /** `level` is 0…1, scaled onto the volume property's range (macOS `mediaSetVolume`). */
   | { readonly kind: "mediaSetVolume"; readonly entityId: string; readonly level: number }
   | { readonly kind: "vacuumAction"; readonly entityId: string; readonly action: VacuumAction }
+  /** A no-argument MIoT action: an appliance start/pause/stop or a 更多设置 button (#300, #5). */
+  | { readonly kind: "pressButton"; readonly entityId: string }
+  /** A generic 更多设置 write (#5); `entityId` is the service address and `piid` its property. */
+  | { readonly kind: "setMiotProperty"; readonly entityId: string; readonly piid: number; readonly value: unknown }
   | { readonly kind: "activateScene"; readonly entityId: string };
 
 export type IntentOperation =
@@ -276,6 +409,10 @@ export function deviceCanTogglePower(device: SmartDevice): boolean {
       return kind.actionsWritable !== false;
     case "cover":
       return kind.openDescription !== null && kind.closeDescription !== null;
+    case "appliance":
+      return kind.powerPresent && kind.powerWritable;
+    case "generic":
+      return kind.powerControl !== null;
     case "speaker":
     case "fridge":
     case "sensor":
@@ -323,6 +460,19 @@ export function deviceAcceptsControlWrites(device: SmartDevice): boolean {
       return kind.modeEntityId !== null || kind.fridgeTargetEntityId !== null || kind.freezerTargetEntityId !== null;
     case "speaker":
       return kind.volumeWritable || kind.muteSwitchEntityId !== null || kind.sleepModeEntityId !== null;
+    case "appliance":
+      return (
+        kind.powerWritable ||
+        kind.modeWritable ||
+        kind.temperatureWritable ||
+        kind.fanLevel?.writable === true ||
+        kind.light?.writable === true ||
+        kind.startAction !== null ||
+        kind.pauseAction !== null ||
+        kind.stopAction !== null
+      );
+    case "generic":
+      return !kind.isReadOnly;
     case "sensor":
       return false;
     default: {
@@ -338,7 +488,9 @@ export function joinsAllOffByDefault(device: SmartDevice): boolean {
     device.kind.kind !== "fridge" &&
     device.kind.kind !== "vacuum" &&
     device.kind.kind !== "camera" &&
-    device.kind.kind !== "cover"
+    device.kind.kind !== "cover" &&
+    device.kind.kind !== "appliance" &&
+    device.kind.kind !== "generic"
   );
 }
 
@@ -398,6 +550,9 @@ export function isDeviceActiveOn(device: SmartDevice): boolean {
       return (device.kind.positionPercent ?? 0) > 0;
     case "speaker":
       return device.kind.state === "playing";
+    case "appliance":
+    case "generic":
+      return device.kind.isOn;
     case "fridge":
     case "sensor":
       return false;
@@ -469,6 +624,19 @@ export function deviceEnvironmentReading(device: SmartDevice): EnvironmentReadin
         roomName: device.roomName,
         temperature: device.kind.currentTemperature,
         humidity: null,
+        battery: null,
+      };
+    }
+    case "appliance": {
+      const { roomReading, currentTemperature, currentHumidity } = device.kind;
+      if (!roomReading || (currentTemperature === null && currentHumidity === null)) return null;
+      const trimmed = device.name.trim();
+      return {
+        id: device.id,
+        label: trimmed || device.roomName,
+        roomName: device.roomName,
+        temperature: currentTemperature,
+        humidity: currentHumidity,
         battery: null,
       };
     }
@@ -751,9 +919,172 @@ export function deviceStatusSummary(device: SmartDevice): string {
       const volume = k.isMuted ? t("已静音") : t("音量 {percent}%", { percent: k.volumePercent });
       return `${play} · ${volume}`;
     }
+    case "appliance": {
+      const parts: string[] = [];
+      if (k.currentTemperature !== null) parts.push(formatTemperature(k.currentTemperature, undefined, 1));
+      if (k.targetTemperature !== null) {
+        parts.push(t("目标 {temp}", { temp: formatTemperature(k.targetTemperature) }));
+      }
+      if (k.currentMode) parts.push(localizeApplianceMode(k.currentMode));
+      if (k.fanLevel?.current) parts.push(localizeApplianceFanLevel(k.fanLevel.current));
+      if (k.statusText) parts.push(k.statusText);
+      if (k.remainingMinutes !== null) parts.push(t("剩余 {minutes} 分", { minutes: k.remainingMinutes }));
+      if (k.faultText) parts.push(t("故障 {fault}", { fault: k.faultText }));
+      if (parts.length > 0) return parts.join(" · ");
+      return k.isOn ? t("运行中") : t("已关闭");
+    }
+    case "generic": {
+      const readings = k.readouts.join(" · ");
+      if (readings) return readings;
+      if (k.isReadOnly) return t("只读 · {type}", { type: k.typeTitle });
+      return k.typeTitle;
+    }
     default: {
       const _exhaustive: never = k;
       return _exhaustive;
     }
   }
+}
+
+/** An appliance programme word; a word this table does not know is shown as the spec wrote it. */
+export function localizeApplianceMode(mode: string): string {
+  switch (mode.trim().toLowerCase()) {
+    case "standard":
+    case "normal":
+    case "标准":
+      return t("标准");
+    case "energy1":
+    case "eco":
+    case "节能":
+      return t("节能①");
+    case "energy2":
+      return t("节能②");
+    case "quick":
+    case "fast":
+    case "快速":
+      return t("快速");
+    case "electricheating":
+    case "electric heating":
+    case "电加热":
+      return t("电加热");
+    case "auto":
+    case "automatic":
+    case "自动":
+      return t("自动");
+    case "sleep":
+    case "night":
+    case "睡眠":
+      return t("睡眠");
+    case "strong":
+    case "high":
+    case "强力":
+    case "强":
+      return t("强力");
+    case "baby":
+    case "婴儿":
+      return t("婴儿");
+    case "manual":
+    case "手动":
+      return t("手动");
+    case "off":
+    case "关闭":
+      return t("关闭");
+    case "idle":
+    case "待机":
+      return t("待机");
+    case "working":
+    case "工作中":
+      return t("工作中");
+    case "shower":
+    case "bath":
+    case "洗浴":
+    case "沐浴":
+      return t("洗浴");
+    case "dry":
+    case "dryer":
+    case "干燥":
+      return t("干燥");
+    case "defog":
+    case "除雾":
+      return t("除雾");
+    case "quick defog":
+    case "快速除雾":
+      return t("快速除雾");
+    case "heat":
+      return t("弱暖");
+    case "quick heat":
+      return t("强暖");
+    case "ventilate":
+    case "ventilation":
+    case "换气":
+      return t("换气");
+    case "fan":
+    case "blow":
+    case "吹风":
+      return t("吹风");
+    case "cool":
+    case "凉风":
+      return t("凉风");
+    case "deodorize":
+    case "除味":
+      return t("除味");
+    case "other":
+    case "其他":
+      return t("其他");
+    default:
+      return mode;
+  }
+}
+
+/** A hood's `fan-level` list uses `Level1…Level10` or `Low`/`High`/`Stir Fry`. */
+export function localizeApplianceFanLevel(level: string): string {
+  const trimmed = level.trim();
+  switch (trimmed.toLowerCase()) {
+    case "low":
+    case "低速":
+      return t("低速");
+    case "mid":
+    case "middle":
+    case "中速":
+      return t("中速");
+    case "high":
+    case "高速":
+      return t("高速");
+    case "stir fry":
+    case "stir-fry":
+    case "爆炒":
+      return t("爆炒");
+    default: {
+      const match = /^level\s*([0-9]+)$/i.exec(trimmed);
+      return match?.[1] ? t("{level}档", { level: match[1] }) : trimmed;
+    }
+  }
+}
+
+/**
+ * Whether choosing this mode starts heating from standby (macOS `ApplianceSpec.modeStartsHeating`).
+ * Idle/off/standby modes do not, so picking one from standby needs no confirmation (#4).
+ */
+export function applianceModeStartsHeating(mode: string): boolean {
+  const normalized = mode.trim().toLowerCase();
+  const idleWords = [
+    "idle",
+    "off",
+    "standby",
+    "close",
+    "closed",
+    "none",
+    "fan",
+    "ventilate",
+    "ventilation",
+    "blow",
+    "cool",
+    "吹风",
+    "换气",
+    "凉风",
+    "待机",
+    "关闭",
+    "无",
+  ];
+  return !idleWords.some((word) => normalized.includes(word));
 }

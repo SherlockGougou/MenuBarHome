@@ -24,6 +24,8 @@ export const KIND_RANK: Record<DeviceKindTag, number> = {
   camera: 7,
   sensor: 8,
   cover: 9,
+  appliance: 10,
+  generic: 11,
 };
 
 export const KIND_CHIP: Record<
@@ -40,6 +42,8 @@ export const KIND_CHIP: Record<
   camera: { title: "摄像机" },
   sensor: { title: "传感器", hint: "也包括没有开关的小家电" },
   cover: { title: "门窗" },
+  appliance: { title: "家电", hint: "也包括热水器、浴霸、油烟机与洗衣烘干洗碗机" },
+  generic: { title: "通用", hint: "没有专用卡片、但仍有可用控件的设备" },
 };
 
 function visible(devices: readonly SmartDevice[], hideOffline: boolean): SmartDevice[] {

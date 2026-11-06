@@ -4,12 +4,14 @@ import {
   hvacModeFromDescription,
   isMainsBreaker,
   miotShortName,
+  parseMiotActionAddress,
   parseMiotAddress,
   type MiotDeviceSpec,
   type MiotProperty,
   type MiotService,
 } from "./spec.js";
 import { rawFromPercent } from "./percentScale.js";
+import { APPLIANCE_SERVICE_NAMES, coverSubtype } from "./synthesis.js";
 
 export type MiotWrite =
   | { readonly kind: "setProps"; readonly writes: readonly MiotPropWrite[] }
@@ -19,6 +21,19 @@ export const MiotCommandMapper = {
   map(command: DeviceCommand, spec: MiotDeviceSpec): MiotWrite {
     // A mains breaker is read-only whatever the spec allows: no path may switch it (#265).
     if (isMainsBreaker(spec)) throw new Error("Unsupported device: electronic-valve");
+    if (command.kind === "pressButton") {
+      // A no-argument action carries its own address, so it never resolves a service first.
+      const action = parseMiotActionAddress(command.entityId);
+      if (!action) throw new Error(`Invalid MIoT action address: ${command.entityId}`);
+      const actionService = spec.services.find((s) => s.iid === action.siid);
+      const declared = actionService?.actions.find((a) => a.iid === action.aiid);
+      if (!actionService || !declared) throw new Error(`Unsupported action: ${command.entityId}`);
+      if ((declared.in?.length ?? 0) > 0) throw new Error(`Action needs inputs: ${command.entityId}`);
+      return {
+        kind: "action",
+        call: { did: action.did, siid: action.siid, aiid: action.aiid, inputs: [] },
+      };
+    }
     const addr = parseMiotAddress(command.entityId);
     if (!addr) throw new Error(`Invalid MIoT address: ${command.entityId}`);
     const service = spec.services.find((s) => s.iid === addr.siid);
@@ -60,6 +75,41 @@ export const MiotCommandMapper = {
             );
             if (item) return { service: s, prop: p, item };
           }
+        }
+      }
+      return null;
+    };
+
+    /**
+     * A writable property on the addressed service first, then on a companion service the shared
+     * appliance card reads: a gas water heater's switch lives on `boiler` while the card addresses
+     * `water-heater` (#300), and a cleanfly dryer does the same (#3).
+     */
+    const findApplianceProp = (short: string) => {
+      const local = service.properties.find(
+        (p) => miotShortName(p.type) === short && p.access.includes("write"),
+      );
+      if (local) return { service, prop: local };
+      for (const other of spec.services) {
+        if (!APPLIANCE_SERVICE_NAMES.includes(miotShortName(other.type))) continue;
+        const prop = other.properties.find(
+          (p) => miotShortName(p.type) === short && p.access.includes("write"),
+        );
+        if (prop) return { service: other, prop };
+      }
+      return null;
+    };
+
+    /** A value-list match on one of the appliance card's services (#4). */
+    const findApplianceListProp = (short: string, description: string) => {
+      for (const other of spec.services) {
+        if (!APPLIANCE_SERVICE_NAMES.includes(miotShortName(other.type))) continue;
+        for (const prop of other.properties) {
+          if (miotShortName(prop.type) !== short || !prop.access.includes("write")) continue;
+          const item = prop.valueList?.find(
+            (i) => i.description.toLowerCase() === description.toLowerCase(),
+          );
+          if (item) return { service: other, prop, item };
         }
       }
       return null;
@@ -160,16 +210,24 @@ export const MiotCommandMapper = {
         return { kind: "setProps", writes };
       }
       case "setClimateTemperature": {
-        const { prop } = findProp("target-temperature");
+        const found = findApplianceProp("target-temperature");
+        if (!found) throw new Error("Unsupported property: target-temperature");
         return {
           kind: "setProps",
           writes: [
-            { did: addr.did, siid: service.iid, piid: prop.iid, value: coerce(prop, command.temperature) },
+            {
+              did: addr.did,
+              siid: found.service.iid,
+              piid: found.prop.iid,
+              value: coerce(found.prop, command.temperature),
+            },
           ],
         };
       }
       case "setClimateFanMode": {
-        const found = findListProp("fan-level", command.fanMode, true);
+        const found =
+          findApplianceListProp("fan-level", command.fanMode) ??
+          findListProp("fan-level", command.fanMode, true);
         if (!found) throw new Error(`Unsupported fan mode: ${command.fanMode}`);
         return {
           kind: "setProps",
@@ -280,6 +338,22 @@ export const MiotCommandMapper = {
             writes: [{ did: addr.did, siid: service.iid, piid: targetProp.iid, value: command.isOn }],
           };
         }
+        // A bath heater publishes its heat as `heating` instead of `on` (#4), and an appliance's
+        // only writable switch may live on a companion service (#300).
+        const appliancePower = findApplianceProp("on") ?? findApplianceProp("heating");
+        if (appliancePower) {
+          return {
+            kind: "setProps",
+            writes: [
+              {
+                did: addr.did,
+                siid: appliancePower.service.iid,
+                piid: appliancePower.prop.iid,
+                value: command.isOn,
+              },
+            ],
+          };
+        }
         const candidates = command.isOn
           ? ["start-cook", "resume-cook"]
           : ["cancel-cooking", "pause"];
@@ -302,6 +376,7 @@ export const MiotCommandMapper = {
         const found =
           findListProp("motor-control", command.option) ??
           findListProp("mode", command.option) ??
+          findApplianceListProp("mode", command.option) ??
           findListProp("night-shot", command.option);
         if (!found) throw new Error(`Unsupported select option: ${command.option}`);
         return {
@@ -310,11 +385,43 @@ export const MiotCommandMapper = {
         };
       }
       case "setNumberValue": {
-        const { prop } = findProp("target-temperature");
+        const targetPosition = service.properties.find(
+          (p) => miotShortName(p.type) === "target-position" && p.access.includes("write"),
+        );
+        if (targetPosition) {
+          // The card speaks 0…100; flip for an airer whose raw position is distance lowered (#299).
+          const sub = coverSubtype(miotShortName(service.type));
+          const percent = sub === "clothes-airer" ? 100 - command.value : command.value;
+          const raw = rawFromPercent(percent, targetPosition, "proportional");
+          return {
+            kind: "setProps",
+            writes: [{ did: addr.did, siid: service.iid, piid: targetPosition.iid, value: coerce(targetPosition, raw) }],
+          };
+        }
+        const found = findApplianceProp("target-temperature");
+        if (!found) throw new Error("Unsupported property: target-temperature");
         return {
           kind: "setProps",
-          writes: [{ did: addr.did, siid: service.iid, piid: prop.iid, value: coerce(prop, command.value) }],
+          writes: [
+            {
+              did: addr.did,
+              siid: found.service.iid,
+              piid: found.prop.iid,
+              value: coerce(found.prop, command.value),
+            },
+          ],
         };
+      }
+      case "setMiotProperty": {
+        const prop = service.properties.find((p) => p.iid === command.piid);
+        if (!prop || !prop.access.includes("write")) throw new Error(`Unsupported property: ${command.piid}`);
+        const value =
+          typeof command.value === "boolean"
+            ? command.value
+            : typeof command.value === "number"
+              ? coerce(prop, command.value)
+              : command.value;
+        return { kind: "setProps", writes: [{ did: addr.did, siid: service.iid, piid: prop.iid, value }] };
       }
       case "vacuumAction": {
         const candidates =

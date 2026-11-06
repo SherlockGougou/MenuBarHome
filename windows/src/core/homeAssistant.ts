@@ -670,6 +670,11 @@ export function haServiceCall(command: DeviceCommand): HaServiceCall {
       );
     case "mediaSetVolume":
       return call("volume_set", { volume_level: command.level });
+    case "pressButton":
+      return call("press");
+    case "setMiotProperty":
+      // A generic MIoT property write has no Home Assistant entity behind it.
+      throw new Error("setMiotProperty is a Xiaomi-only command");
     case "activateScene":
       return call("turn_on");
   }
