@@ -144,12 +144,12 @@ import { renderDeviceTile as renderDeviceTileView, renderEnvironmentStrip as ren
 import { renderContextMenu, renderHomeMenu, renderOnboardingModal, renderPrompt, renderSettingsModal } from "./menuViews.js";
 import { bindEvents as bindEventsImpl } from "./bindEvents.js";
 import { renderPanel } from "./panelView.js";
-import { applyGlobalHotkey, applyInterfaceLanguage, applyTemperatureSetting, bindGlobalKeys, checkForAppUpdate, hydrateCredentials, initializeCredentials, openSettingsSheet, openUpdatePage, osLanguages, persistCredentials, restoreUpdateState, saveSettings, saveUpdateState, startTimerLoop, startUpdateInstall, submitServiceEndpoints } from "./appLifecycle.js";
+import { applyGlobalHotkey, applyInterfaceLanguage, applyTemperatureSetting, bindGlobalKeys, checkForAppUpdate, initializeCredentials, openSettingsSheet, openUpdatePage, osLanguages, restoreUpdateState, saveSettings, saveUpdateState, startTimerLoop, startUpdateInstall, submitServiceEndpoints } from "./appLifecycle.js";
 import { handleNaturalCommand, learnShortcut, runScheduledCommand } from "./naturalCommand.js";
-import { currentProactiveSuggestions, invalidateSourceControl, isIntentReversibleOnDevice, maybeRefreshProactiveInBackground, proactiveSignature, renderGrokBallSidebar, renderGrokBallStage, setGrokBallStageExpanded, syncGrokBallEmotion } from "./proactive.js";
-import { applyCommand, dispatchCloudCommand, markCloudValuesFresh, markCloudValuesStale } from "./commandDispatch.js";
-import { cloudPanelStructureFingerprint, cloudPresentationFingerprint, cloudSnapshotIsStale, filterBySelectedHome, foldGrouped, patchCloudPresentation, refreshDevices, refreshHADevices, withSharedHomeDevices } from "./cloudRefresh.js";
-import { buildInverseCommand, executeIntents, executeSingleCommand, habitSequences, lastHabitAction, readBackMatches, recordHabits, saveHabitMemory, unrecordHabits } from "./intentExecution.js";
+import { currentProactiveSuggestions, invalidateSourceControl, isIntentReversibleOnDevice, maybeRefreshProactiveInBackground, renderGrokBallSidebar, setGrokBallStageExpanded, syncGrokBallEmotion } from "./proactive.js";
+import { applyCommand, markCloudValuesFresh, markCloudValuesStale } from "./commandDispatch.js";
+import { filterBySelectedHome, foldGrouped, refreshDevices, refreshHADevices } from "./cloudRefresh.js";
+import { executeIntents, executeSingleCommand, habitSequences, lastHabitAction, recordHabits, saveHabitMemory, unrecordHabits } from "./intentExecution.js";
 import { bindLayoutGestures } from "./layoutGestures.js";
 import { bindSettingsEvents } from "./settingsEvents.js";
 import { hasMatchingDomShape, inputKeepsDraft, morphMatchingDom, parseSingleElement, waitForCameraFrameGap } from "./dom.js";
@@ -346,13 +346,7 @@ export class MenuMijiaWindowsApp {
     initializeCredentials(this);
   }
 
-  private async hydrateCredentials(): Promise<void> {
-    return hydrateCredentials(this);
-  }
 
-  private async persistCredentials(): Promise<void> {
-    return persistCredentials(this);
-  }
 
   public saveSettings(forceSubmitEndpoints = false): void {
     saveSettings(this, forceSubmitEndpoints);
@@ -501,14 +495,6 @@ export class MenuMijiaWindowsApp {
    */
   public unresolvedRoomDids = new Set<string>();
 
-  private async withSharedHomeDevices(
-    client: MiCloudClient,
-    listed: MiDeviceRecord[],
-    rooms: MiRoom[],
-    includeShared: boolean,
-  ): Promise<MiDeviceRecord[]> {
-    return withSharedHomeDevices(this, client, listed, rooms, includeShared);
-  }
 
   public async refreshDevices(silent = false): Promise<void> {
     return refreshDevices(this, silent);
@@ -518,21 +504,9 @@ export class MenuMijiaWindowsApp {
     return refreshHADevices(this, silent);
   }
 
-  private cloudPresentationFingerprint(): string {
-    return cloudPresentationFingerprint(this);
-  }
 
-  private cloudSnapshotIsStale(session: MiSession, revision: number): boolean {
-    return cloudSnapshotIsStale(this, session, revision);
-  }
 
-  private cloudPanelStructureFingerprint(): string {
-    return cloudPanelStructureFingerprint(this);
-  }
 
-  private patchCloudPresentation(): boolean {
-    return patchCloudPresentation(this);
-  }
 
   private filterBySelectedHome<D extends { readonly did: string; readonly splitParentDid?: string | null }, R extends { readonly homeId?: string; readonly dids: readonly string[] }>(
     devices: readonly D[],
@@ -658,10 +632,6 @@ export class MenuMijiaWindowsApp {
     learnShortcut(this, phrase, reply, intents);
   }
 
-  private buildInverseCommand(dev: SmartDevice, command: DeviceCommand): DeviceCommand[] {
-    return buildInverseCommand(dev, command);
-  }
-
   public async executeIntents(
     intents: readonly DeviceIntent[],
     replyText: string,
@@ -681,9 +651,6 @@ export class MenuMijiaWindowsApp {
     return executeSingleCommand(this, device, command, summary, intent, readBackPower);
   }
 
-  private readBackMatches(deviceId: string, intent?: DeviceIntent): boolean {
-    return readBackMatches(this, deviceId, intent);
-  }
 
   private recordHabits(intents: readonly DeviceIntent[]): HabitRecordingReceipt | null {
     return recordHabits(this, intents);
@@ -706,9 +673,6 @@ export class MenuMijiaWindowsApp {
   }
 
   /** Time bucket + per-room temperature (1 °C steps) and humidity (5 % steps): the ambient signature (#113). */
-  private proactiveSignature(): string {
-    return proactiveSignature(this);
-  }
 
   private isIntentReversibleOnDevice(intent: DeviceIntent, device: SmartDevice): { reversible: boolean; nextDevice: SmartDevice } {
     return isIntentReversibleOnDevice(this, intent, device);
@@ -722,9 +686,6 @@ export class MenuMijiaWindowsApp {
     syncGrokBallEmotion(this);
   }
 
-  private renderGrokBallStage(): string {
-    return renderGrokBallStage(this);
-  }
 
   public renderGrokBallSidebar(): string {
     return renderGrokBallSidebar(this);
@@ -803,9 +764,6 @@ export class MenuMijiaWindowsApp {
     return applyCommand(this, command, readBackPower);
   }
 
-  private async dispatchCloudCommand(command: DeviceCommand, readBackPower = false): Promise<boolean | null> {
-    return dispatchCloudCommand(this, command, readBackPower);
-  }
 
   public markCloudValuesStale(): void {
     markCloudValuesStale(this);
