@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Self-hosted Forgejo on the NAS (`http://10.10.1.4:3000/jryang/MenuBarMijia`, LAN only) via `python3 scripts/forge.py`; the GitHub account is suspended, so never use `gh`. Migrated issues were renumbered and cite old GitHub numbers. See `docs/agents/issue-tracker.md`.
+GitLab (`https://gitlab.com/jryang1997/MenuBarMijia`, git remote `origin`) via `python3 scripts/forge.py`; the GitHub account is suspended, so never use `gh`. The NAS Forgejo (remote `nas`) is only a backup. Migrated issues were renumbered and cite old GitHub numbers. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
@@ -28,7 +28,7 @@ Windows 上没有 Swift 工具链：本机跑 `bash scripts/check.sh --lint-only
 
 本仓库的 Swift 与 Rust 没有语言服务器：引用与定义检索用 `grep` 或 `xd://ast_grep`，不要反复尝试 `xd://lsp`。
 
-CI 失败先看 `bash scripts/ci_errors.sh <run-number|log-file>`（只打失败 job、错误与失败用例）；盘点未合并分支和工作树用 `bash scripts/pending-work.sh`；挑票用 `bash scripts/issue-frontier.sh`（一次列出所有 `ready-for-agent` 票能不能做：blocker、assignee、`claimed:*` 标签、关联的 open PR 和分支；`--doable` 只输出可做编号）。
+CI 失败先看 `bash scripts/ci_errors.sh <pipeline-id|log-file>`（只打失败 job、错误与失败用例）；盘点未合并分支和工作树用 `bash scripts/pending-work.sh`；挑票用 `bash scripts/issue-frontier.sh`（一次列出所有 `ready-for-agent` 票能不能做：blocker、assignee、`claimed:*` 标签、关联的 open PR 和分支；`--doable` 只输出可做编号）。
 
 ### Commit & PR policy
 
@@ -39,7 +39,7 @@ CI 失败先看 `bash scripts/ci_errors.sh <run-number|log-file>`（只打失败
 - 检查失败原因尚未确认时，走 PR 排查，解决后再合并。已复现并确认与本轮无关的既有失败，需记录证据及例外原因；跳过检查不是默认流程。
 - 一个完整问题对应一次提交或一个 PR；同一问题的后续调整继续使用原 PR。
 - 直接 push 后，有 runner 时确认云端检查的最终结果；交付时区分“已推送”与“检查已通过”。直接 push 不等于发布新版本。
-- PR 用 `python3 scripts/forge.py pr create` 开，`pr checks <n>` 看云端结果。Forgejo 会跑现有的 `.github/workflows`，但还没注册 Actions runner，所有 job 永远停在 `pending`：本地 `bash scripts/check.sh --skip-snapshots` 就是合并闸门，交付时如实说明「没有云端 CI」。GitHub Actions、Codex 审查与 `pr-wait`/babysit 一类依赖 GitHub 的技能都已不可用。
+- 合并请求（MR，即本文的 PR）用 `python3 scripts/forge.py pr create` 开，`pr checks <n>` 看流水线。项目还没有 `.gitlab-ci.yml` 和 runner，`.github/workflows` 不会被执行：本地 `bash scripts/check.sh --skip-snapshots` 就是合并闸门，交付时如实说明「没有云端 CI」。GitHub Actions、Codex 审查与 `pr-wait`/babysit 一类依赖 GitHub 的技能都已不可用。
 
 ### Worktrees
 
