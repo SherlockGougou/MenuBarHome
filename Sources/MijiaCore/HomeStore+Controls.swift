@@ -146,6 +146,16 @@ extension HomeStore {
             updated.kind = .appliance(s)
             command = .setSwitch(entityId: s.powerEntityId, isOn: s.isOn)
 
+        case .generic(var s):
+            guard let control = s.powerControl,
+                  case .property(let entityId, let piid) = control.target else {
+                toggleExpanded(device.id)
+                return nil
+            }
+            s.isOn.toggle()
+            s.powerControl?.value = .bool(s.isOn)
+            updated.kind = .generic(s)
+            command = .setMiotProperty(entityId: entityId, piid: piid, value: .bool(s.isOn))
         case .humidifier(var s):
             s.isOn.toggle()
             updated.kind = .humidifier(s)
@@ -292,6 +302,7 @@ extension HomeStore {
     private func applyConfirmedPower(from requested: SmartDevice, deviceId: String) {
         guard let idx = devices.firstIndex(where: { $0.id == deviceId }) else { return }
         devices[idx] = devices[idx].applyingConfirmedPower(from: requested)
+        syncGenericPowerFacet(devices[idx])
     }
 
     private func settleSnapshot(after generation: UInt64) async {

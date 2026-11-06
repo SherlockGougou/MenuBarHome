@@ -8,8 +8,11 @@ import Foundation
 /// excluded from `DiagnosticsReportBuilder` output.
 public struct UnsupportedDevice: Identifiable, Equatable, Sendable {
     public enum Reason: String, Equatable, Sendable, CaseIterable {
-        /// Mi Cloud: no MIoT spec for the model, or the spec has no service this app can build.
+        /// Mi Cloud: no MIoT spec for the model.
         case unknownModel
+        /// Mi Cloud: the spec exists, but neither a dedicated builder nor the generic facet
+        /// layer found a control or a reading (#6).
+        case noControllableItems
         /// Home Assistant: none of the active entities use a domain the panel renders.
         case unsupportedEntities
         /// Home Assistant: every entity is disabled or hidden in the registry.
@@ -35,7 +38,9 @@ public struct UnsupportedDevice: Identifiable, Equatable, Sendable {
     public var reasonText: String {
         switch reason {
         case .unknownModel:
-            return L10n.tr("米家规格缺失或不含可控制服务", "No controllable service in the Xiaomi spec")
+            return L10n.tr("没有取到米家设备规格", "No Xiaomi device spec for this model")
+        case .noControllableItems:
+            return L10n.tr("该设备没有向云端开放可控项", "This device exposes no controllable items to the cloud")
         case .unsupportedEntities:
             return L10n.tr("实体类型暂不支持", "Entity type not supported yet")
         case .noActiveEntities:
@@ -67,20 +72,13 @@ public enum UnsupportedDeviceCollector {
 
         var out: [UnsupportedDevice] = []
         for record in devices where !splitParents.contains(record.did) {
-            let isBuildable = specs[record.model].map { MiotSynthesizer.supportedServiceName(for: $0) != nil } ?? false
-            if isBuildable, synthesizedIds.contains(record.did) || synthesizedDIDs.contains(record.did) { continue }
-            let lowerModel = record.model.lowercased()
-            let isNetworkInfrastructure = lowerModel.hasPrefix("lumi.gateway")
-                || lowerModel.contains(".gateway.")
-                || lowerModel.hasPrefix("xiaomi.router")
-                || lowerModel.contains(".router.")
-                || lowerModel.hasPrefix("xiaomi.repeater")
-                || lowerModel.contains(".repeater.")
+            // A dedicated card or a generic fallback card both count as shown (#6).
+            if synthesizedIds.contains(record.did) || synthesizedDIDs.contains(record.did) { continue }
             out.append(UnsupportedDevice(
                 id: record.did,
                 name: record.name,
                 model: record.model,
-                reason: isNetworkInfrastructure ? .filteredDuplicate : .unknownModel
+                reason: specs[record.model] == nil ? .unknownModel : .noControllableItems
             ))
         }
         return sorted(out)

@@ -3036,12 +3036,6 @@
       "isOnline": true
     },
     {
-      "did": "did_water_valve",
-      "model": "golden.valve.water",
-      "name": "进水阀",
-      "isOnline": true
-    },
-    {
       "did": "did_curtain",
       "name": "客厅窗帘",
       "model": "fixture.curtain.single",
@@ -3260,7 +3254,6 @@
     { "did": "did_breaker", "siid": 3, "piid": 1, "value": 123456 },
     { "did": "did_breaker", "siid": 3, "piid": 6, "value": 1830 },
     { "did": "did_breaker", "siid": 5, "piid": 2, "value": true },
-    { "did": "did_water_valve", "siid": 2, "piid": 1, "value": true },
     { "did": "did_curtain", "siid": 2, "piid": 3, "value": 42 },
     { "did": "did_curtain", "siid": 2, "piid": 6, "value": 0 },
     { "did": "did_curtain", "siid": 2, "piid": 7, "value": 42 },
@@ -3822,7 +3815,6 @@
       { "did": "did_breaker", "siid": 2, "piid": 3 },
       { "did": "did_breaker", "siid": 3, "piid": 6 }
     ],
-    "did_water_valve": [],
     "did_curtain": [
       { "did": "did_curtain", "siid": 2, "piid": 3 },
       { "did": "did_curtain", "siid": 2, "piid": 7 },

@@ -31,6 +31,7 @@ enum DesignTokens {
         static let sensor = Color(red: 0.00, green: 0.48, blue: 1.00)
         static let cover = Color(red: 0.36, green: 0.62, blue: 0.86)
         static let appliance = Color(red: 0.00, green: 0.60, blue: 0.78)
+        static let generic = Color(red: 0.48, green: 0.52, blue: 0.58)
     }
 
     /// Data-mark tints for readings. The orb colours above are Control Center badges: at glyph,

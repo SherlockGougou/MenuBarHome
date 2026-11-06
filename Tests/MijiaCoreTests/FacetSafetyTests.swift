@@ -76,6 +76,52 @@ struct FacetSafetyTests {
         #expect(store.undoBanner == nil)
     }
 
+    private static func genericDevice(_ deviceType: String) -> SmartDevice {
+        SmartDevice(
+            id: "safety", name: deviceType, roomId: "test", roomName: "test",
+            model: "generic.\(deviceType)", isOnline: true,
+            kind: .generic(GenericSpec(
+                deviceType: deviceType,
+                typeTitle: deviceType,
+                isOn: false,
+                powerControl: nil,
+                isReadOnly: false
+            ))
+        )
+    }
+
+    @Test("Generic high-risk facets ask again after advanced writes are enabled", arguments: [
+        ("garbage-disposal", "on"), ("alertor", "alarm"), ("germicidal-lamp", "on"),
+        ("router", "on"), ("lock", "on"), ("multifunction-cooking-pot", "on"),
+        ("baby-bottle-warmer", "on"),
+    ])
+    @MainActor
+    func genericHighRiskFacetsConfirm(_ deviceType: String, _ name: String) async throws {
+        let facet = Self.facet(name: name, service: deviceType, current: .bool(false), whitelisted: false)
+        let (store, mock) = try await makeStore(Self.genericDevice(deviceType), facets: [facet])
+        var prompt: ManualControlConfirmation?
+        store.manualControlConfirmationHandler = { confirmation in
+            prompt = confirmation
+            return false
+        }
+        store.setFacetValue("safety", controlId: facet.id, value: .bool(true))
+        #expect(prompt != nil, "\(deviceType) must confirm a high-risk write")
+        #expect(await mock.executedCommands.isEmpty)
+        #expect(store.deviceFacets["safety"]?.first?.value == .bool(false))
+    }
+
+    @Test("Generic heating and appliance off directions stay direct", arguments: [
+        "boiler", "multifunction-cooking-pot", "baby-bottle-warmer",
+    ])
+    func genericHighRiskOffStaysDirect(_ deviceType: String) {
+        let facet = Self.facet(name: "on", service: deviceType, current: .bool(true), whitelisted: false)
+        #expect(ManualControlPolicy.confirmation(
+            facet: facet,
+            value: .bool(false),
+            for: Self.genericDevice(deviceType)
+        ) == nil)
+    }
+
     @Test("Advanced low-risk auxiliary controls execute without a confirmation handler", arguments: [
         ("plug", "brightness"), ("vacuum", "fan-level"), ("vacuum", "suction"),
         ("camera", "child-lock"), ("camera", "delay-time"), ("camera", "buzzer")

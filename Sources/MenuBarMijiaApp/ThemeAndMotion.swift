@@ -147,6 +147,7 @@ public enum DevicePalette {
         case .sensor: return DesignTokens.Orb.sensor
         case .cover: return DesignTokens.Orb.cover
         case .appliance: return DesignTokens.Orb.appliance
+        case .generic: return DesignTokens.Orb.generic
         case .humidifier: return DesignTokens.Orb.fan
         case .valve: return DesignTokens.Orb.plug
         }

@@ -60,9 +60,9 @@ struct MiotFacetsTests {
         let ruleCase = try #require(fixture.cases.first { $0.id == "low-risk-writes-are-open-by-default" })
         let facets = MiotFacetEngine.facets(for: ruleCase.spec)
         let on = try #require(facets.first { $0.name == "on" })
-        #expect(on.risk == .high)
-        #expect(on.writesByDefault == false)
-        for name in ["mode", "brightness", "fan-level"] {
+        #expect(on.risk == .low)
+        #expect(on.writesByDefault)
+        for name in ["on", "mode", "brightness", "fan-level"] {
             let facet = try #require(facets.first { $0.name == name })
             #expect(facet.risk == .low, "\(name)")
             #expect(facet.writesByDefault, "\(name)")
@@ -73,6 +73,83 @@ struct MiotFacetsTests {
         let heaterMode = try #require(MiotFacetEngine.facets(for: hazardous.spec).first { $0.name == "mode" })
         #expect(heaterMode.risk == .high)
         #expect(heaterMode.writesByDefault == false)
+    }
+
+    @Test("Heating, lock, and router services keep the on switch closed")
+    func hazardousServicesKeepOnClosed() throws {
+        let serviceNames = [
+            "heater", "ptc-bath-heater", "water-heater", "floor-heat", "boiler",
+            "lock", "lock-manage", "router", "customer-wifi",
+            "water-faucet", "pump", "multifunction-cooking-pot", "charging-pile",
+            "baby-bottle-warmer", "towel-rack",
+            "garbage-disposal", "disposal-service", "alertor", "alarm",
+            "sterilizer",
+        ]
+        for serviceName in serviceNames {
+            let spec = MiotDeviceSpec(
+                type: "urn:miot-spec-v2:device:vendor:00000000:fixture:1",
+                services: [
+                    MiotService(
+                        iid: 2,
+                        type: "urn:miot-spec-v2:service:\(serviceName):00000000:fixture:1",
+                        properties: [
+                            MiotProperty(
+                                iid: 1,
+                                type: "urn:miot-spec-v2:property:on:00000000:fixture:1",
+                                format: "bool",
+                                access: ["read", "write"]
+                            )
+                        ]
+                    )
+                ]
+            )
+            let facet = try #require(MiotFacetEngine.facets(for: spec).first)
+            #expect(facet.risk == .high, "\(serviceName)")
+            #expect(!facet.writesByDefault, "\(serviceName)")
+        }
+        let lock = MiotDeviceSpec(
+            type: "urn:miot-spec-v2:device:lock:00000000:fixture:1",
+            services: [
+                MiotService(
+                    iid: 2,
+                    type: "urn:miot-spec-v2:service:switch:00000000:fixture:1",
+                    properties: [
+                        MiotProperty(
+                            iid: 1,
+                            type: "urn:miot-spec-v2:property:on:00000000:fixture:1",
+                            format: "bool",
+                            access: ["read", "write"]
+                        )
+                    ]
+                )
+            ]
+        )
+        let lockFacet = try #require(MiotFacetEngine.facets(for: lock).first)
+        #expect(lockFacet.risk == .high)
+        #expect(!lockFacet.writesByDefault)
+
+        for deviceType in ["germicidal-lamp", "alertor", "garbage-disposal"] {
+            let spec = MiotDeviceSpec(
+                type: "urn:miot-spec-v2:device:\(deviceType):00000000:fixture:1",
+                services: [
+                    MiotService(
+                        iid: 2,
+                        type: "urn:miot-spec-v2:service:switch:00000000:fixture:1",
+                        properties: [
+                            MiotProperty(
+                                iid: 1,
+                                type: "urn:miot-spec-v2:property:on:00000000:fixture:1",
+                                format: "bool",
+                                access: ["read", "write"]
+                            )
+                        ]
+                    )
+                ]
+            )
+            let facet = try #require(MiotFacetEngine.facets(for: spec).first)
+            #expect(facet.risk == .high, "\(deviceType)")
+            #expect(!facet.writesByDefault, "\(deviceType)")
+        }
     }
 
     @Test("No noise service or property reaches a facet across the coverage fixture")

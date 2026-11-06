@@ -3,13 +3,20 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import { isDeepStrictEqual } from "node:util";
-import { miotFallbackAllows } from "../src/core/miCloud/facets.js";
+import { buildMiotFacets, miotFallbackAllows } from "../src/core/miCloud/facets.js";
 import { miotShortName, parseMiotDeviceSpec } from "../src/core/miCloud/spec.js";
 import type { MiotDeviceSpec, MiotProperty } from "../src/core/miCloud/spec.js";
 import { MiotSynthesizer, preferredMiotServices, primaryMiotService } from "../src/core/miCloud/synthesis.js";
 
 // Same classification as Tests/MijiaCoreTests/MiotCoverageBaselineTests.swift, pinned to the shared golden (#295).
-type Category = "matched" | "misclaimed" | "droppedControllable" | "droppedReadOnly" | "noUsableProperties";
+type Category =
+  | "matched"
+  | "misclaimed"
+  | "genericControllable"
+  | "genericReadOnly"
+  | "droppedControllable"
+  | "droppedReadOnly"
+  | "noUsableProperties";
 interface Entry {
   deviceType: string;
   category: Category;
@@ -49,6 +56,15 @@ function classify(spec: MiotDeviceSpec): Entry {
       0
     );
     return { deviceType, category: "matched", service, unexposedWritable };
+  }
+  // The generic facet layer is the last rung (#6). `controls()` on macOS drops action facets
+  // that carry arguments because this drawer has no generic editor for them.
+  const controls = buildMiotFacets(spec).filter((facet) => (facet.arguments?.length ?? 0) === 0);
+  if (controls.length > 0) {
+    return {
+      deviceType,
+      category: controls.some((facet) => facet.isWritable) ? "genericControllable" : "genericReadOnly"
+    };
   }
   if (usable.some((s) => s.actions.length > 0 || s.properties.some(isControl))) {
     return { deviceType, category: "droppedControllable" };

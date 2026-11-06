@@ -12,6 +12,8 @@ export interface DeviceProfiles {
     readonly maxVisible: number;
     /** Device types whose writes stay high risk, mirroring ModelActionPolicy's hazard table. */
     readonly highRiskTypes: readonly string[];
+    /** Services whose writes stay high risk: heating, locks, and network configuration. */
+    readonly highRiskServices: readonly string[];
     readonly highValue: readonly string[];
     readonly lowRiskWrites: readonly string[];
   };
@@ -138,7 +140,7 @@ function propertyFacet(
       if (!range) return null;
       kind = "slider";
     }
-    const risk = riskFor(name, deviceType, profiles);
+    const risk = riskFor(name, deviceType, serviceName, profiles);
     return {
       id,
       kind,
@@ -201,7 +203,7 @@ function actionFacet(
   }
   const name = miotShortName(action.type);
   const title = nonEmpty(action.description);
-  const risk = riskFor(name, deviceType, profiles);
+  const risk = riskFor(name, deviceType, serviceName, profiles);
   return {
     id: `${service.iid}.a${action.iid}`,
     kind: "button",
@@ -218,8 +220,14 @@ function actionFacet(
   };
 }
 
-function riskFor(name: string, deviceType: string, profiles: DeviceProfiles): MiotFacetRisk {
+function riskFor(
+  name: string,
+  deviceType: string,
+  serviceName: string,
+  profiles: DeviceProfiles
+): MiotFacetRisk {
   if (matchesMiotFacetPattern(deviceType, profiles.facets.highRiskTypes)) return "high";
+  if (matchesMiotFacetPattern(serviceName, profiles.facets.highRiskServices)) return "high";
   return matchesMiotFacetPattern(name, profiles.facets.lowRiskWrites) ? "low" : "high";
 }
 

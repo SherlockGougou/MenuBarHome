@@ -14,7 +14,7 @@ struct MainsBreakerTests {
         MiDeviceRecord(did: did, name: "总闸", model: model, isOnline: true, splitParentDid: nil, splitSiid: nil)
     }
 
-    @Test("The breaker is a read-only plug with its power; a water valve stays unsupported")
+    @Test("The breaker is a read-only plug; a water valve becomes a read-only generic card")
     func synthesizesReadOnlyMeter() throws {
         let breaker = try Self.goldenSpec("sanmei.valve.s1")
         let water = try Self.goldenSpec("golden.valve.water")
@@ -31,8 +31,8 @@ struct MainsBreakerTests {
                 MiotPropKey(did: "w", siid: 2, piid: 1): .bool(true),
             ]
         )
-        #expect(home.devices.map(\.id) == ["b"])
-        let device = try #require(home.devices.first)
+        #expect(Set(home.devices.map(\.id)) == ["b", "w"])
+        let device = try #require(home.devices.first { $0.id == "b" })
         guard case .plug(let spec) = device.kind else {
             Issue.record("breaker should be a plug-shaped meter")
             return
@@ -46,6 +46,15 @@ struct MainsBreakerTests {
         #expect(!device.isPrimaryToggleable)
         #expect(!HomeStore.joinsAllOffByDefault(device), "plugs stay out of 全关 by default")
         #expect(!device.kind.canTogglePower, "and even an override cannot add a read-only switch")
+
+        let valve = try #require(home.devices.first { $0.id == "w" })
+        guard case .generic(let card) = valve.kind else {
+            Issue.record("water valve should take the generic fallback")
+            return
+        }
+        #expect(card.powerControl == nil)
+        #expect(!valve.kind.canTogglePower, "opening a water valve is not a low-risk write")
+        #expect(home.deviceFacets["w"]?.contains { $0.name == "on" && !$0.writesByDefault } == true)
     }
 
     @Test("Every write to the breaker is refused, even where the spec says writable")

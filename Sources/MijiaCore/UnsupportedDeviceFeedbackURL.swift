@@ -55,7 +55,7 @@ public enum UnsupportedDeviceFeedbackURL {
     /// device the user disabled or hid in Home Assistant.
     private static func backend(for reason: UnsupportedDevice.Reason) -> String? {
         switch reason {
-        case .unknownModel:
+        case .unknownModel, .noControllableItems:
             return "小米云（扫码登录）"
         case .unsupportedEntities:
             return "Home Assistant"

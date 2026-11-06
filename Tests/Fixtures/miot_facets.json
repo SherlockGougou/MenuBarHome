@@ -31,8 +31,8 @@
           "name": "on",
           "title": "Switch Status",
           "isWritable": true,
-          "risk": "high",
-          "writesByDefault": false,
+          "risk": "low",
+          "writesByDefault": true,
           "highValue": false
         }
       ]
@@ -429,8 +429,8 @@
           "propertyId": 1,
           "name": "on",
           "isWritable": true,
-          "risk": "high",
-          "writesByDefault": false,
+          "risk": "low",
+          "writesByDefault": true,
           "highValue": false
         }
       ]
@@ -747,8 +747,8 @@
           "propertyId": 1,
           "name": "on",
           "isWritable": true,
-          "risk": "high",
-          "writesByDefault": false,
+          "risk": "low",
+          "writesByDefault": true,
           "highValue": false
         },
         {
@@ -1008,8 +1008,8 @@
           "name": "on",
           "title": "Switch Status",
           "isWritable": true,
-          "risk": "high",
-          "writesByDefault": false,
+          "risk": "low",
+          "writesByDefault": true,
           "highValue": false
         },
         {
@@ -1107,8 +1107,8 @@
           "name": "on",
           "title": "Switch Status",
           "isWritable": true,
-          "risk": "high",
-          "writesByDefault": false,
+          "risk": "low",
+          "writesByDefault": true,
           "highValue": false
         },
         {
@@ -1244,8 +1244,8 @@
           "name": "on",
           "title": "Switch Status",
           "isWritable": true,
-          "risk": "high",
-          "writesByDefault": false,
+          "risk": "low",
+          "writesByDefault": true,
           "highValue": false
         },
         {

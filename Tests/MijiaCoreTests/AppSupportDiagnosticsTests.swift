@@ -106,8 +106,8 @@ struct AppSupportDiagnosticsTests {
         #expect(home.devices.map(\.id) == [key.did])
     }
 
-    @Test("Mi Cloud: gateways, routers, and repeaters are classified as infrastructure filteredDuplicate")
-    func unsupportedMiCloudInfrastructure() {
+    @Test("Mi Cloud: a gateway with no spec is reported as unknown, not silently filtered")
+    func unsupportedMiCloudInfrastructureWithoutSpecs() {
         let gateway = MiDeviceRecord(did: "did-gw", name: "网关", model: "lumi.gateway.mgl03", isOnline: true)
         let router = MiDeviceRecord(did: "did-rt", name: "路由器", model: "xiaomi.router.rm1800", isOnline: true)
         let repeater = MiDeviceRecord(did: "did-rp", name: "小米 Wi-Fi 放大器 Pro", model: "xiaomi.repeater.v3", isOnline: true)
@@ -115,7 +115,67 @@ struct AppSupportDiagnosticsTests {
 
         let skipped = UnsupportedDeviceCollector.miCloud(devices: [gateway, router, repeater], specs: [:], synthesized: home)
         #expect(skipped.count == 3)
-        #expect(skipped.allSatisfy { $0.reason == .filteredDuplicate })
+        #expect(skipped.allSatisfy { $0.reason == .unknownModel })
+    }
+
+    @Test("Mi Cloud: a generic card is not reported; a spec without controls is")
+    func unsupportedMiCloudGenericCard() throws {
+        let fishTank = MiDeviceRecord(did: "did-tank", name: "鱼缸", model: "acme.fishbowl.v1", isOnline: true)
+        let deadSpec = MiDeviceRecord(did: "did-dead", name: "牙刷", model: "acme.toothbrush.v1", isOnline: true)
+        let fishTankSpec = MiotDeviceSpec(
+            type: "urn:miot-spec-v2:device:fish-tank:00000000:acme.fishbowl:1",
+            services: [
+                MiotService(
+                    iid: 2,
+                    type: "urn:miot-spec-v2:service:fish-tank:00000000:acme.fishbowl:1",
+                    properties: [
+                        MiotProperty(
+                            iid: 1,
+                            type: "urn:miot-spec-v2:property:on:00000000:acme.fishbowl:1",
+                            format: "bool",
+                            access: ["read", "write"]
+                        ),
+                        MiotProperty(
+                            iid: 2,
+                            type: "urn:miot-spec-v2:property:temperature:00000000:acme.fishbowl:1",
+                            format: "float",
+                            access: ["read"],
+                            unit: "celsius"
+                        ),
+                    ]
+                )
+            ]
+        )
+        let deadSpecValue = MiotDeviceSpec(
+            type: "urn:miot-spec-v2:device:toothbrush:00000000:acme.toothbrush:1",
+            services: [
+                MiotService(
+                    iid: 2,
+                    type: "urn:miot-spec-v2:service:toothbrush:00000000:acme.toothbrush:1",
+                    properties: [
+                        MiotProperty(
+                            iid: 1,
+                            type: "urn:miot-spec-v2:property:name:00000000:acme.toothbrush:1",
+                            format: "string",
+                            access: ["read"]
+                        )
+                    ]
+                )
+            ]
+        )
+        let specs = [fishTank.model: fishTankSpec, deadSpec.model: deadSpecValue]
+        let home = MiotSynthesizer.synthesize(devices: [fishTank, deadSpec], rooms: [], specs: specs, values: [:])
+        #expect(home.devices.count == 1)
+        let generic = try #require(home.devices.first)
+        guard case .generic = generic.kind else {
+            Issue.record("expected a generic card")
+            return
+        }
+
+        let skipped = UnsupportedDeviceCollector.miCloud(devices: [fishTank, deadSpec], specs: specs, synthesized: home)
+        #expect(skipped.map(\.id) == [deadSpec.did])
+        #expect(skipped.first?.reason == .noControllableItems)
+        #expect(skipped.first?.model == deadSpec.model)
     }
 
     // MARK: - #45 Unsupported devices: Home Assistant

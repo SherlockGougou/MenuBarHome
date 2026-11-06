@@ -19,7 +19,7 @@
       "unexposedWritable" : 3
     },
     "090615.gateway.ac10" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "gateway"
     },
     "090615.light.ailig1" : {
@@ -51,7 +51,7 @@
       "unexposedWritable" : 2
     },
     "090615.wafa.f11026" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "water-faucet"
     },
     "090615.wifispeaker.x6bj" : {
@@ -67,11 +67,11 @@
       "unexposedWritable" : 4
     },
     "123888.stb.1101" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "stb"
     },
     "123888.tv.xhzn11" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "television"
     },
     "1245.airfresh.cj300" : {
@@ -87,23 +87,23 @@
       "unexposedWritable" : 2
     },
     "17216.massage.6261d" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "massage"
     },
     "17216.pillow.pl007" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "pillow"
     },
     "209754.fishbowl.tank01" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "fish-tank"
     },
     "25mj.bed.bed001" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "bed"
     },
     "25mj.sofa.safarm" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "sofa"
     },
     "360sdj.vacuum.s" : {
@@ -113,27 +113,27 @@
       "unexposedWritable" : 0
     },
     "445.mirror.jg1" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "mirror"
     },
     "445.shower.lyq01" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "shower"
     },
     "445.toilet.cnlzmt" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "toilet"
     },
     "445.tow_w.mjj1" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "towel-rack"
     },
     "913101.carseat.d1max" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "safety-seat"
     },
     "913101.tracker.d1" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "tracker"
     },
     "aden.derh.derh16" : {
@@ -149,15 +149,15 @@
       "unexposedWritable" : 18
     },
     "adp.fitting.adgw" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "fitting"
     },
     "adp.motor.adfbt6" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "motor-controller"
     },
     "adp.robot.ad" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "robot"
     },
     "adream.diffuser.v1" : {
@@ -173,15 +173,15 @@
       "unexposedWritable" : 3
     },
     "afour.s_lamp.001" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "germicidal-lamp"
     },
     "agkey.desk.k2" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "table"
     },
     "aimei.avamp.box1" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "audio-video-amplifier"
     },
     "ainice.motion.bt" : {
@@ -203,11 +203,11 @@
       "unexposedWritable" : 3
     },
     "aizbot.etool.xqspkb" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "rangefinder"
     },
     "aizbot.watermon.wd2" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "watermon"
     },
     "als1.humidifier.js03" : {
@@ -239,19 +239,19 @@
       "unexposedWritable" : 0
     },
     "asp.treadmill.a9" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "treadmill"
     },
     "asu.projector.apro" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "projector"
     },
     "at123.foot_bath.6sb" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "foot-bath"
     },
     "ateai.mosq.dakuo" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "mosquito-dispeller"
     },
     "aupu.airer.d350m" : {
@@ -261,7 +261,7 @@
       "unexposedWritable" : 2
     },
     "babai.ven_fan.tycold" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "ceiling-fan"
     },
     "babai.wopener.82" : {
@@ -281,15 +281,15 @@
       "unexposedWritable" : 0
     },
     "bdx.i_stove.a1xs" : {
-      "category" : "droppedReadOnly",
+      "category" : "genericReadOnly",
       "deviceType" : "integrated-stove"
     },
     "beb.mattress.byb01" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "mattress"
     },
     "becbas.disposer.e60" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "garbage-disposal"
     },
     "beem.airm.gsb" : {
@@ -299,19 +299,19 @@
       "unexposedWritable" : 0
     },
     "beem.tvbox.iradc" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "tv-box"
     },
     "binuo.feeder.y1" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "pet-feeder"
     },
     "bj352.waterpuri.k10" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "water-purifier"
     },
     "bkrobo.chair.bc03" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "chair"
     },
     "bkxh.flood.yf02" : {
@@ -327,15 +327,15 @@
       "unexposedWritable" : 0
     },
     "bkxh.sensor_gas.s2" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "gas-sensor"
     },
     "bkxh.sensor_smoke.s1" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "smoke-sensor"
     },
     "bshcn.coffee.181b0w" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "coffee-machine"
     },
     "bshcn.dishwasher.23eb33" : {
@@ -363,11 +363,11 @@
       "unexposedWritable" : 1
     },
     "bshcn.mfcp.555cbc" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "multifunction-cooking-pot"
     },
     "bshcn.stove.7nyv6e" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "smart-stove"
     },
     "bshcn.washer.0au00w" : {
@@ -381,15 +381,15 @@
       "deviceType" : "control-panel"
     },
     "bwlife.cup.01" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "cup"
     },
     "bymiot.cs.sensor" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "card-switch"
     },
     "bymiot.ir.wlv1" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "ir-remote-control"
     },
     "bymiot.relay.wlv1" : {
@@ -399,11 +399,11 @@
       "unexposedWritable" : 12
     },
     "candy.enstor.cp02s" : {
-      "category" : "droppedControllable",
+      "category" : "genericReadOnly",
       "deviceType" : "electric-power"
     },
     "canon.printer.ij2" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "printer"
     },
     "careco.camera.650" : {
@@ -413,15 +413,15 @@
       "unexposedWritable" : 19
     },
     "careco.carlight.p601" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "carlight"
     },
     "careco.evc.a07a01" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "charging-pile"
     },
     "careco.gesture.o651" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "gesture"
     },
     "careco.nlight.o654" : {
@@ -437,11 +437,11 @@
       "unexposedWritable" : 8
     },
     "cariot.holder.wpc100" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "phone-holder"
     },
     "cgllc.clock.cgc1" : {
-      "category" : "droppedReadOnly",
+      "category" : "genericReadOnly",
       "deviceType" : "clock"
     },
     "chint1.valve.1p" : {
@@ -463,7 +463,7 @@
       "unexposedWritable" : 23
     },
     "chuangmi.radio.v1" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "radio"
     },
     "chunmi.cooker.017meu" : {
@@ -479,11 +479,11 @@
       "unexposedWritable" : 0
     },
     "chunmi.ihcooker.cb" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "induction-cooker"
     },
     "chunmi.juicer.a1" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "juicer"
     },
     "chunmi.microwave.cmwb3" : {
@@ -493,7 +493,7 @@
       "unexposedWritable" : 2
     },
     "chunmi.pre_cooker.dylg5" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "pressure-cooker"
     },
     "chunmi.ysj.tsa1" : {
@@ -509,7 +509,7 @@
       "unexposedWritable" : 0
     },
     "ctest.inskil.duyr" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "insect-killer"
     },
     "cuco.acpartner.ap2a" : {
@@ -525,19 +525,19 @@
       "unexposedWritable" : 13
     },
     "dayi.safe.dy" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "safe-box"
     },
     "degree.lunar.smh013" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "sleep-monitor"
     },
     "dnake.alarm.def" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "alertor"
     },
     "doco.fcb.docov001" : {
-      "category" : "droppedReadOnly",
+      "category" : "genericReadOnly",
       "deviceType" : "other"
     },
     "dreame.scooter.p2223" : {
@@ -545,7 +545,7 @@
       "deviceType" : "scooter"
     },
     "duhua.jmprope.55" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "jump-rope"
     },
     "eizi.toothbrush.sy01" : {
@@ -565,7 +565,7 @@
       "deviceType" : "hair-drier"
     },
     "fengmi.engrave.demo01" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "engraving-machine"
     },
     "fengyu.intercom.beebird" : {
@@ -579,11 +579,11 @@
       "unexposedWritable" : 4
     },
     "gimi.projector.fm01" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "projector"
     },
     "haibao.pet_waterer.mm2" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "pet-drinking-fountain"
     },
     "haikuo.cleaner.m7" : {
@@ -591,7 +591,7 @@
       "deviceType" : "vacuum-cleaner"
     },
     "hhcc.bleflowerpot.v2" : {
-      "category" : "droppedReadOnly",
+      "category" : "genericReadOnly",
       "deviceType" : "plant-monitor"
     },
     "hlznkj.dental.cs60a" : {
@@ -599,19 +599,19 @@
       "deviceType" : "oral-irrigator"
     },
     "hmpace.bracelet.v4" : {
-      "category" : "droppedReadOnly",
+      "category" : "genericReadOnly",
       "deviceType" : "bracelet"
     },
     "hoto.timer.kt" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "timer"
     },
     "hsm.walkingpad.c2" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "walking-pad"
     },
     "huoman.litter_box.co1" : {
-      "category" : "droppedReadOnly",
+      "category" : "genericReadOnly",
       "deviceType" : "cat-litter-box"
     },
     "hzyx01.beauty.m180" : {
@@ -619,23 +619,23 @@
       "deviceType" : "beauty-instrument"
     },
     "ihealth.bp.bpm1" : {
-      "category" : "droppedReadOnly",
+      "category" : "genericReadOnly",
       "deviceType" : "sphygmomanometer"
     },
     "ileja.hud.ccm" : {
-      "category" : "droppedReadOnly",
+      "category" : "genericReadOnly",
       "deviceType" : "head-up-display"
     },
     "isa.router.mr01hl" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "router"
     },
     "jb2004.exbike.jb909" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "stationary-bicycle"
     },
     "jdxc.pump.wysbm" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "pump"
     },
     "jiqid.mistory.ipen1" : {
@@ -649,11 +649,11 @@
       "unexposedWritable" : 6
     },
     "jyaiot.cm.ccj01" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "cooking-machine"
     },
     "kxf321.mop.mo001" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "mopping-machine"
     },
     "lanbo1.fan.lbfs1" : {
@@ -667,15 +667,15 @@
       "unexposedWritable" : 5
     },
     "line.remote.wkgf1" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "remote-control"
     },
     "linp.doorbell.g03" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "doorbell"
     },
     "linp.senpres.ps1bb" : {
-      "category" : "droppedReadOnly",
+      "category" : "genericReadOnly",
       "deviceType" : "pressure-sensor"
     },
     "lumi.plug.aq1" : {
@@ -703,11 +703,11 @@
       "unexposedWritable" : 2
     },
     "lumi.vibration.agl01" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "vibration-sensor"
     },
     "macro.boiler.combgl" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "boiler"
     },
     "maijia.ajh.mj9001" : {
@@ -733,31 +733,31 @@
       "unexposedWritable" : 29
     },
     "midr.cardvr.x200s" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "driving-recorder"
     },
     "midr.rv_mirror.m2" : {
-      "category" : "droppedReadOnly",
+      "category" : "genericReadOnly",
       "deviceType" : "rearview-mirror"
     },
     "mijia.watch.n62" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "watch"
     },
     "miot.bin.c2" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "garbage-can"
     },
     "miot.dimmer.hhh" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "dimmer"
     },
     "miot.flowerpot.aztest" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "flowerpot"
     },
     "miot.handdry.hd3" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "hand-dryer"
     },
     "miot.light.hyz05" : {
@@ -777,7 +777,7 @@
       "deviceType" : "pet-toy"
     },
     "miot.phone.wgqy" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "phone"
     },
     "miot.phovideo.savr1" : {
@@ -795,11 +795,11 @@
       "unexposedWritable" : 4
     },
     "msj.f_washer.m1" : {
-      "category" : "droppedReadOnly",
+      "category" : "genericReadOnly",
       "deviceType" : "fruit-vegetable-purifier"
     },
     "musi.bed.bzz1" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "bed"
     },
     "nhkj15.airrtc.hoer36" : {
@@ -825,15 +825,15 @@
       "unexposedWritable" : 1
     },
     "qdjm.icemake.fkzbj" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "ice-maker"
     },
     "qicyc.bike.tdp02z" : {
-      "category" : "droppedReadOnly",
+      "category" : "genericReadOnly",
       "deviceType" : "bike"
     },
     "qushui.bedstand.box" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "bedstand"
     },
     "rrui.k_scale.517" : {
@@ -849,11 +849,11 @@
       "deviceType" : "analyzer"
     },
     "shuse.roller.sr01" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "roller-shutter"
     },
     "smith.w_soften.cxs05ta1" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "water-softener"
     },
     "suzi.scales.s400" : {
@@ -865,7 +865,7 @@
       "deviceType" : "cooler"
     },
     "tata.milkheat.bl1108" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "baby-bottle-warmer"
     },
     "trios1.bleshoes.rftcdl" : {
@@ -915,35 +915,35 @@
       "deviceType" : "module"
     },
     "xiaomi.esteamer.mes01" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "electric-steamer"
     },
     "xiaomi.fishbowl.m200" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "fish-tank"
     },
     "xiaomi.laptop.n56sr" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "laptop"
     },
     "xiaomi.mic.s33" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "microphone"
     },
     "xiaomi.plc.v1" : {
-      "category" : "droppedReadOnly",
+      "category" : "genericReadOnly",
       "deviceType" : "repeater"
     },
     "xiaomi.split_tv.b1" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "split-tv"
     },
     "xiaomi.station.rp05" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "nas"
     },
     "xiaomi.teabar.mtb01" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "teabar"
     },
     "youha.breast.s1" : {
@@ -951,7 +951,7 @@
       "deviceType" : "breast-pump"
     },
     "yunmi.waterpuri.lx14" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "water-purifier"
     },
     "z9527.car.mdd8" : {
@@ -961,8 +961,10 @@
   },
   "summary" : {
     "categories" : {
-      "droppedControllable" : 92,
-      "droppedReadOnly" : 13,
+      "droppedControllable" : 0,
+      "droppedReadOnly" : 0,
+      "genericControllable" : 91,
+      "genericReadOnly" : 14,
       "matched" : 69,
       "misclaimed" : 0,
       "noUsableProperties" : 31
@@ -973,59 +975,59 @@
   },
   "windowsDivergences" : {
     "090615.bhf_light.ptxyb" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "bath-heater"
     },
     "aden.waterheater.ash200" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "water-heater"
     },
     "alsmai.hood.a31203" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "hood"
     },
     "aupu.airer.d350m" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "airer"
     },
     "bshcn.dishwasher.23eb33" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "dishwasher"
     },
     "bshcn.dishwasher.zb69mc" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "dishwasher"
     },
     "bshcn.dry.2j7x10" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "dryer"
     },
     "bshcn.washer.0au00w" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "washer"
     },
     "coc.dryer.fdpsm" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "clothes-dryer"
     },
     "leishi.bhf_light.ls109" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "bath-heater"
     },
     "mibx5.washer.f27vn" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "washer"
     },
     "mrbond.airer.m1super" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "airer"
     },
     "viomi.hood.c26" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "hood"
     },
     "viomi.waterheater.u3" : {
-      "category" : "droppedControllable",
+      "category" : "genericControllable",
       "deviceType" : "water-heater"
     }
   }

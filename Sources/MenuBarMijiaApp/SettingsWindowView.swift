@@ -218,6 +218,7 @@ struct SettingsToggleRow: View {
 private struct GeneralSettingsTab: View {
     let store: HomeStore
     @State private var showNotificationRationale = false
+    @State private var confirmsAdvancedFacetWrites = false
     @AppStorage(SoundFeedback.storageKey) private var soundFeedbackEnabled = false
     @AppStorage(TemperatureUnitPreference.storageKey) private var temperatureUnitRaw = TemperatureUnitPreference.system.rawValue
 
@@ -385,9 +386,30 @@ private struct GeneralSettingsTab: View {
                         ),
                         isOn: Binding(
                             get: { store.allowAdvancedFacetWrites },
-                            set: { store.allowAdvancedFacetWrites = $0 }
+                            set: { newValue in
+                                if newValue && !store.allowAdvancedFacetWrites {
+                                    confirmsAdvancedFacetWrites = true
+                                } else {
+                                    store.allowAdvancedFacetWrites = newValue
+                                }
+                            }
                         )
                     )
+                    .confirmationDialog(
+                        L10n.tr("允许写入次要控件？", "Allow secondary writes?"),
+                        isPresented: $confirmsAdvancedFacetWrites,
+                        titleVisibility: .visible
+                    ) {
+                        Button(L10n.tr("允许写入", "Allow writes"), role: .destructive) {
+                            store.allowAdvancedFacetWrites = true
+                        }
+                        Button(L10n.tr("取消", "Cancel"), role: .cancel) {}
+                    } message: {
+                        Text(L10n.tr(
+                            "开启后，加热、门锁、阀门、路由器配置等高风险操作在执行前仍会再次确认。只修改你确认设备支持的项目。",
+                            "High-risk operations such as heating, locks, valves, and router configuration still ask for confirmation before they run. Only change settings you know the device supports."
+                        ))
+                    }
 
                     Text(L10n.tr(
                         "默认只放开亮度、模式、风速这类低风险写入。「更多设置」里的其他开关、滑块和按钮会显示为不可用；开启后它们也可以操作，请先确认设备确实支持该项。",

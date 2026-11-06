@@ -84,6 +84,11 @@ public enum ManualControlPolicy {
         let coverServices = ["curtain", "window-opener", "airer", "clothes-airer", "garage-door"]
         if isMode, device.kind.isCover || coverServices.contains(service) { return true }
 
+        let deviceType = genericDeviceType(device)
+        // Locks, valves, security, routers, disposers and sterilizers keep every write behind a
+        // confirmation even after advanced writes are enabled (#6 review).
+        if strictlyHighRisk(deviceType: deviceType, service: service) { return true }
+
         // Indicator, sound and child-lock controls never move the appliance's main function.
         let lowRiskServices = ["indicator-light", "night-light", "buzzer", "speaker", "physical-controls-locked"]
         let lowRiskTokens: Set<String> = ["led", "indicator", "buzzer", "mute", "display", "screen"]
@@ -105,6 +110,7 @@ public enum ManualControlPolicy {
         let selectedMode = (value?.intValue).flatMap { selected in
             facet.options.first { $0.value == selected }?.label
         } ?? value?.stringValue
+
         if category == .heater {
             if isPower, let isOn = value?.miotBool { return isOn }
             if isMode { return selectedMode?.caseInsensitiveCompare("off") != .orderedSame }
@@ -115,7 +121,9 @@ public enum ManualControlPolicy {
             .contains(service)
         if isPower, let isOn = value?.miotBool {
             if heatingService { return isOn }
-            return requiresConfirmation(.power(isOn), for: device)
+            if !device.kind.isGenericDevice {
+                return requiresConfirmation(.power(isOn), for: device)
+            }
         }
 
         let waterHeater: Bool
@@ -133,7 +141,38 @@ public enum ManualControlPolicy {
         if isMode, heatingService || waterHeater {
             return selectedMode?.caseInsensitiveCompare("off") != .orderedSame
         }
+
+        // Data-driven high-risk types and services (#6). Generic facets outside the low-risk
+        // whitelist belong here too: enabling advanced writes is not itself the confirmation.
+        // Heating target/mode rules above keep their off and cool-down directions direct.
+        let profiles = DeviceProfiles.current
+        let highRisk = MiotFacetEngine.matches(deviceType, anyOf: profiles.facets.highRiskTypes)
+            || MiotFacetEngine.matches(service, anyOf: profiles.facets.highRiskServices)
+            || (device.kind.isGenericDevice && !facet.writesByDefault)
+        if highRisk {
+            let isOff = (isPower && value?.miotBool == false)
+                || (isMode && selectedMode?.caseInsensitiveCompare("off") == .orderedSame)
+            return !isOff
+        }
         return false
+    }
+
+    /// The MIoT device type of a generic card, or an empty string for a dedicated card.
+    private static func genericDeviceType(_ device: SmartDevice) -> String {
+        if case .generic(let spec) = device.kind { return spec.deviceType }
+        return ""
+    }
+
+    /// Writes that never take the low-risk shortcut: locks, valves, security, routers, disposers
+    /// and sterilizers. These ask even for an off direction (#6 review).
+    private static func strictlyHighRisk(deviceType: String, service: String) -> Bool {
+        let types = ["lock", "*-lock", "germicidal-lamp", "alertor", "garbage-disposal", "router", "gateway", "repeater"]
+        let services = [
+            "lock", "lock-*", "*-lock", "*-valve", "*disposal*", "alertor", "*alarm*",
+            "*steriliz*", "*router*", "*wifi*", "*wlan*", "*gateway*", "*repeater*",
+        ]
+        return MiotFacetEngine.matches(deviceType, anyOf: types)
+            || MiotFacetEngine.matches(service, anyOf: services)
     }
 
     /// The lock-screen preference guard: off by default would leave every external control path open

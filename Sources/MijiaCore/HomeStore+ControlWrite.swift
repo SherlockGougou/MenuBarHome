@@ -51,6 +51,7 @@ extension HomeStore {
             return OptimisticWrite(deviceId: previous.id, previous: previous, revision: nil, isShown: false)
         }
         devices[idx] = updated
+        syncGenericPowerFacet(updated)
         let revision = lock.map { lockOptimistic(previous.id, duration: $0) } ?? optimisticLockRevision[previous.id]
         return OptimisticWrite(deviceId: previous.id, previous: previous, revision: revision, isShown: true)
     }
@@ -84,9 +85,22 @@ extension HomeStore {
         guard write.isShown, ownsRow(write) else { return }
         if let idx = devices.firstIndex(where: { $0.id == write.deviceId }) {
             devices[idx] = restoring ?? write.previous
+            syncGenericPowerFacet(devices[idx])
         }
         optimisticLockUntil.removeValue(forKey: write.deviceId)
         coverCommandOrigins.removeValue(forKey: write.deviceId)
+    }
+
+    /// Keeps a stored facet row on the same value as the generic tile's main switch. The switch is
+    /// normally not in `deviceFacets`, so this is a no-op unless a test or an older snapshot row
+    /// still carries it.
+    func syncGenericPowerFacet(_ device: SmartDevice) {
+        guard case .generic(let spec) = device.kind,
+              let control = spec.powerControl,
+              let index = deviceFacets[device.id]?.firstIndex(where: { $0.id == control.id }) else {
+            return
+        }
+        deviceFacets[device.id]?[index].value = .bool(spec.isOn)
     }
 
     // MARK: Card controls

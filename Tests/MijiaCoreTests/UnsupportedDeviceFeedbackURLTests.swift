@@ -49,7 +49,7 @@ struct UnsupportedDeviceFeedbackURLTests {
         #expect(form.section("平台 / Platform") == "macOS")
         #expect(form.section("接入方式 / Backend") == "小米云（扫码登录）")
         #expect(form.section("型号 / Model") == "acme.fan.v1")
-        #expect(form.section("现象 / Symptom") == "米家规格缺失或不含可控制服务\n\n期望支持的功能（开关、亮度、温度…）：")
+        #expect(form.section("现象 / Symptom") == "没有取到米家设备规格\n\n期望支持的功能（开关、亮度、温度…）：")
         #expect(Set(form.items.keys) == ["issue[title]", "issue[description]"])
         #expect(!form.items.values.contains { $0.contains(device.id) })
     }
