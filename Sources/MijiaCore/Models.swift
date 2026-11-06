@@ -1112,6 +1112,51 @@ public struct ApplianceSpec: Equatable, Sendable {
     }
 }
 
+/// The fallback card for a controllable MIoT device whose type has no dedicated builder (#6).
+/// It keeps the few readings the card can show and one low-risk main switch; everything else
+/// lives in the 更多设置 drawer.
+public struct GenericSpec: Equatable, Sendable {
+    /// One reading shown on the card. At most two are kept, high-value facets first.
+    public struct Readout: Equatable, Sendable {
+        public var value: String
+
+        public init(value: String) {
+            self.value = value
+        }
+    }
+
+    /// MIoT device type short name, e.g. `fish-tank`.
+    public var deviceType: String
+    /// Localized device-type label used while there is no reading to show.
+    public var typeTitle: String
+    public var isOn: Bool
+    /// A low-risk writable `on` facet. Nil when the card has no safe main switch, so the tile
+    /// never claims control it cannot safely offer.
+    public var powerControl: FacetControl?
+    /// No facet accepts any write, so the card is a status surface and says 只读.
+    public var isReadOnly: Bool
+    public var readouts: [Readout]
+    public var symbolName: String?
+
+    public init(
+        deviceType: String,
+        typeTitle: String,
+        isOn: Bool = false,
+        powerControl: FacetControl? = nil,
+        isReadOnly: Bool,
+        readouts: [Readout] = [],
+        symbolName: String? = nil
+    ) {
+        self.deviceType = deviceType
+        self.typeTitle = typeTitle
+        self.isOn = isOn
+        self.powerControl = powerControl
+        self.isReadOnly = isReadOnly
+        self.readouts = readouts
+        self.symbolName = symbolName
+    }
+}
+
 public enum DeviceKind: Equatable, Sendable {
     case light(LightSpec)
     case climate(ClimateSpec)
@@ -1125,6 +1170,7 @@ public enum DeviceKind: Equatable, Sendable {
     case sensor(SensorSpec)
     case cover(CoverSpec)
     case appliance(ApplianceSpec)
+    case generic(GenericSpec)
     case humidifier(HumidifierSpec)
     case valve(ValveSpec)
 
@@ -1143,6 +1189,11 @@ public enum DeviceKind: Equatable, Sendable {
         return false
     }
 
+    public var isGenericDevice: Bool {
+        if case .generic = self { return true }
+        return false
+    }
+
     public var canTogglePower: Bool {
         switch self {
         case .light(let spec): return spec.powerWritable
@@ -1155,6 +1206,7 @@ public enum DeviceKind: Equatable, Sendable {
         case .speaker, .fridge, .sensor: return false
         case .cover(let spec): return spec.canMove
         case .appliance(let spec): return spec.powerPresent && spec.powerWritable
+        case .generic(let spec): return spec.powerControl != nil
         case .humidifier(let spec): return spec.powerWritable
         case .valve(let spec): return spec.canMove
         }
@@ -1188,6 +1240,8 @@ public enum DeviceKind: Equatable, Sendable {
             return spec.powerWritable || spec.modeWritable || spec.temperatureWritable
                 || spec.fanLevel?.writable == true || spec.light?.writable == true
                 || spec.startAction != nil || spec.pauseAction != nil || spec.stopAction != nil
+        case .generic(let spec):
+            return !spec.isReadOnly
         case .humidifier(let spec):
             return spec.powerWritable || spec.modeWritable || spec.humidityWritable
         case .valve(let spec):
@@ -1263,6 +1317,11 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
             [s.entityId, s.powerEntityId, s.modeEntityId, s.temperatureEntityId,
              s.light?.entityId, s.fanLevel?.entityId,
              s.startAction?.entityId, s.pauseAction?.entityId, s.stopAction?.entityId]
+        case .generic(let s):
+            s.powerControl?.target.flatMap { target in
+                if case .property(let entityId, _) = target { return entityId }
+                return nil
+            }.map { [$0] } ?? []
         case .humidifier(let s): [s.entityId]
         case .valve(let s): [s.entityId]
         }
@@ -1295,6 +1354,7 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
         case .fridge, .sensor: return false
         case .cover(let s): return (s.positionPercent ?? 0) > 0
         case .appliance(let s): return s.isOn
+        case .generic(let s): return s.isOn
         case .humidifier(let s): return s.isOn
         case .valve(let s): return s.isOpen
         }
@@ -1342,6 +1402,10 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
         case (.appliance(var spec), .appliance(let want)):
             spec.isOn = want.isOn
             next.kind = .appliance(spec)
+        case (.generic(var spec), .generic(let want)):
+            spec.isOn = want.isOn
+            spec.powerControl?.value = .bool(want.isOn)
+            next.kind = .generic(spec)
         case (.humidifier(var spec), .humidifier(let want)):
             spec.isOn = want.isOn
             next.kind = .humidifier(spec)
@@ -1388,6 +1452,10 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
                 || spec.currentHumidity != nil
                 || spec.statusText != nil || spec.faultText != nil || spec.remainingMinutes != nil
                 || spec.startAction != nil || spec.pauseAction != nil || spec.stopAction != nil
+        case .generic(let spec):
+            // A sole main switch is not a drawer. Extra facets reach the drawer through
+            // `HomeStore.hasDetailDrawer(for:)`; read-only or switch-less cards explain themselves.
+            return spec.isReadOnly || spec.powerControl == nil
         case .humidifier(let spec):
             return spec.modeWritable
                 || (spec.humidityWritable && spec.targetHumidity != nil)

@@ -60,6 +60,44 @@ struct DetailSliderControl: View {
     }
 }
 
+// MARK: - Generic fallback drawer (#6)
+
+/// The drawer above 更多设置 for a card with no dedicated type. A read-only device says so in
+/// words instead of showing controls it cannot offer; a writable one explains why the main switch
+/// is missing when no low-risk `on` exists.
+struct GenericDetailDrawer: View {
+    let spec: GenericSpec
+    let statusColor: Color
+
+    var body: some View {
+        if spec.isReadOnly {
+            explanation(
+                L10n.tr(
+                    "该设备只向云端开放读数，不能从这里控制。",
+                    "This device only exposes readings and cannot be controlled here."
+                ),
+                systemImage: "lock.fill"
+            )
+        } else if spec.powerControl == nil {
+            explanation(
+                L10n.tr(
+                    "没有低风险的主开关；其余控件在下方「更多设置」，高风险写入默认保持只读。",
+                    "No low-risk main switch. The remaining controls are under More Settings; high-risk writes stay read-only by default."
+                ),
+                systemImage: "lock.shield"
+            )
+        }
+    }
+
+    private func explanation(_ text: String, systemImage: String) -> some View {
+        Label(text, systemImage: systemImage)
+            .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
+            .foregroundStyle(statusColor)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 // MARK: - 更多设置
 
 /// Generic drawer rows synthesized from the MIoT spec (#5). The section starts folded, keeps the
@@ -321,51 +359,6 @@ struct DeviceFacetSection: View {
 // MARK: - Facet labels
 
 enum FacetLabel {
-    /// Common MIoT short names. A localized title here beats the spec's vendor description.
-    private static let chineseNames: [String: String] = [
-        "on": "开关",
-        "mode": "模式",
-        "fan-level": "风速",
-        "fan-speed": "风速",
-        "brightness": "亮度",
-        "color-temperature": "色温",
-        "target-temperature": "目标温度",
-        "target-temp": "目标温度",
-        "temperature": "温度",
-        "relative-humidity": "湿度",
-        "humidity": "湿度",
-        "target-humidity": "目标湿度",
-        "current-humidity": "当前湿度",
-        "pm2.5-density": "PM2.5",
-        "battery-level": "电量",
-        "fault": "故障",
-        "status": "状态",
-        "volume": "音量",
-        "mute": "静音",
-        "motion-detection": "移动侦测",
-        "detection-sensitivity": "侦测灵敏度",
-        "alarm-interval": "报警间隔",
-        "night-shot": "夜视",
-        "current-position": "当前位置",
-        "target-position": "目标位置",
-        "motor-control": "电机控制",
-        "motor-reverse": "电机方向",
-        "physical-controls-locked": "按键锁",
-        "indicator-light": "指示灯",
-        "default-power-on-state": "通电默认状态",
-        "soft-wind": "柔风",
-        "horizontal-swing": "左右摆风",
-        "vertical-swing": "上下摆风",
-        "heat-level": "加热档位",
-        "storage-free-space": "剩余空间",
-        "storage-total-space": "总空间",
-        "storage-used-space": "已用空间",
-        "left-time": "剩余时间",
-        "delay-off-time": "延时关闭",
-        "work-mode": "工作模式",
-        "privacy-mode": "隐私模式",
-    ]
-
     private static let chineseServices: [String: String] = [
         "fan-control": "风扇",
         "environment": "环境",
@@ -398,11 +391,7 @@ enum FacetLabel {
     ]
 
     static func title(_ control: FacetControl) -> String {
-        if !L10n.isEnglish, let chinese = chineseNames[control.name] {
-            return chinese
-        }
-        let raw = control.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return raw.isEmpty ? humanized(control.name) : raw
+        MiotFacetText.title(name: control.name, title: control.title)
     }
 
     static func service(_ name: String) -> String {
@@ -413,48 +402,11 @@ enum FacetLabel {
     }
 
     static func humanized(_ raw: String) -> String {
-        let words = raw.replacingOccurrences(of: "-", with: " ")
-        guard let first = words.first else { return raw }
-        return first.uppercased() + String(words.dropFirst())
+        MiotFacetText.humanized(raw)
     }
 
     static func value(_ control: FacetControl) -> String {
-        if let option = control.selectedOption { return option.label }
-        if case .toggle = control.kind {
-            return control.isOn == true ? L10n.tr("开", "On") : L10n.tr("关", "Off")
-        }
-        guard let raw = control.numberValue else {
-            if let isOn = control.isOn {
-                return isOn ? L10n.tr("开", "On") : L10n.tr("关", "Off")
-            }
-            if let text = control.value?.stringValue { return text }
-            return "—"
-        }
-        let scaled = raw * (control.scale ?? 1)
-        if control.kind == .reading, control.unit?.lowercased() == "celsius" {
-            return L10n.temperature(scaled, fractionDigits: 1)
-        }
-        return number(scaled) + unitSuffix(control.unit)
-    }
-
-    private static func number(_ value: Double) -> String {
-        if value.rounded() == value, let exact = Int(exactly: value) { return "\(exact)" }
-        return String(format: "%.1f", value)
-    }
-
-    private static func unitSuffix(_ raw: String?) -> String {
-        let unit = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !unit.isEmpty, unit.lowercased() != "none" else { return "" }
-        switch unit.lowercased() {
-        case "celsius": return " °C"
-        case "percentage", "percent": return "%"
-        case "ppm": return " ppm"
-        case "lux": return " lx"
-        case "minutes": return " min"
-        case "seconds": return " s"
-        case "hour", "hours": return " h"
-        default: return " \(unit)"
-        }
+        MiotFacetText.value(control)
     }
 
     static func icon(_ name: String) -> String {

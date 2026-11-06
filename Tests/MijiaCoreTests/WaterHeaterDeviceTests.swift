@@ -577,7 +577,7 @@ struct WaterHeaterDeviceTests {
         }
     }
 
-    @Test("A boiler device type is not claimed by the water heater cut")
+    @Test("A boiler becomes a generic card instead of the water heater cut")
     func boilerTypeIsNotClaimed() throws {
         let spec = MiotDeviceSpec(
             type: "urn:miot-spec-v2:device:boiler:0000A0E8:test-boiler:1",
@@ -607,7 +607,16 @@ struct WaterHeaterDeviceTests {
                 .init(did: "boiler", siid: 3, piid: 2): .number(45),
             ]
         )
-        #expect(home.devices.isEmpty, "boiler is a separate appliance family, not #300's water heater")
+        let device = try #require(home.devices.first)
+        guard case .generic(let card) = device.kind else {
+            Issue.record("boiler should take the generic fallback, not the water heater cut")
+            return
+        }
+        #expect(card.deviceType == "boiler")
+        #expect(card.powerControl == nil)
+        #expect(home.deviceFacets[device.id]?.contains {
+            $0.serviceName == "water-heater" && $0.isWritable && !$0.writesByDefault
+        } == true)
     }
 
     @Test("A missing target reading hides the stepper instead of inventing the minimum")

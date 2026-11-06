@@ -13,7 +13,9 @@ from pathlib import Path
 
 GOLDEN = Path(__file__).resolve().parent.parent / "Tests/Fixtures/miot_coverage_golden.json"
 LABELS = [
-    ("matched", "类型对得上，有卡片"),
+    ("matched", "类型对得上，有专用卡片"),
+    ("genericControllable", "通用卡片，有可写项"),
+    ("genericReadOnly", "通用卡片，只读"),
     ("misclaimed", "被误判成别的类型"),
     ("droppedControllable", "丢弃但有可控项"),
     ("droppedReadOnly", "丢弃且只读"),

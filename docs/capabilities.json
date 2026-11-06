@@ -212,6 +212,13 @@
       ]
     },
     {
+      "id": "generic-device-cards",
+      "en": "Generic Fallback Cards",
+      "zh": "通用兜底卡片",
+      "macos": "supported",
+      "windows": "unsupported"
+    },
+    {
       "id": "camera-live",
       "en": "Camera Live View",
       "zh": "摄像机实时画面",

@@ -532,6 +532,13 @@ public actor DemoHomeProvider: HomeProvider {
                     continue
                 }
                 next.devices[idx].kind = .camera(spec)
+            case .generic(var spec):
+                if case .setMiotProperty(let entityId, let piid, let value) = command,
+                   spec.powerControl?.target == .property(entityId: entityId, piid: piid) {
+                    spec.isOn = value.miotBool ?? spec.isOn
+                }
+                next.devices[idx].kind = .generic(spec)
+
             case .appliance(var spec):
                 switch command {
                 case .setSwitch(let entityId, let isOn) where entityId == spec.powerEntityId:

@@ -154,6 +154,127 @@ struct SnapshotTests {
         }
     }
 
+    // MARK: - Generic fallback cards (#6)
+
+    @Test("Generic controllable and read-only cards render")
+    func genericCardSnapshots() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+
+        for (readOnly, name) in [(false, "generic-card-zh-light"), (true, "generic-card-readonly-zh-light")] {
+            let (device, facets) = Self.genericDevice(readOnly: readOnly)
+            fixture.store.devices.append(device)
+            fixture.store.deviceFacets[device.id] = facets
+            assertRendered(
+                snapshotReady(
+                    DeviceCardView(device: device, store: fixture.store, showRoomBadge: true)
+                        .padding(8)
+                        .frame(width: 360)
+                ),
+                size: CGSize(width: 376, height: 140),
+                named: name
+            )
+        }
+    }
+
+    @Test("A read-only generic drawer explains why it has no controls")
+    func genericReadOnlyDrawerSnapshot() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+
+        let (device, facets) = Self.genericDevice(readOnly: true)
+        fixture.store.devices.append(device)
+        fixture.store.deviceFacets[device.id] = facets
+        fixture.store.expandedDeviceId = device.id
+
+        assertRendered(
+            snapshotReady(
+                DeviceCardView(device: device, store: fixture.store, showRoomBadge: true)
+                    .padding(8)
+                    .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 260),
+            named: "generic-readonly-drawer-zh-light"
+        )
+    }
+
+    @Test("A generic drawer explains why no low-risk main switch exists")
+    func genericHighRiskDrawerSnapshot() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+
+        let mode = FacetControl(
+            id: "4.2", kind: .select, name: "mode", title: "工作模式", serviceName: "router",
+            value: .number(0),
+            options: [MiotFacetOption(value: 0, label: "路由模式"), MiotFacetOption(value: 1, label: "中继模式")],
+            isWritable: true, writesByDefault: false, isHighValue: false,
+            target: .property(entityId: "miot:snapshot-router:4", piid: 2)
+        )
+        let card = GenericSpec(
+            deviceType: "router",
+            typeTitle: "路由器",
+            isOn: false,
+            powerControl: nil,
+            isReadOnly: false,
+            readouts: [.init(value: "已连接")],
+            symbolName: "wifi"
+        )
+        let device = SmartDevice(
+            id: "snapshot-generic-risk", name: "路由器", roomId: "living", roomName: "客厅",
+            model: "isa.router.mr01hl", isOnline: true, kind: .generic(card)
+        )
+        fixture.store.devices.append(device)
+        fixture.store.deviceFacets[device.id] = [mode]
+        fixture.store.expandedDeviceId = device.id
+
+        assertRendered(
+            snapshotReady(
+                DeviceCardView(device: device, store: fixture.store, showRoomBadge: true)
+                    .padding(8)
+                    .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 260),
+            named: "generic-high-risk-drawer-zh-light"
+        )
+    }
+
+    private static func genericDevice(readOnly: Bool) -> (SmartDevice, [FacetControl]) {
+        let power = FacetControl(
+            id: "2.1", kind: .toggle, name: "on", title: "开关", serviceName: "fish-tank",
+            value: .bool(true), isWritable: true, writesByDefault: true, isHighValue: false,
+            target: .property(entityId: "miot:snapshot-generic:2", piid: 1)
+        )
+        let temperature = FacetControl(
+            id: "3.1", kind: .reading, name: "temperature", title: "温度", serviceName: "temperature",
+            unit: "celsius", value: .number(24.5), isWritable: false, writesByDefault: false, isHighValue: true
+        )
+        let humidity = FacetControl(
+            id: "3.2", kind: .reading, name: "relative-humidity", title: "湿度", serviceName: "temperature",
+            unit: "percentage", value: .number(52), isWritable: false, writesByDefault: false, isHighValue: false
+        )
+        let mode = FacetControl(
+            id: "4.2", kind: .select, name: "mode", title: "模式", serviceName: "fish-tank",
+            value: .number(0),
+            options: [MiotFacetOption(value: 0, label: "自动"), MiotFacetOption(value: 1, label: "静音")],
+            isWritable: true, writesByDefault: false, isHighValue: false,
+            target: .property(entityId: "miot:snapshot-generic:4", piid: 2)
+        )
+        let card = GenericSpec(
+            deviceType: "fish-tank",
+            typeTitle: "鱼缸",
+            isOn: !readOnly,
+            powerControl: readOnly ? nil : power,
+            isReadOnly: readOnly,
+            readouts: [.init(value: "24.5 °C"), .init(value: "52%")],
+            symbolName: "fish.fill"
+        )
+        let device = SmartDevice(
+            id: "snapshot-generic", name: "鱼缸", roomId: "living", roomName: "客厅",
+            model: "acme.fishbowl.v1", isOnline: true, kind: .generic(card)
+        )
+        return (device, readOnly ? [temperature, humidity] : [temperature, humidity, mode])
+    }
+
     @Test("Cover drawer shows travel")
     func coverDrawerMovingSnapshot() async throws {
         let fixture = try await SnapshotFixture()

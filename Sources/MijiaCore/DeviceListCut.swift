@@ -1,7 +1,7 @@
 import Foundation
 
 public enum DeviceKindTag: String, Equatable, Sendable {
-    case climate, light, plug, fan, vacuum, fridge, speaker, tv, camera, sensor, cover, appliance
+    case climate, light, plug, fan, vacuum, fridge, speaker, tv, camera, sensor, cover, appliance, generic
 
     public var rank: Int {
         switch self {
@@ -17,6 +17,7 @@ public enum DeviceKindTag: String, Equatable, Sendable {
         case .sensor: return 10
         case .cover: return 11
         case .appliance: return 12
+        case .generic: return 13
         }
     }
 
@@ -34,6 +35,7 @@ public enum DeviceKindTag: String, Equatable, Sendable {
         case .sensor: return L10n.tr("传感器", "Sensors")
         case .cover: return L10n.tr("门窗", "Windows")
         case .appliance: return L10n.tr("家电", "Appliances")
+        case .generic: return L10n.tr("其他", "Other")
         }
     }
 
@@ -64,6 +66,11 @@ public enum DeviceKindTag: String, Equatable, Sendable {
                 "目前包括热水器、洗衣机、烘干机与洗碗机",
                 "Currently includes water heaters, washers, dryers, and dishwashers"
             )
+        case .generic:
+            return L10n.tr(
+                "规格里没有专用类型、但仍有可控项的设备",
+                "Devices with no dedicated type but at least one usable control"
+            )
         case .light, .fridge, .vacuum, .speaker, .tv, .camera, .cover:
             return nil
         }
@@ -85,6 +92,7 @@ extension DeviceKind {
         case .sensor: return .sensor
         case .cover: return .cover
         case .appliance: return .appliance
+        case .generic: return .generic
         case .humidifier: return .fan
         case .valve: return .plug
         }

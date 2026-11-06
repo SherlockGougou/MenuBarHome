@@ -190,6 +190,7 @@ extension IntentDeviceCategory {
         case .sensor: return L10n.tr("传感器", "sensors")
         case .cover: return L10n.tr("窗帘", "covers")
         case .appliance: return L10n.tr("家电", "appliances")
+        case .generic: return L10n.tr("其他设备", "other devices")
         case .valve: return L10n.tr("阀门", "valves")
         }
     }

@@ -446,6 +446,11 @@ public enum DeviceDeduplicator {
             if spec.fanLevel != nil { score += 1 }
             if spec.light != nil { score += 1 }
             return score
+        case .generic(let spec):
+            var score = spec.isReadOnly ? 0 : 1
+            score += spec.readouts.count
+            if spec.powerControl != nil { score += 2 }
+            return score
         case .cover(let spec):
             var score = 0
             if spec.canMove { score += 2 }

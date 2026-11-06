@@ -44,6 +44,11 @@ public struct DeviceCardView: View {
         return false
     }
 
+    private var isGenericDevice: Bool {
+        if case .generic = device.kind { return true }
+        return false
+    }
+
     private var panelLayout: PanelLayoutStore { PanelLayoutStore.shared(for: store.userDefaults) }
 
     private var chosenSize: TileSize { panelLayout.size(of: device.id, scope: layoutScope) }
@@ -112,6 +117,10 @@ public struct DeviceCardView: View {
         }
         guard device.isOnline else {
             return L10n.tr("\(device.name)，离线", "\(device.name), offline")
+        }
+        if case .generic(let spec) = device.kind, spec.isReadOnly {
+            let subtitle = shownStatus.replacingOccurrences(of: " · ", with: L10n.tr("，", ", "))
+            return L10n.format("%@，只读，%@", "%@, read only, %@", device.name, subtitle)
         }
         let state = device.isActiveOn ? L10n.tr("已开启", "on") : L10n.tr("已关闭", "off")
         let subtitle = shownStatus.replacingOccurrences(of: " · ", with: L10n.tr("，", ", "))
@@ -343,13 +352,15 @@ public struct DeviceCardView: View {
                 }
             }
 
-            Button {
-                store.setJoinsAllOff(!store.joinsAllOff(device), deviceId: device.id)
-            } label: {
-                if store.joinsAllOff(device) {
-                    Label(L10n.tr("不参与「全关」", "Leave Out of All Off"), systemImage: "power.circle")
-                } else {
-                    Label(L10n.tr("参与「全关」", "Include in All Off"), systemImage: "power.circle.fill")
+            if !isGenericDevice {
+                Button {
+                    store.setJoinsAllOff(!store.joinsAllOff(device), deviceId: device.id)
+                } label: {
+                    if store.joinsAllOff(device) {
+                        Label(L10n.tr("不参与「全关」", "Leave Out of All Off"), systemImage: "power.circle")
+                    } else {
+                        Label(L10n.tr("参与「全关」", "Include in All Off"), systemImage: "power.circle.fill")
+                    }
                 }
             }
 
@@ -401,10 +412,14 @@ public struct DeviceCardView: View {
                     }
                 }
                 Spacer(minLength: 6)
-                Text(device.name)
-                    .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
-                    .foregroundStyle(nameColor)
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(device.name)
+                        .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
+                        .foregroundStyle(nameColor)
+                        .lineLimit(1)
+
+                    genericReadOnlyBadge
+                }
                 Text(dragBrightness.map { L10n.tr("亮度 \(Int($0 * 100))%", "Brightness \(Int($0 * 100))%") } ?? shownStatus.replacingOccurrences(of: " · ", with: L10n.tr("，", ", ")))
                     .font(.system(size: DesignTokens.TypeSize.caption, weight: device.isActiveOn ? .semibold : .regular))
                     .monospacedDigit()
@@ -479,10 +494,14 @@ public struct DeviceCardView: View {
             } label: {
                 HStack(spacing: 4) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(device.name)
-                            .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
-                            .foregroundStyle(nameColor)
-                            .lineLimit(1)
+                        HStack(spacing: 5) {
+                            Text(device.name)
+                                .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
+                                .foregroundStyle(nameColor)
+                                .lineLimit(1)
+
+                            genericReadOnlyBadge
+                        }
 
                         Text(dragBrightness.map { L10n.tr("亮度 \(Int($0 * 100))%", "Brightness \(Int($0 * 100))%") } ?? shownStatus.replacingOccurrences(of: " · ", with: L10n.tr("，", ", ")))
                             .font(.system(size: DesignTokens.TypeSize.caption, weight: device.isActiveOn ? .semibold : .regular))
@@ -511,6 +530,25 @@ public struct DeviceCardView: View {
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 8.5)
+    }
+
+    // MARK: - Generic Read-Only Badge (#6)
+
+    /// A status-only device never claims a control it cannot offer.
+    @ViewBuilder
+    private var genericReadOnlyBadge: some View {
+        if case .generic(let spec) = device.kind, spec.isReadOnly {
+            Text(L10n.tr("只读", "Read only"))
+                .font(.system(size: DesignTokens.TypeSize.micro, weight: .semibold))
+                .foregroundStyle(nameColor.opacity(0.72))
+                .padding(.horizontal, 5.5)
+                .padding(.vertical, 1.5)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(nameColor.opacity(colorScheme == .dark ? 0.12 : 0.075))
+                )
+                .fixedSize()
+        }
     }
 
     // MARK: - Standard Single-Column Row (1-Click Toggle + Expand Trigger)
@@ -558,6 +596,8 @@ public struct DeviceCardView: View {
                                             )
                                     )
                             }
+
+                            genericReadOnlyBadge
                         }
 
                         Text(dragBrightness.map { L10n.tr("亮度 \(Int($0 * 100))%", "Brightness \(Int($0 * 100))%") } ?? shownStatus.replacingOccurrences(of: " · ", with: L10n.tr("，", ", ")))
@@ -742,6 +782,8 @@ public struct DeviceCardView: View {
                 accent: accent,
                 statusColor: statusColor
             )
+        case .generic(let spec):
+            GenericDetailDrawer(spec: spec, statusColor: statusColor)
         case .humidifier(let spec):
             humidifierDrawer(spec)
         case .valve:

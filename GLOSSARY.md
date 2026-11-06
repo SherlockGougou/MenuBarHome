@@ -71,6 +71,10 @@ _Avoid_: Switch card（开关卡）
 由同一份 MIoT 规格驱动的通用家电卡片，按「规格里有才显示」暴露电源、模式、目标温度、状态、故障、剩余时间与无参的开始 / 暂停 / 停止动作；目标温度的范围与步长取自规格，当前温度作为主读数。热水器、洗衣机、烘干机、洗碗机共用该形状：状态取自 `status`，机器工作时由更具体的 `run-status` 阶段词取代，暂停 / 完成 / 保管 / 故障等终态压过滞留的阶段词，未归类的状态词按规格原文显示，已知状态词按名字归类、容忍拼写差异，`left-time` 按规格单位（分钟 / 秒 / 小时）折算成分钟。Home Assistant 的 `water_heater` 实体复用同一张卡，模式与温度范围取自其实体属性。浴霸与油烟机的主功能不在同名服务里，由 `deviceProfiles.json` 的 `appliances` 表声明主服务（浴霸的 PTC 暖风、油烟机的排风）与副服务（`fan-control`、`light`、`environment`），合成时把功率、模式、目标温度、风量、灯光与室温读数按语义并入同一张卡；副服务的灯只作为卡内开关，不再冒充独立卡片。打开 / 开始须确认，关闭 / 暂停 / 停止直接执行；默认不参与「全关」。
 _Avoid_: Washer card（洗衣机专用卡）、Kitchen appliance（厨房家电专用卡）
 
+**GenericDeviceCard（通用兜底卡片）**：
+米家云端规格里没有专用合成器、但通用控件层（`MiotFacet`）仍能列出可写控件或只读读数的设备所显示的卡片。卡片只保留名称与房间、最多两个关键读数，以及一个低风险可写的 `on` 主开关；其余控件进入详情抽屉「更多设置」。没有任何可写 facet 的设备标为「只读」，不提供写控件。门锁、加热类与路由器配置默认只读，开启 `allowAdvancedFacetWrites` 需二次确认；通用卡片默认不参与「全关」与助手批量指令。
+_Avoid_: Unsupported card（不支持卡片）、Fallback tile（兜底磁贴）
+
 **HomeOption（米家家庭）**：
 小米账号下的独立家庭空间（由 `homeroom/gethome` 的 `homelist` 返回，含家庭 ID、名称与去重设备数），支持在面板顶部切换查看单个家庭或合并查看全部家庭。
 _Avoid_: Workspace（工作区）、Account（账号）
@@ -98,7 +102,7 @@ _Avoid_: Automation（后台自动化规则）、Macro（宏）
 _Avoid_: Local scene（本地场景）、Custom script（自定义脚本）
 
 **AllOffTarget（全关目标）**：
-「全关」实际会关闭的设备集合（`HomeStore.allOffTargets`）：当前视图内、开启中、且能从面板关闭的设备。默认不参与全关的类别（插座、扫地机、摄像机，`joinsAllOffByDefault` 返回 false）可由用户按设备覆盖（`setJoinsAllOff`），覆盖结果持久化。
+「全关」实际会关闭的设备集合（`HomeStore.allOffTargets`）：当前视图内、开启中、且能从面板关闭的设备。默认不参与全关的类别（插座、扫地机、摄像机，`joinsAllOffByDefault` 返回 false）可由用户按设备覆盖（`setJoinsAllOff`），覆盖结果持久化；通用兜底卡片没有全关命令（`allOffChange` 返回 nil），因此既不默认参与，也无法通过覆盖加入。
 _Avoid_: All devices（全部设备）
 
 **DeviceListCut（房间或类型筛选）**：

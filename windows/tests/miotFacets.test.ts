@@ -70,14 +70,57 @@ describe("MIoT facet engine (shared fixture)", () => {
     }
   });
 
+  it("keeps the new high-risk services and device types closed", () => {
+    const makeSpec = (deviceType: string, serviceName: string) =>
+      parseSpec({
+        type: `urn:miot-spec-v2:device:${deviceType}:00000000:fixture:1`,
+        services: [
+          {
+            iid: 2,
+            type: `urn:miot-spec-v2:service:${serviceName}:00000000:fixture:1`,
+            properties: [
+              {
+                iid: 1,
+                type: "urn:miot-spec-v2:property:on:00000000:fixture:1",
+                format: "bool",
+                access: ["read", "write"],
+              },
+            ],
+          },
+        ],
+      });
+
+    for (const serviceName of [
+      "garbage-disposal",
+      "disposal-service",
+      "alertor",
+      "alarm",
+      "sterilizer",
+      "baby-bottle-warmer",
+      "multifunction-cooking-pot",
+    ]) {
+      const facet = buildMiotFacets(makeSpec("vendor", serviceName))[0];
+      assert.ok(facet);
+      assert.equal(facet.risk, "high", serviceName);
+      assert.equal(facet.writesByDefault, false, serviceName);
+    }
+
+    for (const deviceType of ["germicidal-lamp", "alertor", "garbage-disposal"]) {
+      const facet = buildMiotFacets(makeSpec(deviceType, "switch"))[0];
+      assert.ok(facet);
+      assert.equal(facet.risk, "high", deviceType);
+      assert.equal(facet.writesByDefault, false, deviceType);
+    }
+  });
+
   it("keeps high-risk writes closed until the data whitelist opens them", () => {
     const ruleCase = fixture.cases.find((candidate) => candidate.id === "low-risk-writes-are-open-by-default");
     assert.ok(ruleCase);
     const facets = buildMiotFacets(parseSpec(ruleCase.spec));
     const on = facets.find((facet) => facet.name === "on");
     assert.ok(on);
-    assert.equal(on.risk, "high");
-    assert.equal(on.writesByDefault, false);
+    assert.equal(on.risk, "low");
+    assert.equal(on.writesByDefault, true);
     for (const name of ["mode", "brightness", "fan-level"]) {
       const facet = facets.find((candidate) => candidate.name === name);
       assert.ok(facet, name);

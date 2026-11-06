@@ -100,16 +100,45 @@ public enum MiotSynthesizer {
 
         for record in devices where !splitParents.contains(record.did) {
             guard let spec = specs[record.model] else { continue }
-            let plans = plans(for: record, spec: spec)
-            guard !plans.isEmpty else { continue }
             let scopedSpec = specForRecord(record, spec: spec)
-            let reader = MiotReader(did: record.miotDid, spec: scopedSpec, values: values)
-            let splitPerService = plans.count > 1
 
             let room = roomByDid[record.did] ?? record.splitParentDid.flatMap { roomByDid[$0] }
             let roomName = DeviceSynthesizer.normalizeRoomName(room?.name ?? "")
             let roomId = DeviceSynthesizer.normalizedRoomId(for: roomName, fallback: room.map { "mi_room_\($0.id)" } ?? "other")
             let name = DeviceSynthesizer.cleanDeviceName(record.name, roomName: roomName, model: record.model)
+
+            let plans = plans(for: record, spec: spec)
+            // The last rung of the resolution ladder (#6): no dedicated builder, but the generic
+            // facet layer still finds a control or a reading. The card keeps the device on screen
+            // instead of dropping it into "devices not shown".
+            if plans.isEmpty {
+                guard !Self.isMainsBreaker(spec),
+                      let generic = genericCard(record: record, spec: scopedSpec, values: values) else { continue }
+                let device = SmartDevice(
+                    id: record.did,
+                    name: name,
+                    roomId: roomId,
+                    roomName: roomName,
+                    model: record.model,
+                    isOnline: record.isOnline,
+                    kind: .generic(generic.spec),
+                    isSharedHome: room?.isSharedHome ?? false
+                )
+                smartDevices.append(device)
+                identities[device.id] = DeviceSourceIdentity(
+                    dids: [record.did],
+                    macAddresses: record.splitParentDid == nil ? [record.mac].compactMap { $0 } : [],
+                    model: record.model,
+                    name: device.name,
+                    roomName: roomName,
+                    kindTag: .generic
+                )
+                facetsByDevice[device.id] = generic.facets
+                continue
+            }
+
+            let reader = MiotReader(did: record.miotDid, spec: scopedSpec, values: values)
+            let splitPerService = plans.count > 1
 
             for (service, build) in plans {
                 let kind = build(reader, service)
@@ -184,9 +213,23 @@ public enum MiotSynthesizer {
     /// because `requiredProps` already covers them.
     public static func facetProps(for device: MiDeviceRecord, spec: MiotDeviceSpec) -> [MiotPropKey] {
         guard !Self.isMainsBreaker(spec) else { return [] }
-        let plans = plans(for: device, spec: spec)
-        guard !plans.isEmpty else { return [] }
         let scopedSpec = specForRecord(device, spec: spec)
+        let plans = plans(for: device, spec: spec)
+        if plans.isEmpty {
+            // A generic card has no dedicated builder, so every readable facet property is its
+            // state: readings and the main switch both arrive with the same poll (#6).
+            var keys: [MiotPropKey] = []
+            var seen: Set<MiotPropKey> = []
+            for facet in MiotFacetEngine.facets(for: scopedSpec) {
+                guard let piid = facet.propertyId,
+                      let property = scopedSpec.service(iid: facet.serviceId)?
+                          .properties.first(where: { $0.iid == piid }),
+                      property.isReadable else { continue }
+                let key = MiotPropKey(did: device.miotDid, siid: facet.serviceId, piid: piid)
+                if seen.insert(key).inserted { keys.append(key) }
+            }
+            return keys
+        }
         let reader = MiotReader(did: device.miotDid, spec: scopedSpec, values: [:])
         var keys: [MiotPropKey] = []
         var seen: Set<MiotPropKey> = []
@@ -232,6 +275,149 @@ public enum MiotSynthesizer {
     /// Registry key of the builder that will handle this spec, or nil when unsupported.
     public static func supportedServiceName(for spec: MiotDeviceSpec) -> String? {
         primary(for: spec)?.0.shortName
+    }
+
+    /// The fallback card content (#6): every generic facet, the first low-risk `on` as the main
+    /// switch, and up to two high-value readings. Nil when the facet layer finds nothing.
+    static func genericCard(
+        record: MiDeviceRecord,
+        spec: MiotDeviceSpec,
+        values: [MiotPropKey: JSONValue]
+    ) -> (spec: GenericSpec, facets: [FacetControl])? {
+        let controls = MiotFacetEngine.controls(
+            for: spec,
+            did: record.miotDid,
+            values: values,
+            primaryServiceId: nil
+        )
+        guard !controls.isEmpty else { return nil }
+        let power = controls.enumerated()
+            .filter { candidate in
+                guard candidate.element.kind == .toggle,
+                      candidate.element.name == "on",
+                      candidate.element.isWritable,
+                      candidate.element.writesByDefault,
+                      candidate.element.target != nil else { return false }
+                // Only the device's own main service may supply the tile's switch. A companion
+                // indicator, night light or ambient light must never impersonate device power.
+                return isMainPowerService(candidate.element.serviceName, deviceType: spec.shortName)
+            }
+            .sorted { lhs, rhs in
+                let lhsOwn = lhs.element.serviceName == spec.shortName
+                let rhsOwn = rhs.element.serviceName == spec.shortName
+                if lhsOwn != rhsOwn { return lhsOwn }
+                return lhs.offset < rhs.offset
+            }
+            .first?.element
+        // The tile's main switch is not repeated under 更多设置.
+        var drawerFacets = controls
+        if let power, let index = drawerFacets.firstIndex(where: { $0.id == power.id }) {
+            drawerFacets.remove(at: index)
+        }
+        return (
+            GenericSpec(
+                deviceType: spec.shortName,
+                typeTitle: genericTypeTitle(for: spec),
+                isOn: power?.isOn == true,
+                powerControl: power,
+                isReadOnly: !controls.contains { $0.isWritable },
+                readouts: genericReadouts(controls),
+                symbolName: genericSymbolName(for: spec.shortName)
+            ),
+            drawerFacets
+        )
+    }
+
+    /// Whether a service can carry the generic tile's main switch. The device's own service is
+    /// the only candidate; light-like types may also use their `light` service. Companion
+    /// services (`indicator-light`, `night-light`, `ambient-light`, `screen`, `led`) never qualify.
+    static func isMainPowerService(_ serviceName: String, deviceType: String) -> Bool {
+        if serviceName == deviceType { return true }
+        if deviceType.hasPrefix(serviceName + "-") || deviceType.hasSuffix("-" + serviceName) {
+            return true
+        }
+        if deviceType.contains("light") || deviceType.contains("lamp") {
+            return serviceName == "light"
+        }
+        return false
+    }
+
+    /// At most two readings, high-value facets first and spec order as the tie-break.
+    static func genericReadouts(_ controls: [FacetControl]) -> [GenericSpec.Readout] {
+        controls.enumerated()
+            .filter { $0.element.kind == .reading && $0.element.value != nil }
+            .sorted { lhs, rhs in
+                if lhs.element.isHighValue != rhs.element.isHighValue {
+                    return lhs.element.isHighValue
+                }
+                return lhs.offset < rhs.offset
+            }
+            .prefix(2)
+            .map { _, control in GenericSpec.Readout(value: MiotFacetText.value(control)) }
+    }
+
+    /// Device-type label for a generic card. Known MIoT types get a Chinese name; otherwise the
+    /// spec's own description or a humanized short name keeps the card honest.
+    static func genericTypeTitle(for spec: MiotDeviceSpec) -> String {
+        let known: [String: String] = [
+            "fish-tank": "鱼缸",
+            "router": "路由器",
+            "gateway": "网关",
+            "repeater": "信号放大器",
+            "lock": "门锁",
+            "scale": "体重秤",
+            "body-fat-scale": "体脂秤",
+            "bracelet": "手环",
+            "watch": "手表",
+            "toothbrush": "牙刷",
+            "treadmill": "跑步机",
+            "massage": "按摩设备",
+            "bed": "床",
+            "mattress": "床垫",
+            "pillow": "枕头",
+            "sofa": "沙发",
+            "mirror": "镜子",
+            "shower": "淋浴",
+            "toilet": "马桶",
+            "towel-rack": "毛巾架",
+            "car-seat": "儿童安全座椅",
+            "tracker": "定位器",
+            "projector": "投影仪",
+            "television": "电视",
+            "stb": "机顶盒",
+            "stove": "燃气灶",
+            "boiler": "壁挂炉",
+            "clock": "时钟",
+            "coffee-machine": "咖啡机",
+        ]
+        if !L10n.isEnglish, let chinese = known[spec.shortName] { return chinese }
+        let description = spec.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return description.isEmpty ? MiotFacetText.humanized(spec.shortName) : description
+    }
+
+    static func genericSymbolName(for deviceType: String) -> String {
+        switch deviceType {
+        case "fish-tank": return "fish.fill"
+        case "router", "gateway", "repeater": return "wifi"
+        case "lock": return "lock.fill"
+        case "scale", "body-fat-scale": return "scalemass.fill"
+        case "bracelet", "watch": return "applewatch"
+        case "toothbrush": return "mouth.fill"
+        case "treadmill": return "figure.run"
+        case "bed", "mattress", "pillow": return "bed.double.fill"
+        case "sofa", "chair", "massage": return "chair.lounge.fill"
+        case "projector": return "projector.fill"
+        case "television", "stb": return "tv"
+        case "boiler": return "water.waves"
+        case "shower": return "drop.fill"
+        case "mirror": return "rectangle.portrait.fill"
+        case "car-seat": return "car.fill"
+        case "tracker": return "location.fill"
+        case "bike": return "bicycle"
+        case "clock": return "clock.fill"
+        case "coffee-machine": return "cup.and.saucer.fill"
+        default: return "square.grid.2x2"
+        }
     }
 
     /// The cards a record produces: normally one. A dual-track curtain motor publishes two

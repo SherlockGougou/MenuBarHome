@@ -7,7 +7,8 @@ import Testing
 /// After an intended change, re-record with `RECORD_MIOT_COVERAGE=1 swift test --filter MiotCoverageBaselineTests`.
 struct MiotCoverageBaselineTests {
     enum Category: String, Codable, CaseIterable {
-        case matched, misclaimed, droppedControllable, droppedReadOnly, noUsableProperties
+        case matched, misclaimed, genericControllable, genericReadOnly
+        case droppedControllable, droppedReadOnly, noUsableProperties
     }
 
     struct Entry: Codable, Equatable {
@@ -56,6 +57,17 @@ struct MiotCoverageBaselineTests {
                 count + s.properties.filter { isControl($0) && !polled.contains("\(s.iid).\($0.iid)") }.count
             }
             return Entry(deviceType: deviceType, category: .matched, service: service.shortName, unexposedWritable: unexposed)
+        }
+        // The generic facet layer is the last rung: a card exists when it finds any control or
+        // reading. Only a spec it cannot describe at all stays unsupported (#6).
+        let controls = MiotFacetEngine.controls(
+            for: spec, did: "coverage", values: [:], primaryServiceId: nil
+        )
+        if !controls.isEmpty {
+            return Entry(
+                deviceType: deviceType,
+                category: controls.contains { $0.isWritable } ? .genericControllable : .genericReadOnly
+            )
         }
         let controllable = usable.contains { s in !s.actions.isEmpty || s.properties.contains(where: isControl) }
         if controllable { return Entry(deviceType: deviceType, category: .droppedControllable) }

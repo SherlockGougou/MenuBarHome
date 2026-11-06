@@ -768,7 +768,7 @@ public struct UserHabitMemory: Codable, Equatable, Sendable {
         guard device.kind.canTogglePower else { return false }
         switch device.kind {
         case .light, .climate, .fan, .plug, .camera, .tv, .humidifier: return true
-        case .vacuum, .speaker, .fridge, .sensor, .cover, .appliance, .valve: return false
+        case .vacuum, .speaker, .fridge, .sensor, .cover, .appliance, .generic, .valve: return false
         }
     }
 

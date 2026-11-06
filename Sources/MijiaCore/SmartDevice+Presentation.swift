@@ -82,6 +82,8 @@ extension SmartDevice {
             return (s.positionPercent ?? 0) > 0 ? "window.vertical.open" : "window.vertical.closed"
         case .appliance(let s):
             return s.symbolName ?? "water.waves"
+        case .generic(let s):
+            return s.symbolName ?? "square.grid.2x2"
         case .humidifier(let s):
             return s.isOn ? "humidity.fill" : "humidity"
         case .valve(let s):
@@ -283,6 +285,13 @@ extension SmartDevice {
             return parts.isEmpty ? (s.isOn ? L10n.tr("运行中", "Running") : L10n.tr("已关闭", "Off"))
                 : parts.joined(separator: " · ")
 
+        case .generic(let s):
+            let readings = s.readouts.map(\.value).joined(separator: " · ")
+            if !readings.isEmpty { return readings }
+            if s.isReadOnly {
+                return L10n.format("只读 · %@", "Read only · %@", s.typeTitle)
+            }
+            return s.typeTitle
         case .humidifier(let s):
             guard s.isOn else { return L10n.tr("已关闭", "Off") }
             var parts: [String] = []

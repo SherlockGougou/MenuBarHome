@@ -14,6 +14,8 @@ public struct DeviceProfiles: Codable, Equatable, Sendable {
         public var maxVisible: Int
         /// Device types whose writes stay high risk, mirroring `ModelActionPolicy`'s hazard table.
         public var highRiskTypes: [String]
+        /// Services whose writes stay high risk: heating, locks, and network configuration.
+        public var highRiskServices: [String]
         public var highValue: [String]
         public var lowRiskWrites: [String]
     }
@@ -214,7 +216,7 @@ public enum MiotFacetEngine {
             } else {
                 return nil
             }
-            let risk = risk(for: name, deviceType: deviceType, profiles: profiles)
+            let risk = risk(for: name, deviceType: deviceType, serviceName: serviceName, profiles: profiles)
             return MiotFacet(
                 id: id,
                 kind: kind,
@@ -280,7 +282,7 @@ public enum MiotFacetEngine {
             ))
         }
         let name = action.shortName
-        let risk = risk(for: name, deviceType: deviceType, profiles: profiles)
+        let risk = risk(for: name, deviceType: deviceType, serviceName: serviceName, profiles: profiles)
         return MiotFacet(
             id: "\(service.iid).a\(action.iid)",
             kind: .button,
@@ -311,8 +313,14 @@ public enum MiotFacetEngine {
         }
     }
 
-    private static func risk(for name: String, deviceType: String, profiles: DeviceProfiles) -> MiotFacetRisk {
+    private static func risk(
+        for name: String,
+        deviceType: String,
+        serviceName: String,
+        profiles: DeviceProfiles
+    ) -> MiotFacetRisk {
         if matches(deviceType, anyOf: profiles.facets.highRiskTypes) { return .high }
+        if matches(serviceName, anyOf: profiles.facets.highRiskServices) { return .high }
         return matches(name, anyOf: profiles.facets.lowRiskWrites) ? .low : .high
     }
 
