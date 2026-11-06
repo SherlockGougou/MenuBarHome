@@ -52,20 +52,34 @@ public final class HomeStore {
     public internal(set) var connectionStatus: ConnectionStatus = .connecting {
         didSet { updateValueFreshness() }
     }
-    public internal(set) var rooms: [RoomArea] = []
+    public internal(set) var rooms: [RoomArea] = [] {
+        didSet { scheduleRaycastSnapshotExport() }
+    }
     /// Mi Home 家庭 list from the cloud backend; empty elsewhere.
     public internal(set) var homes: [HomeOption] = []
     public internal(set) var selectedMiHomeId: String? = UserDefaults.standard.string(forKey: MiCloudProvider.selectedHomeKey)
-    public internal(set) var devices: [SmartDevice] = []
+    public internal(set) var devices: [SmartDevice] = [] {
+        didSet { scheduleRaycastSnapshotExport() }
+    }
     /// Member did → Mi light-group did from the current snapshot; folding reads it (#189).
     public internal(set) var lightGroupOwners: [String: String] = [:]
-    public internal(set) var environmentReadings: [EnvironmentReading] = []
-    public internal(set) var scenes: [HomeScene] = []
+    public internal(set) var environmentReadings: [EnvironmentReading] = [] {
+        didSet { scheduleRaycastSnapshotExport() }
+    }
+    public internal(set) var scenes: [HomeScene] = [] {
+        didSet { scheduleRaycastSnapshotExport() }
+    }
     public internal(set) var hasReceivedInitialSnapshot = false
     public internal(set) var waitingDeviceIds: Set<String> = []
     /// True after the cloud drops once a snapshot has been shown. Cleared only by a later connect.
     /// A retry that is still `.connecting` leaves this set, so the last reading stays unmarked as current.
-    public internal(set) var deviceValuesAreStale = false
+    public internal(set) var deviceValuesAreStale = false {
+        didSet {
+            if deviceValuesAreStale != oldValue {
+                scheduleRaycastSnapshotExport()
+            }
+        }
+    }
     /// Bumped on every snapshot so a toggle can tell a read-back from the row it already had.
     var snapshotGeneration: UInt64 = 0
     /// How long to wait before a second property poll when the first read still shows the old power.
@@ -100,15 +114,21 @@ public final class HomeStore {
     /// the session, but it must not pull the panel back to a backend the user left.
     var miLoginStartBackend: HomeBackend?
 
-    let userDefaults: UserDefaults
+    public let userDefaults: UserDefaults
 
     public var hideOfflineDevices: Bool {
-        didSet { userDefaults.set(hideOfflineDevices, forKey: "hide_offline_devices") }
+        didSet {
+            userDefaults.set(hideOfflineDevices, forKey: "hide_offline_devices")
+            scheduleRaycastSnapshotExport()
+        }
     }
 
     /// Hide lights that belong to a Mi light group while the group card itself is on screen (#189).
     public var hideGroupedLights: Bool {
-        didSet { userDefaults.set(hideGroupedLights, forKey: "hide_grouped_lights") }
+        didSet {
+            userDefaults.set(hideGroupedLights, forKey: "hide_grouped_lights")
+            scheduleRaycastSnapshotExport()
+        }
     }
 
     public var enableGlobalHotkey: Bool {
@@ -133,24 +153,30 @@ public final class HomeStore {
     public var favoriteDeviceIds: Set<String> {
         didSet {
             userDefaults.set(Array(favoriteDeviceIds), forKey: ViewPreferenceKeys.favoriteDeviceIds)
+            scheduleRaycastSnapshotExport()
         }
     }
 
     public var favoriteOrder: [String] {
         didSet {
             userDefaults.set(favoriteOrder, forKey: ViewPreferenceKeys.favoriteOrder)
+            scheduleRaycastSnapshotExport()
         }
     }
 
     public var hiddenDeviceIds: Set<String> {
         didSet {
             userDefaults.set(Array(hiddenDeviceIds), forKey: ViewPreferenceKeys.hiddenDeviceIds)
+            scheduleRaycastSnapshotExport()
         }
     }
 
     /// Per-device choice for 全关; a missing entry means the default from `joinsAllOffByDefault` (#23).
     public var allOffOverrides: [String: Bool] {
-        didSet { userDefaults.set(allOffOverrides, forKey: ViewPreferenceKeys.allOffOverrides) }
+        didSet {
+            userDefaults.set(allOffOverrides, forKey: ViewPreferenceKeys.allOffOverrides)
+            scheduleRaycastSnapshotExport()
+        }
     }
 
     public var menuBarDisplayMode: MenuBarDisplayMode {
@@ -512,6 +538,7 @@ public final class HomeStore {
             if undoBanner != nil {
                 undoStateRevision &+= 1
             }
+            scheduleRaycastSnapshotExport()
         }
     }
     var undoStateRevision: UInt64 = 0
@@ -809,6 +836,7 @@ public final class HomeStore {
                 homeName = localizedDefault
             }
         }
+        scheduleRaycastSnapshotExport()
     }
 
     public func showToast(_ message: String, isError: Bool = false) {
@@ -912,6 +940,7 @@ public final class HomeStore {
             if lastAssistantUndo != nil {
                 undoStateRevision &+= 1
             }
+            scheduleRaycastSnapshotExport()
         }
     }
     public var lastAssistantActionAt: Date? { lastAssistantUndo?.at }
@@ -923,4 +952,14 @@ public final class HomeStore {
     var assistantNow: @Sendable () -> Date = { Date() }
     /// A timer that wakes up later than this (the Mac slept, the app was frozen) waits for the user (#22).
     static let lateTimerGrace: TimeInterval = 60
+
+    // MARK: - Raycast Companion Bridge State
+
+    public internal(set) var lastRaycastCommandFeedback: RaycastCommandFeedback?
+    @ObservationIgnored public var raycastSnapshotTestURL: URL?
+    @ObservationIgnored var isApplyingProviderSnapshot: Bool = false
+    /// Pending coalesced export; see `scheduleRaycastSnapshotExport()`.
+    @ObservationIgnored var raycastExportTask: Task<Void, Never>?
+    /// Last snapshot written to disk, compared without `updatedAt` to skip identical writes.
+    @ObservationIgnored var lastExportedRaycastSnapshot: RaycastSnapshot?
 }

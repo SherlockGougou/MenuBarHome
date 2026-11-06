@@ -538,6 +538,15 @@ public actor DemoHomeProvider: HomeProvider {
                     continue
                 }
                 next.devices[idx].kind = .appliance(spec)
+            case .vacuum(var spec):
+                if case .vacuumAction(let entityId, let action) = command, entityId == spec.entityId {
+                    switch action {
+                    case .start: spec.status = "cleaning"
+                    case .pause: spec.status = "paused"
+                    case .returnToBase: spec.status = "returning"
+                    }
+                    next.devices[idx].kind = .vacuum(spec)
+                }
             default:
                 continue
             }
