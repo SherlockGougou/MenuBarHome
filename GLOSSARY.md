@@ -23,11 +23,11 @@ _Avoid_: Data mapping（数据映射）、Parsing（解析）
 _Avoid_: Server type（服务器类型）、Mode（模式）
 
 **RaycastSnapshot（伴生快照）**：
-启用「Raycast 集成」后由 `MenuBarMijia` 写到 `~/Library/Application Support/MenuBarMijia/raycast-snapshot.json`（`0600`）的只读设备、场景、快捷动作、环境读数与 `lastCommandFeedback`，供 `raycast/` 扩展和 `scripts/mijia` 搜索与展示，伴生端因此不需要接触米家或 Home Assistant 凭据。字段随 `RaycastSnapshot.currentSchemaVersion` 演进，改名即破坏契约。
+启用「Raycast 集成」后由 `MenuBarMijia` 写到 `~/Library/Application Support/MenuBarMijia/raycast-snapshot.json`（`0600`）的只读设备、场景、快捷动作、环境读数与 `lastCommandFeedback`，供 `raycast/` 扩展、`scripts/mijia` CLI 与 `scripts/mijia-mcp` 本地 MCP 服务搜索与展示，伴生端因此不需要接触米家或 Home Assistant 凭据。字段随 `RaycastSnapshot.currentSchemaVersion` 演进，改名即破坏契约。
 _Avoid_: 缓存文件、数据库
 
 **BridgeToken（伴生令牌）**：
-本机生成、随伴生快照一起写出的随机令牌。`menumijia://` 链接带上它就跳过外部链接确认，比较为常量时间；关闭「Raycast 集成」即作废，再次开启重新签发。它只证明请求来自本机已授权的伴生端，不改变高风险操作仍需二次确认与锁屏拦截的规则。
+本机生成、随伴生快照一起写出的随机令牌。`menumijia://` 链接带上它就跳过外部链接确认，比较为常量时间；关闭「Raycast 集成」即作废，再次开启重新签发。它只证明请求来自本机已授权的伴生端，不改变高风险操作仍需二次确认与锁屏拦截的规则；MCP 服务在进程内部用它拼装链接，但向模型返回的资源与工具结果一律剥离该字段。
 _Avoid_: API Key、密码
 
 **LocalNetworkEndpoint（局域网端点）**：

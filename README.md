@@ -122,7 +122,7 @@ The macOS version is built natively in Swift 6, while the Windows 11 client is a
 | **Mac Event Automation** | ✅ Supported | — Not yet | Triggers on lock, sleep, wake, external displays, camera/microphone use, power/battery, Wi-Fi, Focus, Calendar, and late-night use (all Mac-only signals off by default) |
 | **Apple Shortcuts (App Intents)** | ✅ Supported (4 actions) | — Not yet | Toggle Device, Run Scene, Voice Command, Query Room Climate |
 | **URL Scheme Control** | ✅ Supported | — Not yet | `menumijia://toggle` calls require confirmation by default; direct control can be enabled in settings |
-| **Raycast Extension & Local CLI** | ✅ Supported | — Not yet | `raycast/` and `scripts/mijia` read the 0600 `raycast-snapshot.json` (Settings → 自动化与外部控制 → Raycast 集成) and control devices, scenes and quick actions through `menumijia://` links, so neither holds credentials; high-risk confirmation and the lock-screen block still run in the app |
+| **Raycast Extension, Local CLI & MCP Server** | ✅ Supported | — Not yet | `raycast/`, `scripts/mijia`, and `scripts/mijia-mcp` read the 0600 `raycast-snapshot.json` (Settings → 自动化与外部控制 → Raycast 集成) and control devices, scenes and quick actions through `menumijia://` links, so none holds credentials; MCP responses strip `bridgeToken`, and high-risk confirmation plus the lock-screen block still run in the app |
 | **Sensor Trend Line Charts** | ✅ 24h / 7d trends | ⚠️ Real-time value only | macOS charts temperature or humidity over selectable periods; Windows shows current readings |
 | **Smart Plug Energy Logs** | ✅ Supported | — No history yet | macOS counts changes in cumulative hardware readings; missing data is not estimated |
 | **Mi Air Purifiers, Air Fresheners & Humidifiers** | ✅ Supported | ✅ Supported | Both platforms synthesize `air-purifier`, `air-fresh`, and `humidifier` specs: PM2.5, air quality, temp/humidity, filter life, and a 1–100% fan slider driving the favorite level |
@@ -212,7 +212,7 @@ These phrases are parsed locally **without any AI API key** or cloud model token
 
 ---
 
-## Raycast Extension & Local CLI
+## Raycast Extension, Local CLI & MCP Server
 
 MenuBarMijia can hand its device list to a companion without sharing any credential. Turn on **Settings → 自动化与外部控制 → Raycast 集成**: the app writes `~/Library/Application Support/MenuBarMijia/raycast-snapshot.json` (mode `0600`) with your devices, scenes, quick actions, environment readings, the last command result, and a random local bridge token. Links that carry the token skip the external-link confirmation sheet; high-risk devices still ask, and the lock-screen block still applies. Turning the integration off deletes the file and revokes the token. The contract and the trade-offs behind it are in [ADR-0013](docs/adr/0013-raycast-companion-contract.md).
 
@@ -226,10 +226,30 @@ MenuBarMijia can hand its device list to a companion without sharing any credent
 | `scripts/mijia status [--json]` | Connection, device counts, environment readings, and the last command's result |
 | `scripts/mijia toggle 书房台灯` | Flip the primary switch by name, id, or pinyin initials (`sftd`) |
 | `scripts/mijia on 客厅射灯` / `scripts/mijia off 客厅射灯` | Set an exact power state instead of flipping |
+| `scripts/mijia brightness 书房台灯 60` | Set light brightness (`0`–`100`%) |
+| `scripts/mijia color-temp 书房台灯 4000` | Set light colour temperature (`1000`–`20000` K) |
+| `scripts/mijia temperature 书房空调 25` | Set target temperature (`-30`–`50` ℃) |
+| `scripts/mijia fan 客厅风扇 --percent 60` / `--preset 自然风` | Set fan speed percentage (`0`–`100`%) or a reported preset mode |
+| `scripts/mijia focus 书房台灯` | Reveal the device's room and detail drawer in the panel without actuating hardware |
 | `scripts/mijia scene 观影模式` | Run a Home Assistant scene or a built-in quick action (全屋关灯, 一键全关, 撤销…) |
 | `scripts/mijia ask "把客厅灯调到 40%"` | One natural-language command, with the app's own parsing and confirmation |
+| `scripts/mijia mcp` (or `scripts/mijia-mcp`) | Run the local MCP server over stdio |
 
 Exit codes: `0` success, `1` the app reported a failure, `2` local error (snapshot missing, unknown device, integration off), `3` no result in time. `--dry-run` prints the link with the token masked, `--no-wait` sends it without waiting, and `MENUBARMIJIA_SNAPSHOT_PATH` overrides the snapshot path.
+
+### Local MCP Server (Claude Desktop / Claude Code / Cursor)
+
+`scripts/mijia-mcp` (or `scripts/mijia mcp`) speaks MCP JSON-RPC 2.0 over stdio using only the Python 3 standard library. It exposes read-only resources (`mijia://status`, `mijia://devices`, `mijia://scenes`) and tools (`list_devices`, `get_home_status`, `toggle_device`, `set_device_power`, `set_light_brightness`, `set_light_color_temp`, `set_temperature`, `set_fan`, `run_scene`, `ask_home`, `focus_device`). The server uses `bridgeToken` internally to dispatch `menumijia://` links and strips `bridgeToken` from every MCP resource and tool response so it never enters the model's context.
+
+```json
+{
+  "mcpServers": {
+    "menubarmijia": {
+      "command": "/ABSOLUTE/PATH/TO/MenuBarMijia/scripts/mijia-mcp"
+    }
+  }
+}
+```
 
 ### Raycast
 
