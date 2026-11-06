@@ -309,12 +309,35 @@ public enum DeviceDeduplicator {
         home.deviceBackends = deviceBackends
         home.pairedDeviceIDs = pairedDeviceIDs
         let mergedIDs = Set(mergedDevices.map(\.id))
-        // Facets arrive keyed by Mi source dids; a paired card may be drawn under the HA id.
-        home.deviceFacets = (xiaomiCloud?.deviceFacets ?? [:]).reduce(into: [:]) { facets, entry in
-            let cardID = miCanonicalIDs[entry.key] ?? entry.key
-            guard mergedIDs.contains(cardID) else { return }
-            facets[cardID] = entry.value
+        // Facets arrive keyed by each source's own device id. Translate both sides to the merged
+        // card id, then keep the winning source's rows. The other source is a fallback because a
+        // facet write is routed by `FacetTarget` (MIoT property vs HA entity), not by card source.
+        var haFacets: [String: [FacetControl]] = [:]
+        for (sourceID, controls) in homeAssistant?.deviceFacets ?? [:] {
+            let cardID = haCanonicalIDs[sourceID] ?? sourceID
+            guard mergedIDs.contains(cardID) else { continue }
+            haFacets[cardID] = controls
         }
+        var miFacets: [String: [FacetControl]] = [:]
+        for (sourceID, controls) in xiaomiCloud?.deviceFacets ?? [:] {
+            let cardID = miCanonicalIDs[sourceID] ?? sourceID
+            guard mergedIDs.contains(cardID) else { continue }
+            miFacets[cardID] = controls
+        }
+        var mergedFacets: [String: [FacetControl]] = [:]
+        for cardID in mergedIDs {
+            let preferred: [FacetControl]?
+            switch routes[cardID]?.backend {
+            case .homeAssistant:
+                preferred = haFacets[cardID] ?? miFacets[cardID]
+            case .xiaomiCloud:
+                preferred = miFacets[cardID] ?? haFacets[cardID]
+            case .demo, .none:
+                preferred = miFacets[cardID] ?? haFacets[cardID]
+            }
+            if let preferred, !preferred.isEmpty { mergedFacets[cardID] = preferred }
+        }
+        home.deviceFacets = mergedFacets
         // Ownership arrives keyed by Mi source dids. A member or group paired with an HA card is
         // shown under the canonical id, so translate both endpoints before keeping the pair (#189).
         home.lightGroupOwners = (xiaomiCloud?.lightGroupOwners ?? [:]).reduce(into: [:]) { owners, entry in
@@ -428,6 +451,18 @@ public enum DeviceDeduplicator {
             if spec.canMove { score += 2 }
             if spec.positionWritable { score += 1 }
             if spec.batteryPercent != nil { score += 1 }
+            return score
+        case .humidifier(let spec):
+            var score = 0
+            if spec.powerWritable { score += 1 }
+            if spec.humidityWritable && spec.targetHumidity != nil { score += 1 }
+            if !spec.availableModes.isEmpty { score += 1 }
+            if spec.currentHumidity != nil { score += 1 }
+            return score
+        case .valve(let spec):
+            var score = 0
+            if spec.canMove { score += 1 }
+            if spec.deviceClass != nil { score += 1 }
             return score
         }
     }

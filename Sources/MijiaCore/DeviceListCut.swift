@@ -85,6 +85,8 @@ extension DeviceKind {
         case .sensor: return .sensor
         case .cover: return .cover
         case .appliance: return .appliance
+        case .humidifier: return .fan
+        case .valve: return .plug
         }
     }
 }

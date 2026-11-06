@@ -767,8 +767,8 @@ public struct UserHabitMemory: Codable, Equatable, Sendable {
     static func isPowerToggleable(_ device: SmartDevice) -> Bool {
         guard device.kind.canTogglePower else { return false }
         switch device.kind {
-        case .light, .climate, .fan, .plug, .camera, .tv: return true
-        case .vacuum, .speaker, .fridge, .sensor, .cover, .appliance: return false
+        case .light, .climate, .fan, .plug, .camera, .tv, .humidifier: return true
+        case .vacuum, .speaker, .fridge, .sensor, .cover, .appliance, .valve: return false
         }
     }
 

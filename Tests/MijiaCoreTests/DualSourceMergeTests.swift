@@ -5,10 +5,12 @@ import Testing
 private func makeHome(
     rooms: [RoomArea] = [],
     devices: [SmartDevice],
-    identities: [String: DeviceSourceIdentity] = [:]
+    identities: [String: DeviceSourceIdentity] = [:],
+    facets: [String: [FacetControl]] = [:]
 ) -> SynthesizedHome {
     var home = SynthesizedHome(rooms: rooms, devices: devices)
     home.deviceIdentities = identities
+    home.deviceFacets = facets
     return home
 }
 
@@ -123,6 +125,46 @@ struct DualSourceMergeTests {
         #expect(result.routes[device.id]?.sourceDeviceID == "1105610385")
         // A doorbell ring from the HA side must still find this card when Mi wins it (#308).
         #expect(result.haCanonicalIDs[haCamera.id] == device.id)
+    }
+
+    @Test("Home Assistant deviceFacets survive a dual-source merge and follow the winning route")
+    func homeAssistantFacetsFollowWinningRoute() throws {
+        let ha = makeLight(id: "ha-light", name: "客厅灯", roomId: "living", roomName: "客厅")
+        let mi = makeLight(id: "mi-light", name: "客厅灯", roomId: "living", roomName: "客厅")
+        let identity = makeIdentity(
+            dids: ["mi-light"], model: ha.model, name: ha.name, roomName: ha.roomName, kind: .light
+        )
+        func facet(_ id: String, target: FacetTarget) -> FacetControl {
+            FacetControl(
+                id: id, kind: .toggle, name: id, title: id, serviceName: "switch",
+                value: .bool(true), isWritable: true, writesByDefault: true, isHighValue: false,
+                target: target
+            )
+        }
+        let haFacet = facet("switch.ha", target: .haProperty(entityId: "switch.ha"))
+        let miFacet = facet("3.1", target: .property(entityId: "miot:mi-light:3", piid: 1))
+        let haHome = makeHome(devices: [ha], identities: [ha.id: identity], facets: [ha.id: [haFacet]])
+        let miHome = makeHome(devices: [mi], identities: [mi.id: identity], facets: [mi.id: [miFacet]])
+
+        let haWins = DeviceDeduplicator.merge(homeAssistant: haHome, xiaomiCloud: miHome)
+        let haCard = try #require(haWins.home.devices.first)
+        #expect(haWins.routes[haCard.id]?.backend == .homeAssistant)
+        #expect(haWins.home.deviceFacets[haCard.id] == [haFacet])
+
+        var offlineHA = ha
+        offlineHA.isOnline = false
+        let miWins = DeviceDeduplicator.merge(
+            homeAssistant: makeHome(
+                devices: [offlineHA], identities: [ha.id: identity], facets: [ha.id: [haFacet]]
+            ),
+            xiaomiCloud: miHome
+        )
+        let miCard = try #require(miWins.home.devices.first)
+        #expect(miWins.routes[miCard.id]?.backend == .xiaomiCloud)
+        #expect(miWins.home.deviceFacets[miCard.id] == [miFacet])
+
+        let pureHA = DeviceDeduplicator.merge(homeAssistant: haHome, xiaomiCloud: nil)
+        #expect(pureHA.home.deviceFacets[ha.id] == [haFacet])
     }
 
     @Test("A Home Assistant camera that exposes a stream keeps the normal tie-break")

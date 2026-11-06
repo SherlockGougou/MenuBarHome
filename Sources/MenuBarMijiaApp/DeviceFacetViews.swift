@@ -333,6 +333,9 @@ enum FacetLabel {
         "target-temp": "目标温度",
         "temperature": "温度",
         "relative-humidity": "湿度",
+        "humidity": "湿度",
+        "target-humidity": "目标湿度",
+        "current-humidity": "当前湿度",
         "pm2.5-density": "PM2.5",
         "battery-level": "电量",
         "fault": "故障",
@@ -459,6 +462,7 @@ enum FacetLabel {
         case "brightness": return "sun.max.fill"
         case "color-temperature": return "thermometer.sun.fill"
         case "target-temperature", "target-temp", "temperature": return "thermometer.medium"
+        case "humidity", "target-humidity", "current-humidity", "relative-humidity": return "humidity.fill"
         case "fan-level", "fan-speed": return "wind"
         case "volume": return "speaker.wave.2.fill"
         case "target-position", "current-position": return "window.vertical.open"

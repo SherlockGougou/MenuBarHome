@@ -214,7 +214,7 @@ public enum MiotCommandMapper {
 
         case .setClimateSwingMode, .mediaSelectSource,
              .pressButton, .sendNotifyMessage, .activateScene,
-             .setMiotProperty, .callMiotAction:
+             .setMiotProperty, .callMiotAction, .setHumidity:
             throw MiotCommandError.unsupported(String(describing: command).components(separatedBy: "(").first ?? "")
         }
     }
@@ -381,6 +381,7 @@ extension DeviceCommand {
              .setClimateTemperature(let id, _), .setClimateFanMode(let id, _), .setClimateSwingMode(let id, _),
              .setFanPower(let id, _), .setFanPercentage(let id, _), .setFanPresetMode(let id, _), .setFanOscillating(let id, _),
              .setSwitch(let id, _), .setSelectOption(let id, _), .setNumberValue(let id, _),
+             .setHumidity(let id, _),
              .vacuumAction(let id, _), .mediaSetVolume(let id, _), .mediaSelectSource(let id, _),
              .pressButton(let id), .sendNotifyMessage(let id, _), .activateScene(let id),
              .setMiotProperty(let id, _, _), .callMiotAction(let id):

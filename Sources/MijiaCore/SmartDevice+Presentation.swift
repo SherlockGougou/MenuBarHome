@@ -82,6 +82,13 @@ extension SmartDevice {
             return (s.positionPercent ?? 0) > 0 ? "window.vertical.open" : "window.vertical.closed"
         case .appliance(let s):
             return s.symbolName ?? "water.waves"
+        case .humidifier(let s):
+            return s.isOn ? "humidity.fill" : "humidity"
+        case .valve(let s):
+            if s.deviceClass?.lowercased() == "gas" {
+                return s.isOpen ? "flame.fill" : "flame"
+            }
+            return s.isOpen ? "drop.fill" : "drop"
         }
     }
 
@@ -275,6 +282,30 @@ extension SmartDevice {
             }
             return parts.isEmpty ? (s.isOn ? L10n.tr("运行中", "Running") : L10n.tr("已关闭", "Off"))
                 : parts.joined(separator: " · ")
+
+        case .humidifier(let s):
+            guard s.isOn else { return L10n.tr("已关闭", "Off") }
+            var parts: [String] = []
+            if let mode = s.currentMode, !mode.isEmpty {
+                parts.append(Self.localizeApplianceMode(mode))
+            }
+            if let target = s.targetHumidity {
+                parts.append(L10n.tr("目标 \(target)%", "Target \(target)%"))
+            }
+            if let current = s.currentHumidity {
+                parts.append(L10n.tr("当前 \(Int(current.rounded()))%", "Now \(Int(current.rounded()))%"))
+            }
+            return parts.isEmpty ? L10n.tr("运行中", "Running") : parts.joined(separator: " · ")
+
+        case .valve(let s):
+            if let motion = s.motion {
+                switch motion {
+                case "opening": return L10n.tr("正在打开", "Opening")
+                case "closing": return L10n.tr("正在关闭", "Closing")
+                default: break
+                }
+            }
+            return s.isOpen ? L10n.tr("已打开", "Open") : L10n.tr("已关闭", "Closed")
         }
     }
 
@@ -329,6 +360,9 @@ extension SmartDevice {
         case "quick", "fast", "快速": return L10n.tr("快速", "Quick")
         case "electricheating", "electric heating", "电加热": return L10n.tr("电加热", "Electric Heating")
         case "auto", "automatic", "自动": return L10n.tr("自动", "Auto")
+        case "sleep", "night", "睡眠": return L10n.tr("睡眠", "Sleep")
+        case "strong", "high", "强力", "强": return L10n.tr("强力", "Strong")
+        case "baby", "婴儿": return L10n.tr("婴儿", "Baby")
         case "manual", "手动": return L10n.tr("手动", "Manual")
         case "off", "关闭": return L10n.tr("关闭", "Off")
         case "idle", "待机": return L10n.tr("待机", "Idle")

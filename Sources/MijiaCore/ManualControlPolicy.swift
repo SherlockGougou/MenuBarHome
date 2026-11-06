@@ -74,26 +74,43 @@ public enum ManualControlPolicy {
 
     private static func facetRequiresConfirmation(_ facet: FacetControl, value: JSONValue?, for device: SmartDevice) -> Bool {
         if facet.kind == .button { return true }
-        if case .action = facet.target { return true }
+        if facet.target?.isAction == true { return true }
         let service = facet.serviceName.lowercased()
         let name = facet.name.lowercased()
+        let tokens = Set(name.split(separator: "-").map(String.init))
+        let isMode = name == "mode" || name.hasSuffix("-mode")
+        let isTargetTemperature = name == "target-temperature" || name.hasSuffix("-target-temperature")
+        let isPower = ["on", "power", "power-switch"].contains(name) || name.hasSuffix("-power")
         let coverServices = ["curtain", "window-opener", "airer", "clothes-airer", "garage-door"]
-        if name == "mode", device.kind.isCover || coverServices.contains(service) { return true }
+        if isMode, device.kind.isCover || coverServices.contains(service) { return true }
+
+        // Indicator, sound and child-lock controls never move the appliance's main function.
+        let lowRiskServices = ["indicator-light", "night-light", "buzzer", "speaker", "physical-controls-locked"]
+        let lowRiskTokens: Set<String> = ["led", "indicator", "buzzer", "mute", "display", "screen"]
+        let lowRiskHA = !tokens.isDisjoint(with: lowRiskTokens)
+            || name.contains("night-light")
+            || name.contains("child-lock")
+            || name.contains("physical-controls-locked")
+            || name.contains("auto-off")
+        if lowRiskServices.contains(service) || lowRiskHA { return false }
+
+        // A Home Assistant auxiliary switch uses the `switch` domain with a device-specific object
+        // id (`bath-heater-ptc`, `dual-plug-socket-2`), so it follows the power hazard table rather
+        // than a MIoT property short name. This also keeps a heater switch's off direction direct.
+        if service == "switch", let isOn = value?.miotBool {
+            return requiresConfirmation(.power(isOn), for: device)
+        }
 
         let category = IntentDeviceCategory(device)
         let selectedMode = (value?.intValue).flatMap { selected in
             facet.options.first { $0.value == selected }?.label
         } ?? value?.stringValue
-        let isPower = ["on", "power", "power-switch"].contains(name)
         if category == .heater {
             if isPower, let isOn = value?.miotBool { return isOn }
-            if name == "mode" { return selectedMode?.caseInsensitiveCompare("off") != .orderedSame }
+            if isMode { return selectedMode?.caseInsensitiveCompare("off") != .orderedSame }
             return true
         }
 
-        // These services' on/off properties power an indicator or sound, never the appliance.
-        let lowRiskServices = ["indicator-light", "night-light", "buzzer", "speaker", "physical-controls-locked"]
-        if lowRiskServices.contains(service) { return false }
         let heatingService = ["heater", "ptc", "floor-heat", "heating", "water-heater", "electric-water-heater", "gas-water-heater"]
             .contains(service)
         if isPower, let isOn = value?.miotBool {
@@ -103,17 +120,17 @@ public enum ManualControlPolicy {
 
         let waterHeater: Bool
         switch device.kind {
-        case .appliance: waterHeater = true
+        case .appliance(let spec): waterHeater = spec.heats
         case .climate: waterHeater = device.name.contains("热水器")
         default: waterHeater = false
         }
-        if name == "target-temperature", let requested = value?.doubleValue,
+        if isTargetTemperature, let requested = value?.doubleValue,
            heatingService || waterHeater {
             if let current = facet.value?.doubleValue { return requested > current }
             if heatingService { return true }
             return requiresConfirmation(.targetTemperature(requested), for: device)
         }
-        if name == "mode", heatingService || waterHeater {
+        if isMode, heatingService || waterHeater {
             return selectedMode?.caseInsensitiveCompare("off") != .orderedSame
         }
         return false

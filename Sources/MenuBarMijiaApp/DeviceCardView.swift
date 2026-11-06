@@ -742,6 +742,67 @@ public struct DeviceCardView: View {
                 accent: accent,
                 statusColor: statusColor
             )
+        case .humidifier(let spec):
+            humidifierDrawer(spec)
+        case .valve:
+            EmptyView()
+        }
+    }
+
+    private func humidifierDrawer(_ spec: HumidifierSpec) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if spec.humidityWritable, let target = spec.targetHumidity {
+                LiquidGlassSlider(
+                    value: Binding(
+                        get: { Double(target) },
+                        set: { store.setHumidifierHumidity(device.id, percent: Int($0.rounded())) }
+                    ),
+                    in: Double(spec.minHumidity)...Double(max(spec.minHumidity + 1, spec.maxHumidity)),
+                    step: Double(spec.step),
+                    iconName: "humidity.fill",
+                    iconColor: statusColor,
+                    trackFill: LinearGradient(
+                        colors: [accent.opacity(0.55), accent.opacity(0.92)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    formattedValue: "\(target)%"
+                )
+                .disabled(!device.isOnline)
+                .accessibilityLabel(Text(L10n.tr("目标湿度", "Target humidity")))
+            }
+
+            if !spec.availableModes.isEmpty, spec.modeWritable {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    AdaptiveGlassContainer(spacing: 6) {
+                        HStack(spacing: 6) {
+                            ForEach(spec.availableModes, id: \.self) { mode in
+                                Button(SmartDevice.localizeApplianceMode(mode)) {
+                                    store.setHumidifierMode(device.id, mode: mode)
+                                }
+                                .buttonStyle(PillActionButtonStyle(
+                                    isSelected: spec.currentMode == mode,
+                                    tintColor: accent
+                                ))
+                                .disabled(!device.isOnline)
+                            }
+                        }
+                    }
+                    .padding(6)
+                }
+                .padding(-6)
+            }
+
+            if let current = spec.currentHumidity {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(L10n.tr("当前湿度", "Current humidity"))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    DetailValueText(text: "\(Int(current.rounded()))%", color: statusColor)
+                }
+                .padding(.horizontal, 8)
+            }
         }
     }
 

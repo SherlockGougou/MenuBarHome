@@ -922,6 +922,82 @@ public struct ApplianceFanLevel: Equatable, Sendable {
     }
 }
 
+/// A Home Assistant `humidifier` card (#307). Power, mode and target humidity are each exposed
+/// only when the entity publishes them; the built-in humidity reading comes from the entity's own
+/// `current_humidity` attribute or the device's humidity sensor.
+public struct HumidifierSpec: Equatable, Sendable {
+    public var entityId: String
+    public var isOn: Bool
+    public var currentMode: String?
+    public var availableModes: [String]
+    public var modeWritable: Bool
+    public var targetHumidity: Int?
+    public var minHumidity: Int
+    public var maxHumidity: Int
+    public var step: Int
+    public var humidityWritable: Bool
+    public var currentHumidity: Double?
+    public var powerWritable: Bool
+
+    public init(
+        entityId: String,
+        isOn: Bool,
+        currentMode: String? = nil,
+        availableModes: [String] = [],
+        modeWritable: Bool = false,
+        targetHumidity: Int? = nil,
+        minHumidity: Int = 0,
+        maxHumidity: Int = 100,
+        step: Int = 1,
+        humidityWritable: Bool = false,
+        currentHumidity: Double? = nil,
+        powerWritable: Bool = true
+    ) {
+        self.entityId = entityId
+        self.isOn = isOn
+        self.currentMode = currentMode
+        self.availableModes = availableModes
+        self.modeWritable = modeWritable
+        self.targetHumidity = targetHumidity
+        self.minHumidity = minHumidity
+        self.maxHumidity = maxHumidity
+        self.step = max(1, step)
+        self.humidityWritable = humidityWritable
+        self.currentHumidity = currentHumidity
+        self.powerWritable = powerWritable
+    }
+}
+
+/// A Home Assistant `valve` card (#307): open or closed, never a position. Water and gas valves
+/// are safety-relevant, so opening one goes through the same manual confirmation table as plugs.
+public struct ValveSpec: Equatable, Sendable {
+    public var entityId: String
+    public var isOpen: Bool
+    public var deviceClass: String?
+    public var openWritable: Bool
+    public var closeWritable: Bool
+    /// `opening` / `closing` while the valve travels; nil once it reports open or closed.
+    public var motion: String?
+
+    public init(
+        entityId: String,
+        isOpen: Bool,
+        deviceClass: String? = nil,
+        openWritable: Bool = true,
+        closeWritable: Bool = true,
+        motion: String? = nil
+    ) {
+        self.entityId = entityId
+        self.isOpen = isOpen
+        self.deviceClass = deviceClass
+        self.openWritable = openWritable
+        self.closeWritable = closeWritable
+        self.motion = motion
+    }
+
+    public var canMove: Bool { openWritable || closeWritable }
+}
+
 /// A shared appliance card (GLOSSARY `ApplianceDevice`). Every control is optional and driven by
 /// what the spec publishes: power, mode, target temperature, status, fault, remaining time and
 /// no-argument start/pause actions. Nothing here is hard-coded for one appliance family.
@@ -1049,12 +1125,14 @@ public enum DeviceKind: Equatable, Sendable {
     case sensor(SensorSpec)
     case cover(CoverSpec)
     case appliance(ApplianceSpec)
+    case humidifier(HumidifierSpec)
+    case valve(ValveSpec)
 
     /// Dedicated sensors sort ahead of air purifiers and AC return-air thermistors (#103).
     public var environmentReadingPriority: Int {
         switch self {
         case .sensor: return 0
-        case .fan: return 1
+        case .fan, .humidifier: return 1
         case .climate: return 2
         default: return 3
         }
@@ -1077,6 +1155,8 @@ public enum DeviceKind: Equatable, Sendable {
         case .speaker, .fridge, .sensor: return false
         case .cover(let spec): return spec.canMove
         case .appliance(let spec): return spec.powerPresent && spec.powerWritable
+        case .humidifier(let spec): return spec.powerWritable
+        case .valve(let spec): return spec.canMove
         }
     }
 
@@ -1108,6 +1188,10 @@ public enum DeviceKind: Equatable, Sendable {
             return spec.powerWritable || spec.modeWritable || spec.temperatureWritable
                 || spec.fanLevel?.writable == true || spec.light?.writable == true
                 || spec.startAction != nil || spec.pauseAction != nil || spec.stopAction != nil
+        case .humidifier(let spec):
+            return spec.powerWritable || spec.modeWritable || spec.humidityWritable
+        case .valve(let spec):
+            return spec.canMove
         }
     }
 }
@@ -1179,6 +1263,8 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
             [s.entityId, s.powerEntityId, s.modeEntityId, s.temperatureEntityId,
              s.light?.entityId, s.fanLevel?.entityId,
              s.startAction?.entityId, s.pauseAction?.entityId, s.stopAction?.entityId]
+        case .humidifier(let s): [s.entityId]
+        case .valve(let s): [s.entityId]
         }
         return entityIds.compactMap { id in
             guard let id else { return nil }
@@ -1209,6 +1295,8 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
         case .fridge, .sensor: return false
         case .cover(let s): return (s.positionPercent ?? 0) > 0
         case .appliance(let s): return s.isOn
+        case .humidifier(let s): return s.isOn
+        case .valve(let s): return s.isOpen
         }
     }
 
@@ -1254,6 +1342,13 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
         case (.appliance(var spec), .appliance(let want)):
             spec.isOn = want.isOn
             next.kind = .appliance(spec)
+        case (.humidifier(var spec), .humidifier(let want)):
+            spec.isOn = want.isOn
+            next.kind = .humidifier(spec)
+        case (.valve(var spec), .valve(let want)):
+            spec.isOpen = want.isOpen
+            spec.motion = want.motion
+            next.kind = .valve(spec)
         default:
             return requested
         }
@@ -1293,6 +1388,12 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
                 || spec.currentHumidity != nil
                 || spec.statusText != nil || spec.faultText != nil || spec.remainingMinutes != nil
                 || spec.startAction != nil || spec.pauseAction != nil || spec.stopAction != nil
+        case .humidifier(let spec):
+            return spec.modeWritable
+                || (spec.humidityWritable && spec.targetHumidity != nil)
+                || spec.currentHumidity != nil
+        case .valve:
+            return false
         }
     }
 
@@ -1342,6 +1443,16 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
                 roomName: roomName,
                 temperature: a.currentTemperature,
                 humidity: a.currentHumidity
+            )
+        case .humidifier(let h):
+            guard let humidity = h.currentHumidity else { return nil }
+            let trimmed = name.trimmingCharacters(in: .whitespaces)
+            return EnvironmentReading(
+                id: id,
+                label: trimmed.isEmpty ? roomName : trimmed,
+                roomName: roomName,
+                temperature: nil,
+                humidity: humidity
             )
         default:
             return nil
@@ -1456,6 +1567,8 @@ public enum DeviceCommand: Equatable, Sendable {
     case setSwitch(entityId: String, isOn: Bool)
     case setSelectOption(entityId: String, option: String)
     case setNumberValue(entityId: String, value: Double)
+    /// Home Assistant `humidifier.set_humidity` (#307); the entity carries the humidifier domain.
+    case setHumidity(entityId: String, percent: Int)
 
     case vacuumAction(entityId: String, action: VacuumAction)
     case mediaSetVolume(entityId: String, volumeLevel: Double)
