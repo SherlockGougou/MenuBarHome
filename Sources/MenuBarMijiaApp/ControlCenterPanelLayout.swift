@@ -158,6 +158,7 @@ extension ControlCenterPanel {
         withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
             roomOrderRaw = RoomPrefs.encodeOrder(next)
         }
+        store.scheduleRaycastSnapshotExport()
     }
 
     /// First / last visible slot, for the VoiceOver actions on a row and on a pill.
@@ -177,6 +178,7 @@ extension ControlCenterPanel {
         withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
             roomOrderRaw = RoomPrefs.encodeOrder(next)
         }
+        store.scheduleRaycastSnapshotExport()
     }
 
     /// Writes one room alias: the session draft while reordering, `UserDefaults` otherwise.
@@ -194,6 +196,7 @@ extension ControlCenterPanel {
             roomAliasesRaw = RoomPrefs.encodeAliases(aliases)
             layoutUI.renamingRoomId = nil
         }
+        store.scheduleRaycastSnapshotExport()
     }
 
     // MARK: - Page Sections (favorites, custom groups, ungrouped)

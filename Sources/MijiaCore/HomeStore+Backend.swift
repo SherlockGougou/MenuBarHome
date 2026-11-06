@@ -231,6 +231,7 @@ extension HomeStore {
             }
 
         case .snapshotUpdated(let snapshot):
+            isApplyingProviderSnapshot = true
             snapshotGeneration &+= 1
             if selectedMiHomeId != nil, userDefaults.string(forKey: MiCloudProvider.selectedHomeKey) == nil {
                 invalidateUndoContext()
@@ -341,7 +342,9 @@ extension HomeStore {
             let nextDevices = devicesWithAliases(merged)
             if devices != nextDevices { devices = nextDevices }
             seedDefaultFavoritesIfNeeded()
+            isApplyingProviderSnapshot = false
             let sampleNow = Date()
+            scheduleRaycastSnapshotExport()
             energyHistory.record(devices: devices, now: sampleNow)
             sensorHistory.record(devices: devices, now: sampleNow)
             offlineHistory.record(devices: devices, now: sampleNow)
