@@ -1005,6 +1005,8 @@ struct MenuBarPanelControllerTests {
         #expect(controller.isPanelVisible)
         #expect(didShow)
         #expect(panel.isVisible)
+        #expect(panel.alphaValue == 0)
+        #expect(panel.hasShadow == false)
         #expect(panel.canBecomeKey, "arrow keys and text fields need a key panel")
         #expect(panel.canBecomeMain == false)
         #expect(abs(panel.frame.width - MenuBarPanelController.panelWidth) < 1)
@@ -1150,6 +1152,7 @@ struct MenuBarPanelControllerTests {
         controller.showPanel()
         let panel = try #require(controller.panelWindow)
         let sidecar = try #require(controller.grokBallSidecarWindow)
+        #expect(sidecar.alphaValue == 0)
         #expect(abs(panel.frame.width - 376) < 1)
         #expect(abs(sidecar.frame.width - GrokBallSidecarPlacement.collapsedWidth) < 1)
         #expect(sidecar.frame.minX >= panel.frame.maxX || sidecar.frame.maxX <= panel.frame.minX)
@@ -1432,6 +1435,8 @@ struct MenuBarPanelControllerTests {
             backing: .buffered,
             defer: false
         )
+        child.alphaValue = 0
+        child.hasShadow = false
         defer { child.orderOut(nil) }
         panel.addChildWindow(child, ordered: .above)
         #expect(controller.isPanelWindow(child))
@@ -1777,6 +1782,8 @@ struct MenuBarPanelControllerTests {
             defer: false
         )
         window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.hasShadow = false
         window.contentView = hosting
         window.orderFront(nil)
         defer {
@@ -1839,11 +1846,16 @@ struct MenuBarPanelControllerTests {
         let cameraController = CameraLivePanelController.shared
         cameraController.presentsActively = false
         cameraController.install(with: store)
-        defer { cameraController.closePanel() }
+        defer {
+            cameraController.closePanel()
+            cameraController.presentsActively = true
+        }
 
         store.openCameraLiveView(camera.id)
         let panel = try #require(cameraController.panelWindow)
         #expect(panel.isVisible)
+        #expect(panel.alphaValue == 0)
+        #expect(panel.hasShadow == false)
         #expect(panel.contentView is NSHostingView<CameraLivePanelView>, "NSPanel initializes with a blank NSView; present(device:) must replace it with NSHostingView<CameraLivePanelView>")
         #expect(panel.level.rawValue > NSWindow.Level.statusBar.rawValue)
     }
@@ -1864,7 +1876,10 @@ struct MenuBarPanelControllerTests {
         let cameraController = CameraLivePanelController.shared
         cameraController.presentsActively = false
         cameraController.install(with: store)
-        defer { cameraController.closePanel() }
+        defer {
+            cameraController.closePanel()
+            cameraController.presentsActively = true
+        }
 
         store.openCameraLiveView(camera.id)
         let panel = try #require(cameraController.panelWindow)
@@ -2001,8 +2016,10 @@ struct MenuBarPanelControllerTests {
             styleMask: [.borderless], backing: .buffered, defer: false
         )
         window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.hasShadow = false
         window.contentView = hosting
-        window.makeKeyAndOrderFront(nil)
+        window.orderFront(nil)
         defer {
             window.contentView = nil
             window.orderOut(nil)

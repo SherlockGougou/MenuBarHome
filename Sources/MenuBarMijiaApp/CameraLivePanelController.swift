@@ -182,7 +182,15 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
             let initialSize = isExpandedSize ? Self.expandedSize : Self.compactSize
             panel.setFrame(initialFrame(for: initialSize), display: true)
         }
-        panel.orderFrontRegardless()
+        if presentsActively {
+            panel.alphaValue = 1
+            panel.hasShadow = true
+            panel.orderFrontRegardless()
+        } else {
+            panel.alphaValue = 0
+            panel.hasShadow = false
+            panel.orderFront(nil)
+        }
         if !canReuseHotStream {
             reloadStream()
         }

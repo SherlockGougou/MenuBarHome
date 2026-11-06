@@ -158,6 +158,7 @@ final class GrokBallSidecarController {
     func synchronize() {
         guard !isTornDown, let parent else { return }
         panelWindow.appearance = parent.appearance
+        panelWindow.alphaValue = parent.alphaValue
         guard parent.isVisible, !store.showsFullOnboardingGuide, store.enableGrokBall else { hide(); return }
         let requested = ballOffset.map { NSPoint(x: parent.frame.midX + $0.x, y: parent.frame.midY + $0.y) }
         let visible = screen(at: requested)?.visibleFrame ?? parent.screen?.visibleFrame
@@ -253,7 +254,9 @@ final class GrokBallSidecarController {
             guard event.window === panelWindow, let placement = state.placement,
                   abs(point.x - placement.ballCenter.x) <= 42, abs(point.y - placement.ballCenter.y) <= 42 else { return false }
             gesture = .pressed(origin: point, center: placement.ballCenter)
-            panelWindow.makeKey()
+            if panelWindow.alphaValue > 0 {
+                panelWindow.makeKey()
+            }
             holdTask?.cancel()
             holdTask = Task { @MainActor [weak self] in
                 do { try await Task.sleep(for: .milliseconds(500)) } catch { return }

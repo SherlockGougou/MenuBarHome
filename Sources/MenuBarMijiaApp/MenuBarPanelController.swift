@@ -730,6 +730,8 @@ final class MenuBarPanelController: NSObject {
         let wasVisible = panel.isVisible
         installMouseMonitors()
         if presentsActively {
+            panel.alphaValue = 1
+            panel.hasShadow = true
             // Order the window in first: cooperative activation only succeeds once the app has a
             // window to become active for, and this agent app owns none at that moment.
             panel.makeKeyAndOrderFront(nil)
@@ -737,6 +739,8 @@ final class MenuBarPanelController: NSObject {
                 NSApp.activate()
             }
         } else {
+            panel.alphaValue = 0
+            panel.hasShadow = false
             panel.orderFront(nil)
         }
         setStatusItemHighlighted(true)
