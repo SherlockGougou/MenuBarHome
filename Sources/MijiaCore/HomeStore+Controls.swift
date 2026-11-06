@@ -167,10 +167,10 @@ extension HomeStore {
             }
         }
 
-        guard let ticket = self.claimReadBack(device.id) else { return nil }
+        guard let ticket = self.readBackTickets.claim(device.id) else { return nil }
 
         return Task {
-            defer { self.finishReadBack(device.id, ticket: ticket) }
+            defer { self.readBackTickets.finish(device.id, ticket: ticket) }
             guard self.controlContextID == context else { return false }
             do {
                 try await self.executeDeviceCommand(cmd)
@@ -206,40 +206,6 @@ extension HomeStore {
         case matched
         case unmatched
         case superseded
-    }
-
-    private func claimReadBack(_ deviceId: String) -> UInt64? {
-        guard readBackOwner[deviceId] == nil else { return nil }
-        nextReadBackTicket &+= 1
-        let ticket = nextReadBackTicket
-        readBackOwner[deviceId] = ticket
-        latestReadBackTicket[deviceId] = ticket
-        readBackInFlightTicket[deviceId] = ticket
-        waitingDeviceIds.insert(deviceId)
-        return ticket
-    }
-
-    /// Releases the tap and the waiting label before the echo retry, while the read-back stays
-    /// in flight so its snapshots still bypass an older optimistic lock.
-    private func releaseReadBackOwner(_ deviceId: String, ticket: UInt64) {
-        guard readBackOwner[deviceId] == ticket else { return }
-        readBackOwner[deviceId] = nil
-        waitingDeviceIds.remove(deviceId)
-    }
-
-    private func finishReadBack(_ deviceId: String, ticket: UInt64) {
-        if readBackOwner[deviceId] == ticket {
-            readBackOwner[deviceId] = nil
-            waitingDeviceIds.remove(deviceId)
-        }
-        // The echo release may already have cleared the owner; only the latest task clears
-        // the lock exemption, so a newer toggle keeps it alive.
-        if readBackInFlightTicket[deviceId] == ticket {
-            readBackInFlightTicket[deviceId] = nil
-        }
-        if latestReadBackTicket[deviceId] == ticket {
-            latestReadBackTicket[deviceId] = nil
-        }
     }
 
     /// Applies a provider snapshot when one was published. Providers with no property read
@@ -282,7 +248,7 @@ extension HomeStore {
         case .published:
             guard snapshotGeneration != before else { return .unmatched }
             if powerMatches(deviceId, requested: requested) { return .matched }
-            releaseReadBackOwner(deviceId, ticket: ticket)
+            readBackTickets.releaseTap(deviceId, ticket: ticket)
             let again = snapshotGeneration
             if holdReadBackEcho {
                 isHoldingReadBackEcho = true
@@ -292,13 +258,13 @@ extension HomeStore {
             } else {
                 try? await Task.sleep(for: readBackEchoDelay)
             }
-            if latestReadBackTicket[deviceId] != ticket { return .superseded }
+            if !readBackTickets.isLatest(deviceId, ticket: ticket) { return .superseded }
             let second = await provider.readBack(deviceId: deviceId)
-            if latestReadBackTicket[deviceId] != ticket { return .superseded }
+            if !readBackTickets.isLatest(deviceId, ticket: ticket) { return .superseded }
             if case .failed = second { return .unmatched }
             await settleSnapshot(after: again)
             // A newer toggle may have started and even finished during the second read.
-            if latestReadBackTicket[deviceId] != ticket { return .superseded }
+            if !readBackTickets.isLatest(deviceId, ticket: ticket) { return .superseded }
             return powerMatches(deviceId, requested: requested) ? .matched : .unmatched
         }
     }

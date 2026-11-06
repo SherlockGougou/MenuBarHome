@@ -117,9 +117,7 @@ struct UndoScopeTests {
         let habits = store.userHabitMemory
         let toast = store.toastNotice?.message
         #expect(store.waitingDeviceIds.isEmpty)
-        #expect(store.readBackOwner.isEmpty)
-        #expect(store.latestReadBackTicket.isEmpty)
-        #expect(store.readBackInFlightTicket.isEmpty)
+        #expect(store.readBackTickets.isEmpty)
         await provider.release()
         #expect(await task.value == false)
         #expect(store.userHabitMemory == habits)

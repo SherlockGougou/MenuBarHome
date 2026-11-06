@@ -70,7 +70,10 @@ public final class HomeStore {
         didSet { scheduleRaycastSnapshotExport() }
     }
     public internal(set) var hasReceivedInitialSnapshot = false
-    public internal(set) var waitingDeviceIds: Set<String> = []
+    /// Read-back tickets for primary toggles; see `ReadBackTickets`.
+    var readBackTickets = ReadBackTickets()
+    /// Devices whose toggle is waiting for the device to answer.
+    public var waitingDeviceIds: Set<String> { readBackTickets.waitingDeviceIds }
     /// True after the cloud drops once a snapshot has been shown. Cleared only by a later connect.
     /// A retry that is still `.connecting` leaves this set, so the last reading stays unmarked as current.
     public internal(set) var deviceValuesAreStale = false {
@@ -88,14 +91,6 @@ public final class HomeStore {
     var holdReadBackEcho = false
     var isHoldingReadBackEcho = false
     var readBackEchoHold: CheckedContinuation<Void, Never>?
-    var readBackOwner: [String: UInt64] = [:]
-    /// Ticket of the read-back task still running, including the echo retry after the UI
-    /// waiting state is released. Snapshots for these ids bypass an older optimistic lock.
-    var readBackInFlightTicket: [String: UInt64] = [:]
-    /// Latest ticket per device. Unlike `readBackOwner`, this survives a completed newer toggle,
-    /// so an older echo retry can still tell that it has been superseded (#201 review).
-    var latestReadBackTicket: [String: UInt64] = [:]
-    var nextReadBackTicket: UInt64 = 0
 
     func releaseReadBackEcho() {
         isHoldingReadBackEcho = false
@@ -607,18 +602,14 @@ public final class HomeStore {
     public static let deviceAliasesKey = ViewPreferenceKeys.deviceAliases
     var rawDeviceNames: [String: String] = [:]
 
-    var lowBatteryAlertedAt: [String: Date] = [:]
-    var sensorEdge: [String: Bool] = [:]
+    @ObservationIgnored var safetyMonitor: SafetyMonitor
     var awayGap = MacAwayGap(includesAway: false)
-    var activeSinceByDeviceId: [String: Date] = [:]
-    var longRunAlertedForSession: Set<String> = []
 
     static let lastManualLightIdKey = ViewPreferenceKeys.lastManualLightId
     /// Last light the user switched on by hand; the 柔和夜灯 fallback uses it instead of "主卧" (#36).
     var lastManuallyUsedLightId: String?
     /// A legacy 主卧/阳台 menu-bar mode was migrated; pick the first temperature sensor when readings arrive.
     var pendingLegacyMenuBarTargetMigration = false
-    var previousOnlineDeviceIds: Set<String> = []
 
     public init(
         provider: (any HomeProvider)? = nil,
@@ -739,8 +730,7 @@ public final class HomeStore {
         self.enableGrokBall = ud.bool(forKey: "enable_grok_ball")
         self.menuBarTargetId = ud.string(forKey: "menubar_target_id") ?? "auto:primary"
         self.lastManuallyUsedLightId = ud.string(forKey: Self.lastManualLightIdKey)
-        self.lowBatteryAlertedAt = Self.loadLowBatteryAlertedAt(from: ud)
-        self.sensorEdge = Self.loadSensorEdge(from: ud)
+        self.safetyMonitor = SafetyMonitor(defaults: ud)
 
         let savedModeRaw = ud.string(forKey: "menubar_display_mode")
         if let savedModeRaw, let mode = MenuBarDisplayMode(rawValue: savedModeRaw) {

@@ -4,10 +4,7 @@ import Foundation
 extension HomeStore {
     func invalidateUndoContext() {
         controlContextID = UUID()
-        readBackOwner.removeAll()
-        latestReadBackTicket.removeAll()
-        readBackInFlightTicket.removeAll()
-        waitingDeviceIds.removeAll()
+        readBackTickets.reset()
         undoTimerTask?.cancel()
         undoBanner = nil
         lastAssistantUndo = nil
