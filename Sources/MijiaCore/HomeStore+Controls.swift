@@ -446,7 +446,8 @@ extension HomeStore {
 
     public func runApplianceAction(_ deviceId: String, action: ApplianceAction) {
         guard let previous = controllableDevice(deviceId), case .appliance(let s) = previous.kind,
-              s.startAction == action || s.pauseAction == action else { return }
+              s.startAction == action || s.pauseAction == action || s.stopAction == action else { return }
+        // Starting a cycle is the hazardous direction; pausing and stopping wind it down.
         let operation: IntentOperation = action.kind == .start ? .power(true) : .power(false)
         guard allowManualControl(operation, for: previous) else { return }
         // The program state is reported by the device; nothing is shown ahead of it.

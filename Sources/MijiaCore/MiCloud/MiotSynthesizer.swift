@@ -65,6 +65,10 @@ public enum MiotSynthesizer {
         ("microwave-oven", buildKitchenAppliance),
         ("health-pot", buildKitchenAppliance),
         ("water-heater", buildApplianceCard),
+        ("washer", buildApplianceCard),
+        ("dryer", buildApplianceCard),
+        ("clothes-dryer", buildApplianceCard),
+        ("dishwasher", buildApplianceCard),
         ("lock", buildSensor),
         ("motion-sensor", buildSensor),
         ("occupancy-sensor", buildSensor),
@@ -825,6 +829,16 @@ public enum MiotSynthesizer {
         ))
     }
 
+    /// Services that make up an appliance card, in read order. A spec may publish a richer
+    /// companion service (a gas boiler's switch, a cleanfly dryer's remaining time) beside the one
+    /// its device type names. Widening this list can only fill a gap: the primary service is always
+    /// read first and duplicate services are skipped. The command mapper also uses it to accept a
+    /// no-argument start/pause only on a service this card builds (see
+    /// `WaterHeaterDeviceTests.ignoresUnrelatedActions`).
+    static let applianceServiceNames = [
+        "water-heater", "boiler", "washer", "dryer", "clothes-dryer", "cleanfly-dryer", "dishwasher",
+    ]
+
     /// The shared appliance card (#300). Power, mode, target temperature, status, fault, remaining
     /// time and start/pause actions are each exposed only when the spec publishes them. A device
     /// type listed in `deviceProfiles.json`'s `appliances` table merges its primary service with
@@ -855,6 +869,7 @@ public enum MiotSynthesizer {
         let humidity = r.first("relative-humidity", in: readingServices)
             ?? r.first("humidity", in: readingServices)
         let status = r.first("status", in: controls)
+        let runStatus = r.first("run-status", in: controls)
         let fault = r.first("fault", in: controls) ?? r.first("device-fault", in: controls)
         let remaining = r.first("left-time", in: controls)
         let faultCode = fault?.value?.intValue
@@ -876,12 +891,16 @@ public enum MiotSynthesizer {
             maxTemp: target?.property.rangeMax ?? 100,
             step: target?.property.rangeStep ?? 1,
             temperatureWritable: target?.property.isWritable == true,
-            statusText: status?.valueDescription.map(applianceStatusText(forDescription:)),
+            statusText: applianceStatusText(
+                service: s.shortName,
+                status: status?.valueDescription,
+                runStatus: runStatus?.valueDescription
+            ),
             faultText: faultDescription(
                 code: faultCode,
                 description: faultCode.flatMap { fault?.property.description(forValue: $0) }
             ),
-            remainingMinutes: remaining?.value?.intValue.flatMap { $0 > 0 ? $0 : nil },
+            remainingMinutes: remainingMinutes(for: remaining),
             startAction: applianceAction(.start, services: controls, reader: r),
             pauseAction: applianceAction(.pause, services: controls, reader: r),
             powerEntityId: power.map { MiotAddress.make(did: r.did, siid: $0.service.iid) },
@@ -905,7 +924,8 @@ public enum MiotSynthesizer {
             currentHumidity: humidity?.value?.doubleValue,
             symbolName: profile?.symbol,
             roomReading: profile?.roomReading == true,
-            heats: profile?.heats ?? (r.spec.shortName == "water-heater")
+            heats: profile?.heats ?? (r.spec.shortName == "water-heater"),
+            stopAction: applianceAction(.stop, services: controls, reader: r)
         ))
     }
 
@@ -920,13 +940,54 @@ public enum MiotSynthesizer {
         profile: DeviceProfiles.ApplianceProfile?,
         spec: MiotDeviceSpec
     ) -> [MiotService] {
-        let companions = profile?.companions ?? ["water-heater", "boiler"]
+        let companions = profile?.companions ?? applianceServiceNames
         var services = [primary]
         for name in companions {
             services.append(contentsOf: spec.services(named: name))
         }
         var seen: Set<Int> = []
         return services.filter { seen.insert($0.iid).inserted }
+    }
+
+    /// `left-time` is minutes in most specs; a few released models publish seconds (#3 review).
+    static func remainingMinutes(for ref: MiotReader.Ref?) -> Int? {
+        guard let ref, let raw = ref.value?.doubleValue, raw.isFinite, raw > 0 else { return nil }
+        let minutes: Double
+        switch ref.property.unit?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "seconds", "second", "sec", "s": minutes = (raw / 60).rounded(.up)
+        case "hours", "hour", "h": minutes = raw * 60
+        default: minutes = raw.rounded()
+        }
+        guard let value = Int(exactly: minutes), value > 0 else { return nil }
+        return value
+    }
+
+    /// Families whose `status` and `run-status` words belong to the shared activity vocabulary.
+    /// Every other family keeps its own reading: the water heater and a bath heater or hood use
+    /// `applianceStatusText(forDescription:)` (#300, #4), so a hood's `Closed` or `Clean` is never
+    /// reinterpreted as a wash phase (#3).
+    static let activityServices: Set<String> = [
+        "washer", "dryer", "clothes-dryer", "cleanfly-dryer", "dishwasher",
+    ]
+
+    static func applianceStatusText(service: String, status: String?, runStatus: String?) -> String? {
+        if activityServices.contains(service) {
+            return applianceActivityText(status: status, runStatus: runStatus)
+        }
+        return status.map(applianceStatusText(forDescription:))
+    }
+
+    /// One activity line. The coarse `status` owns a terminal word, because a washer keeps naming
+    /// the phase it was paused in; while the machine works, a `run-status` phase is more specific
+    /// than `status` and wins (#3). A word this vocabulary does not know is shown as the spec
+    /// wrote it, so an unmapped status never blanks the line.
+    static func applianceActivityText(status: String?, runStatus: String?) -> String? {
+        let coarse = ApplianceActivity(status)
+        if let coarse, coarse.isTerminal { return coarse.localizedLabel }
+        if let stage = ApplianceActivity(runStatus), stage.isStage { return stage.localizedLabel }
+        if let coarse { return coarse.localizedLabel }
+        if let stage = ApplianceActivity(runStatus) { return stage.localizedLabel }
+        return status ?? runStatus
     }
 
     static func applianceAction(

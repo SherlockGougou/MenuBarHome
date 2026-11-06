@@ -339,16 +339,22 @@
       "deviceType" : "coffee-machine"
     },
     "bshcn.dishwasher.23eb33" : {
-      "category" : "droppedControllable",
-      "deviceType" : "dishwasher"
+      "category" : "matched",
+      "deviceType" : "dishwasher",
+      "service" : "dishwasher",
+      "unexposedWritable" : 3
     },
     "bshcn.dishwasher.zb69mc" : {
-      "category" : "droppedControllable",
-      "deviceType" : "dishwasher"
+      "category" : "matched",
+      "deviceType" : "dishwasher",
+      "service" : "dishwasher",
+      "unexposedWritable" : 3
     },
     "bshcn.dry.2j7x10" : {
-      "category" : "droppedControllable",
-      "deviceType" : "dryer"
+      "category" : "matched",
+      "deviceType" : "dryer",
+      "service" : "dryer",
+      "unexposedWritable" : 4
     },
     "bshcn.fridge.1ade0c" : {
       "category" : "matched",
@@ -365,8 +371,10 @@
       "deviceType" : "smart-stove"
     },
     "bshcn.washer.0au00w" : {
-      "category" : "droppedControllable",
-      "deviceType" : "washer"
+      "category" : "matched",
+      "deviceType" : "washer",
+      "service" : "washer",
+      "unexposedWritable" : 4
     },
     "btzn.controller.v1" : {
       "category" : "noUsableProperties",
@@ -495,8 +503,10 @@
       "unexposedWritable" : 9
     },
     "coc.dryer.fdpsm" : {
-      "category" : "droppedControllable",
-      "deviceType" : "clothes-dryer"
+      "category" : "matched",
+      "deviceType" : "clothes-dryer",
+      "service" : "clothes-dryer",
+      "unexposedWritable" : 0
     },
     "ctest.inskil.duyr" : {
       "category" : "droppedControllable",
@@ -705,8 +715,10 @@
       "deviceType" : "moxibustion"
     },
     "mibx5.washer.f27vn" : {
-      "category" : "droppedControllable",
-      "deviceType" : "washer"
+      "category" : "matched",
+      "deviceType" : "washer",
+      "service" : "washer",
+      "unexposedWritable" : 15
     },
     "midjd.fridge.bs473" : {
       "category" : "matched",
@@ -949,15 +961,15 @@
   },
   "summary" : {
     "categories" : {
-      "droppedControllable" : 98,
+      "droppedControllable" : 92,
       "droppedReadOnly" : 13,
-      "matched" : 63,
+      "matched" : 69,
       "misclaimed" : 0,
       "noUsableProperties" : 31
     },
     "deviceTypes" : 177,
     "specs" : 205,
-    "unexposedWritableTotal" : 441
+    "unexposedWritableTotal" : 470
   },
   "windowsDivergences" : {
     "090615.bhf_light.ptxyb" : {
@@ -976,9 +988,33 @@
       "category" : "droppedControllable",
       "deviceType" : "airer"
     },
+    "bshcn.dishwasher.23eb33" : {
+      "category" : "droppedControllable",
+      "deviceType" : "dishwasher"
+    },
+    "bshcn.dishwasher.zb69mc" : {
+      "category" : "droppedControllable",
+      "deviceType" : "dishwasher"
+    },
+    "bshcn.dry.2j7x10" : {
+      "category" : "droppedControllable",
+      "deviceType" : "dryer"
+    },
+    "bshcn.washer.0au00w" : {
+      "category" : "droppedControllable",
+      "deviceType" : "washer"
+    },
+    "coc.dryer.fdpsm" : {
+      "category" : "droppedControllable",
+      "deviceType" : "clothes-dryer"
+    },
     "leishi.bhf_light.ls109" : {
       "category" : "droppedControllable",
       "deviceType" : "bath-heater"
+    },
+    "mibx5.washer.f27vn" : {
+      "category" : "droppedControllable",
+      "deviceType" : "washer"
     },
     "mrbond.airer.m1super" : {
       "category" : "droppedControllable",

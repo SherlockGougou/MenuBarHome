@@ -707,18 +707,24 @@ public struct CoverSpec: Equatable, Sendable {
     }
 }
 
-/// The two no-argument actions the shared appliance card can run. The aliases are the MIoT action
-/// short names each action may use across appliance families (#300).
+/// The no-argument actions the shared appliance card can run. The aliases are the MIoT action short
+/// names each action may use across appliance families (#300). Laundry names its start after the
+/// cycle it begins and its stop after the cycle it ends, so `start-wash`, `start-drying`,
+/// `stop-washing` and `stop-dry` count as those actions (#3). A stop addresses the cycle, not the
+/// power switch, so it stays out of the high-risk start list.
 public enum ApplianceActionKind: String, Equatable, Sendable, CaseIterable {
     case start
     case pause
+    case stop
 
     public var aliases: Set<String> {
         switch self {
         case .start:
-            return ["start", "start-heating", "开始"]
+            return ["start", "start-heating", "start-wash", "start-dry", "start-drying", "开始"]
         case .pause:
             return ["pause", "暂停"]
+        case .stop:
+            return ["stop", "stop-washing", "stop-dry", "stop-drying", "停止"]
         }
     }
 
@@ -726,6 +732,7 @@ public enum ApplianceActionKind: String, Equatable, Sendable, CaseIterable {
         switch self {
         case .start: return L10n.tr("开始", "Start")
         case .pause: return L10n.tr("暂停", "Pause")
+        case .stop: return L10n.tr("停止", "Stop")
         }
     }
 
@@ -745,6 +752,146 @@ public struct ApplianceAction: Equatable, Sendable {
     }
 
     public var title: String { kind.title }
+}
+
+/// One MIoT `status` or `run-status` word, classified by its letters only. Vendors spell the same
+/// phase differently (`Rinsing` / `Rinsh`) and translate the same word differently per family, so
+/// case, spaces, punctuation and digits are dropped before lookup, the way `CoverStatusWord` reads
+/// a motor's travel words (#3).
+public enum ApplianceActivity: Equatable, Sendable {
+    case standby
+    case scheduled
+    case weighing
+    case prewash
+    case washing
+    case rinsing
+    case spinning
+    case soaking
+    case draining
+    case drying
+    case caring
+    case sterilizing
+    case preserving
+    case running
+    case paused
+    case completed
+    case aborting
+    case fault
+
+    public init?(_ description: String?) {
+        let trimmed = description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        switch trimmed {
+        case "待机", "空闲", "关机": self = .standby; return
+        case "预约中": self = .scheduled; return
+        case "称重中": self = .weighing; return
+        case "预洗中": self = .prewash; return
+        case "洗涤中", "洗护中": self = .washing; return
+        case "漂洗中", "漂洗": self = .rinsing; return
+        case "脱水中", "脱水": self = .spinning; return
+        case "排水中", "排水": self = .draining; return
+        case "浸泡中": self = .soaking; return
+        case "烘干中": self = .drying; return
+        case "护衣中": self = .caring; return
+        case "除菌中": self = .sterilizing; return
+        case "保管中": self = .preserving; return
+        case "运行中", "工作中": self = .running; return
+        case "已暂停", "暂停中": self = .paused; return
+        case "已完成", "完成": self = .completed; return
+        case "中止中": self = .aborting; return
+        case "故障", "报警": self = .fault; return
+        default: break
+        }
+        let letters = trimmed.lowercased().filter { $0.isASCII && $0.isLetter }
+        guard !letters.isEmpty else { return nil }
+        // A terminal word wins over the phase it names: `Washing Completed` is not washing.
+        if letters.contains("paus") {
+            self = .paused
+        } else if letters.contains("fault") || letters.contains("error") {
+            // `No Faults` is the healthy code several specs publish, not a fault state.
+            guard !letters.contains("nofault") else { return nil }
+            self = .fault
+        } else if letters.contains("abort") || letters.contains("cancel") {
+            self = .aborting
+        } else if letters.contains("complete") || letters.contains("finish") || letters == "done" {
+            self = .completed
+        } else if letters.contains("preserv") {
+            // Before the scheduled words: `Preservation` also contains `reserv`.
+            self = .preserving
+        } else if letters.contains("reserv") || letters.contains("delay")
+                    || letters.contains("appoint") || letters.contains("schedul") {
+            self = .scheduled
+        } else if ["idle", "inactive", "off", "notrun", "ready", "standby", "shutdown", "standbymode"].contains(letters) {
+            self = .standby
+        } else if letters.contains("anticrease") || letters.contains("blow")
+                    || letters.contains("shake") || letters.contains("care") {
+            self = .caring
+        } else if letters.contains("prewash") {
+            self = .prewash
+        } else if letters.contains("rins") {
+            // `Rinse`, `Rinsing`, and the released spelling `Rinsh`.
+            self = .rinsing
+        } else if letters.contains("drain") {
+            self = .draining
+        } else if letters.contains("spin") {
+            self = .spinning
+        } else if letters.contains("steril") {
+            self = .sterilizing
+        } else if letters.contains("weigh") {
+            self = .weighing
+        } else if letters.contains("dry") {
+            self = .drying
+        } else if letters.contains("soak") {
+            self = .soaking
+        } else if letters.contains("wash") {
+            self = .washing
+        } else if ["busy", "running", "working", "on", "run"].contains(letters) {
+            self = .running
+        } else {
+            return nil
+        }
+    }
+
+    public var localizedLabel: String {
+        switch self {
+        case .standby: L10n.tr("待机", "Standby")
+        case .scheduled: L10n.tr("预约中", "Scheduled")
+        case .weighing: L10n.tr("称重中", "Weighing")
+        case .prewash: L10n.tr("预洗中", "Prewashing")
+        case .washing: L10n.tr("洗涤中", "Washing")
+        case .rinsing: L10n.tr("漂洗中", "Rinsing")
+        case .spinning: L10n.tr("脱水中", "Spinning")
+        case .draining: L10n.tr("排水中", "Draining")
+        case .soaking: L10n.tr("浸泡中", "Soaking")
+        case .drying: L10n.tr("烘干中", "Drying")
+        case .caring: L10n.tr("护衣中", "Clothing Care")
+        case .sterilizing: L10n.tr("除菌中", "Sterilizing")
+        case .preserving: L10n.tr("保管中", "Keeping Fresh")
+        case .running: L10n.tr("运行中", "Running")
+        case .paused: L10n.tr("已暂停", "Paused")
+        case .completed: L10n.tr("已完成", "Completed")
+        case .aborting: L10n.tr("正在中止", "Aborting")
+        case .fault: L10n.tr("故障", "Fault")
+        }
+    }
+
+    /// A wash phase, more specific than the device's coarse `status`.
+    public var isStage: Bool {
+        switch self {
+        case .weighing, .prewash, .washing, .rinsing, .spinning, .draining, .soaking, .drying, .caring,
+             .sterilizing: true
+        default: false
+        }
+    }
+
+    /// A word that keeps its meaning while the run stage still names the phase it ended. Preserving
+    /// is the post-cycle hold a dishwasher reports after drying, and a fault interrupts the stage
+    /// it names, so both beat a lingering stage.
+    public var isTerminal: Bool {
+        switch self {
+        case .standby, .scheduled, .paused, .completed, .aborting, .preserving, .fault: true
+        default: false
+        }
+    }
 }
 
 /// A hood's or bath heater's light service, merged into the appliance card as a secondary switch.
@@ -797,6 +944,8 @@ public struct ApplianceSpec: Equatable, Sendable {
     public var remainingMinutes: Int?
     public var startAction: ApplianceAction?
     public var pauseAction: ApplianceAction?
+    public var stopAction: ApplianceAction?
+
     /// Address of the service holding the on/off property. A companion service may own it while
     /// `entityId` stays the main function's service.
     public var powerEntityId: String
@@ -841,6 +990,8 @@ public struct ApplianceSpec: Equatable, Sendable {
         symbolName: String? = nil,
         roomReading: Bool = false,
         heats: Bool = false
+,
+        stopAction: ApplianceAction? = nil
     ) {
         self.entityId = entityId
         self.isOn = isOn
@@ -860,6 +1011,8 @@ public struct ApplianceSpec: Equatable, Sendable {
         self.remainingMinutes = remainingMinutes
         self.startAction = startAction
         self.pauseAction = pauseAction
+        self.stopAction = stopAction
+
         self.powerEntityId = powerEntityId ?? entityId
         self.modeEntityId = modeEntityId ?? entityId
         self.temperatureEntityId = temperatureEntityId ?? entityId
@@ -954,7 +1107,7 @@ public enum DeviceKind: Equatable, Sendable {
         case .appliance(let spec):
             return spec.powerWritable || spec.modeWritable || spec.temperatureWritable
                 || spec.fanLevel?.writable == true || spec.light?.writable == true
-                || spec.startAction != nil || spec.pauseAction != nil
+                || spec.startAction != nil || spec.pauseAction != nil || spec.stopAction != nil
         }
     }
 }
@@ -1025,7 +1178,7 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
         case .appliance(let s):
             [s.entityId, s.powerEntityId, s.modeEntityId, s.temperatureEntityId,
              s.light?.entityId, s.fanLevel?.entityId,
-             s.startAction?.entityId, s.pauseAction?.entityId]
+             s.startAction?.entityId, s.pauseAction?.entityId, s.stopAction?.entityId]
         }
         return entityIds.compactMap { id in
             guard let id else { return nil }
@@ -1139,7 +1292,7 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
                 || spec.light?.writable == true || spec.fanLevel?.writable == true
                 || spec.currentHumidity != nil
                 || spec.statusText != nil || spec.faultText != nil || spec.remainingMinutes != nil
-                || spec.startAction != nil || spec.pauseAction != nil
+                || spec.startAction != nil || spec.pauseAction != nil || spec.stopAction != nil
         }
     }
 
