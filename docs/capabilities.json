@@ -101,8 +101,8 @@
     },
     {
       "id": "raycast-cli",
-      "en": "Raycast Extension & Local CLI",
-      "zh": "Raycast 扩展与本地 CLI",
+      "en": "Raycast Extension, Local CLI & MCP Server",
+      "zh": "Raycast 扩展、本地 CLI 与 MCP 服务",
       "macos": "supported",
       "windows": "unsupported"
     },
