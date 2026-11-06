@@ -112,6 +112,55 @@ struct GenericDeviceCardTests {
         }
     }
 
+    /// #13 (GH#319): a custom room whose only devices are a router and a NAS disappeared, because
+    /// neither model had a dedicated builder and the room list comes from synthesized cards.
+    @Test("A room holding only a router and a NAS keeps both generic cards (#13)")
+    func routerAndNASKeepTheirRoom() throws {
+        let routerModel = "isa.router.mr01hl"
+        let nasModel = "xiaomi.station.rp05"
+        let specs = [
+            routerModel: try coverageSpec(routerModel),
+            nasModel: try coverageSpec(nasModel),
+        ]
+        let records = [record("router", model: routerModel), record("nas", model: nasModel)]
+        // The NAS publishes only `indicator-light.on`; switching it on must not become device power.
+        let nasLight = MiotPropKey(did: "nas", siid: 5, piid: 1)
+        let home = MiotSynthesizer.synthesize(
+            devices: records,
+            rooms: [MiRoom(id: "room-studio", name: "工作室", dids: ["router", "nas"])],
+            specs: specs,
+            values: [nasLight: .bool(true)]
+        )
+
+        #expect(Set(home.devices.map(\.id)) == ["router", "nas"])
+        #expect(home.devices.allSatisfy { device in
+            if case .generic = device.kind { return true }
+            return false
+        })
+        #expect(Set(home.devices.map(\.roomName)) == ["工作室"])
+        #expect(home.rooms.contains { $0.name == "工作室" })
+        #expect(UnsupportedDeviceCollector.miCloud(devices: records, specs: specs, synthesized: home).isEmpty)
+
+        let router = try #require(home.devices.first { $0.id == "router" })
+        guard case .generic(let routerCard) = router.kind else {
+            Issue.record("expected a generic router card, got \(router.kind)")
+            return
+        }
+        #expect(routerCard.powerControl == nil)
+        let routerWrites = (home.deviceFacets["router"] ?? []).filter(\.isWritable)
+        #expect(!routerWrites.isEmpty, "the router exposes writable network settings")
+        #expect(routerWrites.allSatisfy { !$0.writesByDefault }, "every router write stays closed by default")
+
+        let nas = try #require(home.devices.first { $0.id == "nas" })
+        guard case .generic(let nasCard) = nas.kind else {
+            Issue.record("expected a generic NAS card, got \(nas.kind)")
+            return
+        }
+        #expect(nasCard.powerControl == nil, "the indicator light is not the NAS main switch")
+        #expect(!nasCard.isOn)
+        #expect(!nas.isPrimaryToggleable)
+    }
+
     @Test("Generic cards poll every readable facet")
     func pollsGenericFacetValues() throws {
         let model = "209754.fishbowl.tank01"
