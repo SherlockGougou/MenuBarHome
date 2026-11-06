@@ -167,10 +167,10 @@ extension HomeStore {
             }
         }
 
-        guard let ticket = self.claimReadBack(device.id) else { return nil }
+        guard let ticket = self.readBackTickets.claim(device.id) else { return nil }
 
         return Task {
-            defer { self.finishReadBack(device.id, ticket: ticket) }
+            defer { self.readBackTickets.finish(device.id, ticket: ticket) }
             guard self.controlContextID == context else { return false }
             do {
                 try await self.executeDeviceCommand(cmd)
@@ -206,40 +206,6 @@ extension HomeStore {
         case matched
         case unmatched
         case superseded
-    }
-
-    private func claimReadBack(_ deviceId: String) -> UInt64? {
-        guard readBackOwner[deviceId] == nil else { return nil }
-        nextReadBackTicket &+= 1
-        let ticket = nextReadBackTicket
-        readBackOwner[deviceId] = ticket
-        latestReadBackTicket[deviceId] = ticket
-        readBackInFlightTicket[deviceId] = ticket
-        waitingDeviceIds.insert(deviceId)
-        return ticket
-    }
-
-    /// Releases the tap and the waiting label before the echo retry, while the read-back stays
-    /// in flight so its snapshots still bypass an older optimistic lock.
-    private func releaseReadBackOwner(_ deviceId: String, ticket: UInt64) {
-        guard readBackOwner[deviceId] == ticket else { return }
-        readBackOwner[deviceId] = nil
-        waitingDeviceIds.remove(deviceId)
-    }
-
-    private func finishReadBack(_ deviceId: String, ticket: UInt64) {
-        if readBackOwner[deviceId] == ticket {
-            readBackOwner[deviceId] = nil
-            waitingDeviceIds.remove(deviceId)
-        }
-        // The echo release may already have cleared the owner; only the latest task clears
-        // the lock exemption, so a newer toggle keeps it alive.
-        if readBackInFlightTicket[deviceId] == ticket {
-            readBackInFlightTicket[deviceId] = nil
-        }
-        if latestReadBackTicket[deviceId] == ticket {
-            latestReadBackTicket[deviceId] = nil
-        }
     }
 
     /// Applies a provider snapshot when one was published. Providers with no property read
@@ -282,7 +248,7 @@ extension HomeStore {
         case .published:
             guard snapshotGeneration != before else { return .unmatched }
             if powerMatches(deviceId, requested: requested) { return .matched }
-            releaseReadBackOwner(deviceId, ticket: ticket)
+            readBackTickets.releaseTap(deviceId, ticket: ticket)
             let again = snapshotGeneration
             if holdReadBackEcho {
                 isHoldingReadBackEcho = true
@@ -292,13 +258,13 @@ extension HomeStore {
             } else {
                 try? await Task.sleep(for: readBackEchoDelay)
             }
-            if latestReadBackTicket[deviceId] != ticket { return .superseded }
+            if !readBackTickets.isLatest(deviceId, ticket: ticket) { return .superseded }
             let second = await provider.readBack(deviceId: deviceId)
-            if latestReadBackTicket[deviceId] != ticket { return .superseded }
+            if !readBackTickets.isLatest(deviceId, ticket: ticket) { return .superseded }
             if case .failed = second { return .unmatched }
             await settleSnapshot(after: again)
             // A newer toggle may have started and even finished during the second read.
-            if latestReadBackTicket[deviceId] != ticket { return .superseded }
+            if !readBackTickets.isLatest(deviceId, ticket: ticket) { return .superseded }
             return powerMatches(deviceId, requested: requested) ? .matched : .unmatched
         }
     }
@@ -330,128 +296,99 @@ extension HomeStore {
     // MARK: - Detail Drawer Controls (Debounced & Optimistic)
 
     public func setLightBrightness(_ deviceId: String, percent: Int) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .light(var s) = devices[idx].kind else { return }
-        let previous = devices[idx]
+        guard let previous = controllableDevice(deviceId), case .light(var s) = previous.kind else { return }
+        var updated = previous
         s.isOn = percent > 0
         s.brightnessPercent = percent
-        devices[idx].kind = .light(s)
+        updated.kind = .light(s)
         if s.isOn { recordManualLightUse(deviceId) }
-        lockOptimistic(deviceId, duration: .seconds(2.5))
-
-        dispatchDebounced(
-            key: "\(deviceId).brightness",
-            deviceId: deviceId,
-            fallback: previous,
+        commitManualWrite(
+            from: previous, to: updated,
             command: .setLightBrightness(entityId: s.entityId, percent: percent),
+            lock: .seconds(2.5), debounceKey: "\(deviceId).brightness",
             habitIntents: [.init(targetId: deviceId, operation: .brightness(percent))]
         )
     }
 
     public func setLightColorTemp(_ deviceId: String, kelvin: Int) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .light(var s) = devices[idx].kind else { return }
-        let previous = devices[idx]
+        guard let previous = controllableDevice(deviceId), case .light(var s) = previous.kind else { return }
+        var updated = previous
         s.isOn = true
         s.colorTempKelvin = kelvin
         s.currentEffect = nil
-        devices[idx].kind = .light(s)
+        updated.kind = .light(s)
         recordManualLightUse(deviceId)
-        lockOptimistic(deviceId, duration: .seconds(2.5))
-
-        dispatchDebounced(
-            key: "\(deviceId).colortemp",
-            deviceId: deviceId,
-            fallback: previous,
+        commitManualWrite(
+            from: previous, to: updated,
             command: .setLightColorTemp(entityId: s.entityId, kelvin: kelvin),
+            lock: .seconds(2.5), debounceKey: "\(deviceId).colortemp",
             habitIntents: [.init(targetId: deviceId, operation: .colorTemperature(kelvin))]
         )
     }
 
     public func setLightEffect(_ deviceId: String, effect: String) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .light(var s) = devices[idx].kind else { return }
-        let previous = devices[idx]
+        guard let previous = controllableDevice(deviceId), case .light(var s) = previous.kind else { return }
+        var updated = previous
         s.isOn = true
         s.currentEffect = effect
-        devices[idx].kind = .light(s)
-        lockOptimistic(deviceId, duration: .seconds(2.2))
-
+        updated.kind = .light(s)
         recordManualLightUse(deviceId)
-
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
+        commitManualWrite(
+            from: previous, to: updated,
             command: .setLightEffect(entityId: s.entityId, effect: effect),
+            lock: .seconds(2.2),
             habitIntents: [.init(targetId: deviceId, operation: .lightEffect(effect))]
         )
     }
 
     public func stepClimateTemperature(_ deviceId: String, delta: Double) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .climate(var s) = devices[idx].kind else { return }
-        let previous = devices[idx]
+        guard let previous = controllableDevice(deviceId), case .climate(var s) = previous.kind else { return }
         let nextTemp = max(s.minTemp, min(s.maxTemp, s.targetTemperature + delta))
         guard allowManualControl(.targetTemperature(nextTemp), for: previous) else { return }
+        var updated = previous
         s.targetTemperature = nextTemp
-        devices[idx].kind = .climate(s)
-        lockOptimistic(deviceId, duration: .seconds(2.5))
-
-        dispatchDebounced(
-            key: "\(deviceId).temp",
-            deviceId: deviceId,
-            fallback: previous,
+        updated.kind = .climate(s)
+        commitManualWrite(
+            from: previous, to: updated,
             command: .setClimateTemperature(entityId: s.entityId, temperature: nextTemp),
+            lock: .seconds(2.5), debounceKey: "\(deviceId).temp",
             habitIntents: [.init(targetId: deviceId, operation: .targetTemperature(nextTemp))]
         )
     }
 
     public func setClimateMode(_ deviceId: String, mode: String) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .climate(var s) = devices[idx].kind else { return }
-        let previous = devices[idx]
+        guard let previous = controllableDevice(deviceId), case .climate(var s) = previous.kind else { return }
         guard allowManualControl(.hvacMode(mode), for: previous) else { return }
+        var updated = previous
         s.hvacMode = mode
         s.isOn = (mode != "off")
-        devices[idx].kind = .climate(s)
-        lockOptimistic(deviceId, duration: .seconds(2.2))
-
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
+        updated.kind = .climate(s)
+        commitManualWrite(
+            from: previous, to: updated,
             command: .setClimateMode(entityId: s.entityId, hvacMode: mode),
+            lock: .seconds(2.2),
             habitIntents: [.init(targetId: deviceId, operation: .hvacMode(mode))]
         )
     }
 
+    /// Appliance writes record no habit: appliances are not assistant-controllable yet, so a
+    /// learned appliance habit would surface a suggestion that cannot run (#300).
     public func setApplianceMode(_ deviceId: String, mode: String) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .appliance(var s) = devices[idx].kind,
+        guard let previous = controllableDevice(deviceId), case .appliance(var s) = previous.kind,
               s.modeWritable, s.availableModes.contains(mode) else { return }
-        let previous = devices[idx]
+        var updated = previous
         s.currentMode = mode
-        devices[idx].kind = .appliance(s)
-        lockOptimistic(deviceId, duration: .seconds(2.2))
-
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
-            command: .setSelectOption(entityId: s.entityId, option: mode)
+        updated.kind = .appliance(s)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setSelectOption(entityId: s.entityId, option: mode),
+            lock: .seconds(2.2)
         )
     }
 
     public func stepApplianceTemperature(_ deviceId: String, delta: Double) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .appliance(var s) = devices[idx].kind,
+        guard let previous = controllableDevice(deviceId), case .appliance(var s) = previous.kind,
               s.temperatureWritable, let target = s.targetTemperature else { return }
-        let previous = devices[idx]
         let step = s.step > 0 ? s.step : 1
         let raw = max(s.minTemp, min(s.maxTemp, target + delta))
         // A Fahrenheit tap is 5/9 °C, smaller than a coarse step. Round to the nearest step so a
@@ -463,114 +400,96 @@ extension HomeStore {
         let stepped = s.minTemp + units * step
         let nextTemp = max(s.minTemp, min(s.maxTemp, stepped))
         guard nextTemp != target, allowManualControl(.targetTemperature(nextTemp), for: previous) else { return }
+        var updated = previous
         s.targetTemperature = nextTemp
-        devices[idx].kind = .appliance(s)
-        lockOptimistic(deviceId, duration: .seconds(2.5))
-
-        dispatchDebounced(
-            key: "\(deviceId).appliance-temp",
-            deviceId: deviceId,
-            fallback: previous,
-            command: .setClimateTemperature(entityId: s.entityId, temperature: nextTemp)
+        updated.kind = .appliance(s)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setClimateTemperature(entityId: s.entityId, temperature: nextTemp),
+            lock: .seconds(2.5), debounceKey: "\(deviceId).appliance-temp"
         )
     }
 
     public func runApplianceAction(_ deviceId: String, action: ApplianceAction) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .appliance(let s) = devices[idx].kind,
+        guard let previous = controllableDevice(deviceId), case .appliance(let s) = previous.kind,
               s.startAction == action || s.pauseAction == action else { return }
-        let previous = devices[idx]
         let operation: IntentOperation = action.kind == .start ? .power(true) : .power(false)
         guard allowManualControl(operation, for: previous) else { return }
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
-            command: .pressButton(entityId: action.entityId)
-        )
+        // The program state is reported by the device; nothing is shown ahead of it.
+        commitManualWrite(from: previous, to: nil, command: .pressButton(entityId: action.entityId), lock: nil)
     }
 
     public func setClimateFanMode(_ deviceId: String, fanMode: String) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .climate(var s) = devices[idx].kind else { return }
-        let previous = devices[idx]
+        guard let previous = controllableDevice(deviceId), case .climate(var s) = previous.kind else { return }
         guard allowManualControl(.fanSpeed(fanMode), for: previous) else { return }
+        var updated = previous
         s.fanMode = fanMode
-        devices[idx].kind = .climate(s)
-        lockOptimistic(deviceId, duration: .seconds(2.2))
-
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
+        updated.kind = .climate(s)
+        commitManualWrite(
+            from: previous, to: updated,
             command: .setClimateFanMode(entityId: s.entityId, fanMode: fanMode),
+            lock: .seconds(2.2),
             habitIntents: [.init(targetId: deviceId, operation: .fanSpeed(fanMode))]
         )
     }
 
     public func setClimateSwingMode(_ deviceId: String, swingMode: String) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .climate(var s) = devices[idx].kind else { return }
-        let previous = devices[idx]
+        guard let previous = controllableDevice(deviceId), case .climate(var s) = previous.kind else { return }
         guard allowManualControl(.oscillation(swingMode.caseInsensitiveCompare("off") != .orderedSame), for: previous) else { return }
+        var updated = previous
         s.swingMode = swingMode
-        devices[idx].kind = .climate(s)
-        lockOptimistic(deviceId, duration: .seconds(2.2))
-
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
-            command: .setClimateSwingMode(entityId: s.entityId, swingMode: swingMode)
+        updated.kind = .climate(s)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setClimateSwingMode(entityId: s.entityId, swingMode: swingMode),
+            lock: .seconds(2.2)
         )
     }
 
     public func setFanPercentage(_ deviceId: String, percent: Int) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .fan(var s) = devices[idx].kind else { return }
-        let previous = devices[idx]
+        guard let previous = controllableDevice(deviceId), case .fan = previous.kind,
+              let change = Self.fanPercentageChange(previous, percent: percent) else { return }
+        commitManualWrite(
+            from: previous, to: change.updated,
+            command: change.command,
+            lock: .seconds(2.5), debounceKey: "\(deviceId).fanpercent",
+            habitIntents: change.favoritePreset.map { [DeviceIntent(targetId: deviceId, operation: .fanSpeed($0))] } ?? []
+        )
+    }
+
+    /// A fan speed in percent: powers on and switches to the Favorite preset when the fan has one,
+    /// because purifiers only honour a manual speed in that mode. Shared by the card and Raycast.
+    nonisolated static func fanPercentageChange(
+        _ device: SmartDevice,
+        percent: Int
+    ) -> (updated: SmartDevice, command: DeviceCommand, favoritePreset: String?)? {
+        guard case .fan(var s) = device.kind else { return nil }
         let clamped = max(1, min(100, percent))
+        let favorite = s.availablePresetModes.first(where: { $0.caseInsensitiveCompare("Favorite") == .orderedSame })
         s.isOn = true
         s.percentage = clamped
-        if let favMode = s.availablePresetModes.first(where: { $0.caseInsensitiveCompare("Favorite") == .orderedSame }) {
-            s.presetMode = favMode
-        }
-        devices[idx].kind = .fan(s)
-        lockOptimistic(deviceId, duration: .seconds(2.5))
-
-        dispatchDebounced(
-            key: "\(deviceId).fanpercent",
-            deviceId: deviceId,
-            fallback: previous,
-            command: .setFanPercentage(entityId: s.entityId, percent: clamped),
-            habitIntents: s.availablePresetModes.first(where: { $0.caseInsensitiveCompare("Favorite") == .orderedSame })
-                .map { [DeviceIntent(targetId: deviceId, operation: .fanSpeed($0))] } ?? []
-        )
+        if let favorite { s.presetMode = favorite }
+        var updated = device
+        updated.kind = .fan(s)
+        return (updated, .setFanPercentage(entityId: s.entityId, percent: clamped), favorite)
     }
 
     public func setFanPresetMode(_ deviceId: String, preset: String) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .fan(var s) = devices[idx].kind else { return }
-        let previous = devices[idx]
+        guard let previous = controllableDevice(deviceId), case .fan(var s) = previous.kind else { return }
+        var updated = previous
         s.isOn = true
         s.presetMode = preset
-        devices[idx].kind = .fan(s)
-        lockOptimistic(deviceId, duration: .seconds(2.2))
-
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
+        updated.kind = .fan(s)
+        commitManualWrite(
+            from: previous, to: updated,
             command: .setFanPresetMode(entityId: s.entityId, presetMode: preset),
+            lock: .seconds(2.2),
             habitIntents: [.init(targetId: deviceId, operation: .fanSpeed(preset))]
         )
     }
+
     public func setCoverMotor(_ deviceId: String, description: String) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .cover(var s) = devices[idx].kind else { return }
-        let previous = devices[idx]
+        guard let previous = controllableDevice(deviceId), case .cover(var s) = previous.kind else { return }
         let opening = s.openDescription.map { description.caseInsensitiveCompare($0) == .orderedSame } ?? false
         let closing = s.closeDescription.map { description.caseInsensitiveCompare($0) == .orderedSame } ?? false
         let pausing = s.pauseDescription.map { description.caseInsensitiveCompare($0) == .orderedSame } ?? false
@@ -595,21 +514,19 @@ extension HomeStore {
             s.motion = .stopped
             s.motionIsInferred = false
         }
-        devices[idx].kind = .cover(s)
-        if opening || closing || pausing { lockOptimistic(deviceId, duration: .seconds(8)) }
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
-            command: .setSelectOption(entityId: s.entityId, option: description)
+        var updated = previous
+        updated.kind = .cover(s)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setSelectOption(entityId: s.entityId, option: description),
+            lock: (opening || closing || pausing) ? .seconds(8) : nil
         )
     }
 
     /// A drag is the confirmation. One-tap open still asks via `setCoverMotor` / `togglePrimary`.
     public func setCoverPosition(_ deviceId: String, percent: Int) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .cover(var s) = devices[idx].kind, s.positionWritable else { return }
-        let previous = devices[idx]
+        guard let previous = controllableDevice(deviceId), case .cover(var s) = previous.kind,
+              s.positionWritable else { return }
         let clamped = max(0, min(100, percent))
         let displayed = CoverSpec.snappedPosition(clamped)
         let previousPosition = s.positionPercent ?? displayed
@@ -622,18 +539,17 @@ extension HomeStore {
             s.motion = .closing
             s.motionIsInferred = false
         }
-        devices[idx].kind = .cover(s)
+        var updated = previous
+        updated.kind = .cover(s)
         if s.isMoving {
             coverCommandOrigins[deviceId] = origin
-            lockOptimistic(deviceId, duration: .seconds(8))
         } else {
             coverCommandOrigins.removeValue(forKey: deviceId)
         }
-        dispatchDebounced(
-            key: "\(deviceId).cover",
-            deviceId: deviceId,
-            fallback: previous,
-            command: .setNumberValue(entityId: s.entityId, value: Double(clamped))
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setNumberValue(entityId: s.entityId, value: Double(clamped)),
+            lock: s.isMoving ? .seconds(8) : nil, debounceKey: "\(deviceId).cover"
         )
     }
 
@@ -646,192 +562,155 @@ extension HomeStore {
         return fallback
     }
 
-
     public func setPlugChildLock(_ deviceId: String, locked: Bool) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .plug(var s) = devices[idx].kind,
+        guard let previous = controllableDevice(deviceId), case .plug(var s) = previous.kind,
               let lockEid = s.childLockEntityId else { return }
-        let previous = devices[idx]
+        var updated = previous
         s.isChildLocked = locked
-        devices[idx].kind = .plug(s)
-        lockOptimistic(deviceId, duration: .seconds(2.0))
-
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
-            command: .setSwitch(entityId: lockEid, isOn: locked)
+        updated.kind = .plug(s)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setSwitch(entityId: lockEid, isOn: locked),
+            lock: .seconds(2.0)
         )
     }
 
     public func setFridgeMode(_ deviceId: String, mode: String) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .fridge(var s) = devices[idx].kind,
+        guard let previous = controllableDevice(deviceId), case .fridge(var s) = previous.kind,
               let modeEid = s.modeEntityId else { return }
-        let previous = devices[idx]
+        var updated = previous
         s.currentMode = mode
-        devices[idx].kind = .fridge(s)
-        lockOptimistic(deviceId, duration: .seconds(2.0))
-
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
-            command: .setSelectOption(entityId: modeEid, option: mode)
+        updated.kind = .fridge(s)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setSelectOption(entityId: modeEid, option: mode),
+            lock: .seconds(2.0)
         )
     }
 
     public func stepFridgeTargetTemp(_ deviceId: String, isFreezer: Bool, delta: Double) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .fridge(var s) = devices[idx].kind else { return }
-        let previous = devices[idx]
-
+        guard let previous = controllableDevice(deviceId), case .fridge(var s) = previous.kind else { return }
+        let entityId: String
+        let next: Double
         if isFreezer {
             guard let eid = s.freezerTargetEntityId else { return }
-            let next = max(-24, min(-15, s.freezerTargetTemp + delta))
+            entityId = eid
+            next = max(-24, min(-15, s.freezerTargetTemp + delta))
             s.freezerTargetTemp = next
-            devices[idx].kind = .fridge(s)
-            lockOptimistic(deviceId, duration: .seconds(2.5))
-            dispatchDebounced(
-                key: "\(deviceId).freezer",
-                deviceId: deviceId,
-                fallback: previous,
-                command: .setNumberValue(entityId: eid, value: next)
-            )
         } else {
             guard let eid = s.fridgeTargetEntityId else { return }
-            let next = max(2, min(8, s.fridgeTargetTemp + delta))
+            entityId = eid
+            next = max(2, min(8, s.fridgeTargetTemp + delta))
             s.fridgeTargetTemp = next
-            devices[idx].kind = .fridge(s)
-            lockOptimistic(deviceId, duration: .seconds(2.5))
-            dispatchDebounced(
-                key: "\(deviceId).fridge",
-                deviceId: deviceId,
-                fallback: previous,
-                command: .setNumberValue(entityId: eid, value: next)
-            )
         }
+        var updated = previous
+        updated.kind = .fridge(s)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setNumberValue(entityId: entityId, value: next),
+            lock: .seconds(2.5), debounceKey: "\(deviceId).\(isFreezer ? "freezer" : "fridge")"
+        )
     }
 
     public func performVacuumAction(_ deviceId: String, action: VacuumAction) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .vacuum(var s) = devices[idx].kind else { return }
-        let previous = devices[idx]
-        guard allowManualControl(action == .start ? .power(true) : .power(false), for: previous) else { return }
+        guard let previous = controllableDevice(deviceId), case .vacuum = previous.kind else { return }
+        guard allowManualControl(action == .start ? .power(true) : .power(false), for: previous),
+              let change = Self.vacuumActionChange(previous, action: action) else { return }
+        commitManualWrite(from: previous, to: change.updated, command: change.command, lock: .seconds(2.5))
+    }
+
+    /// The status a vacuum shows while `action` runs. Shared by the card and Raycast.
+    nonisolated static func vacuumActionChange(
+        _ device: SmartDevice,
+        action: VacuumAction
+    ) -> (updated: SmartDevice, command: DeviceCommand)? {
+        guard case .vacuum(var s) = device.kind else { return nil }
         switch action {
         case .start: s.status = "cleaning"
         case .pause: s.status = "paused"
         case .returnToBase: s.status = "returning"
         }
-        devices[idx].kind = .vacuum(s)
-        lockOptimistic(deviceId, duration: .seconds(2.5))
-
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
-            command: .vacuumAction(entityId: s.entityId, action: action)
-        )
+        var updated = device
+        updated.kind = .vacuum(s)
+        return (updated, .vacuumAction(entityId: s.entityId, action: action))
     }
 
     public func setSpeakerVolume(_ deviceId: String, percent: Int) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }) else { return }
-        let previous = devices[idx]
+        guard let previous = controllableDevice(deviceId) else { return }
         let clamped = max(0, min(100, percent))
-
+        var updated = previous
         let mediaEid: String
-        switch devices[idx].kind {
+        switch previous.kind {
         case .speaker(var s):
             s.volumePercent = clamped
-            devices[idx].kind = .speaker(s)
+            updated.kind = .speaker(s)
             mediaEid = s.mediaEntityId
         case .tv(var s):
             s.volumePercent = clamped
-            devices[idx].kind = .tv(s)
+            updated.kind = .tv(s)
             mediaEid = s.mediaEntityId
         default:
             return
         }
-
-        lockOptimistic(deviceId, duration: .seconds(2.5))
-        dispatchDebounced(
-            key: "\(deviceId).volume",
-            deviceId: deviceId,
-            fallback: previous,
-            command: .mediaSetVolume(entityId: mediaEid, volumeLevel: Double(clamped) / 100.0)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .mediaSetVolume(entityId: mediaEid, volumeLevel: Double(clamped) / 100.0),
+            lock: .seconds(2.5), debounceKey: "\(deviceId).volume"
         )
     }
 
     public func toggleSpeakerMute(_ deviceId: String) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .speaker(var s) = devices[idx].kind,
+        guard let previous = controllableDevice(deviceId), case .speaker(var s) = previous.kind,
               let muteEid = s.muteSwitchEntityId else { return }
-        let previous = devices[idx]
+        var updated = previous
         s.isMuted.toggle()
-        devices[idx].kind = .speaker(s)
-        lockOptimistic(deviceId, duration: .seconds(2.0))
-
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
-            command: .setSwitch(entityId: muteEid, isOn: s.isMuted)
+        updated.kind = .speaker(s)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setSwitch(entityId: muteEid, isOn: s.isMuted),
+            lock: .seconds(2.0)
         )
     }
 
     public func toggleTVMute(_ deviceId: String) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .tv(var s) = devices[idx].kind else { return }
-        let previous = devices[idx]
+        guard let previous = controllableDevice(deviceId), case .tv(var s) = previous.kind else { return }
+        var updated = previous
         s.isMuted.toggle()
-        devices[idx].kind = .tv(s)
-        lockOptimistic(deviceId, duration: .seconds(2.0))
-
+        updated.kind = .tv(s)
         let entityId = LGWebOSProtocol.isLGEntity(s.mediaEntityId) ? LGWebOSProtocol.muteEntityId : s.mediaEntityId
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
-            command: .setSwitch(entityId: entityId, isOn: s.isMuted)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setSwitch(entityId: entityId, isOn: s.isMuted),
+            lock: .seconds(2.0)
         )
     }
 
     public func toggleTVScreenOff(_ deviceId: String) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .tv(var s) = devices[idx].kind else { return }
-        let previous = devices[idx]
+        guard let previous = controllableDevice(deviceId), case .tv(var s) = previous.kind else { return }
+        var updated = previous
         s.isScreenOff.toggle()
         if !s.isScreenOff && (s.state == "off" || s.state == "standby") {
             s.state = "on"
         }
-        devices[idx].kind = .tv(s)
-        lockOptimistic(deviceId, duration: .seconds(2.2))
-
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
-            command: .setSwitch(entityId: LGWebOSProtocol.screenOffEntityId, isOn: s.isScreenOff)
+        updated.kind = .tv(s)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setSwitch(entityId: LGWebOSProtocol.screenOffEntityId, isOn: s.isScreenOff),
+            lock: .seconds(2.2)
         )
     }
 
     public func selectTVSource(_ deviceId: String, source: String) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .tv(var s) = devices[idx].kind else { return }
-        let previous = devices[idx]
+        guard let previous = controllableDevice(deviceId), case .tv(var s) = previous.kind else { return }
+        var updated = previous
         s.currentSource = source
         s.state = "on"
         s.isScreenOff = false
-        devices[idx].kind = .tv(s)
-        lockOptimistic(deviceId, duration: .seconds(2.5))
-
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
-            command: .mediaSelectSource(entityId: s.mediaEntityId, source: source)
+        updated.kind = .tv(s)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .mediaSelectSource(entityId: s.mediaEntityId, source: source),
+            lock: .seconds(2.5)
         )
     }
 
@@ -877,36 +756,28 @@ extension HomeStore {
     // MARK: - Camera Controls & Live Stream Resolution (#97)
 
     public func setCameraMotionDetection(_ deviceId: String, enabled: Bool) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .camera(var s) = devices[idx].kind,
+        guard let previous = controllableDevice(deviceId), case .camera(var s) = previous.kind,
               let motionEid = s.motionDetectionEntityId else { return }
-        let previous = devices[idx]
+        var updated = previous
         s.isMotionDetectionOn = enabled
-        devices[idx].kind = .camera(s)
-        lockOptimistic(deviceId, duration: .seconds(2.2))
-
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
-            command: .setSwitch(entityId: motionEid, isOn: enabled)
+        updated.kind = .camera(s)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setSwitch(entityId: motionEid, isOn: enabled),
+            lock: .seconds(2.2)
         )
     }
 
     public func setCameraNightShot(_ deviceId: String, mode: String) {
-        guard !rejectControlWhileLocked() else { return }
-        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
-              case .camera(var s) = devices[idx].kind,
+        guard let previous = controllableDevice(deviceId), case .camera(var s) = previous.kind,
               s.availableNightShots.contains(mode) else { return }
-        let previous = devices[idx]
+        var updated = previous
         s.nightShot = mode
-        devices[idx].kind = .camera(s)
-        lockOptimistic(deviceId, duration: .seconds(2.2))
-
-        dispatchImmediate(
-            deviceId: deviceId,
-            fallback: previous,
-            command: .setSelectOption(entityId: s.entityId, option: mode)
+        updated.kind = .camera(s)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setSelectOption(entityId: s.entityId, option: mode),
+            lock: .seconds(2.2)
         )
     }
 
@@ -983,72 +854,5 @@ extension HomeStore {
     public func stopCameraStream(for deviceId: String) async {
         guard let device = devices.first(where: { $0.id == deviceId }) else { return }
         await provider.stopCameraStream(for: device)
-    }
-
-    // MARK: - Internal Dispatch Helpers
-
-    private func showControlFailure(_ error: Error, device: SmartDevice, adjustment: Bool) {
-        guard !ControlFailure.isCancellation(error) else { return }
-        showToast(
-            ControlFailure.userMessage(
-                for: error,
-                deviceName: device.name,
-                isDeviceOnline: device.isOnline,
-                adjustment: adjustment
-            ),
-            isError: true
-        )
-    }
-
-    private func dispatchImmediate(
-        deviceId: String,
-        fallback: SmartDevice,
-        command: DeviceCommand,
-        habitIntents: [DeviceIntent] = []
-    ) {
-        let expectedRevision = optimisticLockRevision[deviceId]
-        Task {
-            do {
-                try await executeDeviceCommand(command)
-                confirmManualControl(intents: habitIntents)
-            } catch {
-                if self.optimisticLockRevision[deviceId] == expectedRevision {
-                    if let idx = self.devices.firstIndex(where: { $0.id == deviceId }) {
-                        self.devices[idx] = fallback
-                    }
-                    self.optimisticLockUntil.removeValue(forKey: deviceId)
-                    self.coverCommandOrigins.removeValue(forKey: deviceId)
-                }
-                self.showControlFailure(error, device: fallback, adjustment: false)
-            }
-        }
-    }
-
-    private func dispatchDebounced(
-        key: String,
-        deviceId: String,
-        fallback: SmartDevice,
-        command: DeviceCommand,
-        habitIntents: [DeviceIntent] = []
-    ) {
-        let expectedRevision = optimisticLockRevision[deviceId]
-        debounceTasks[key]?.cancel()
-        debounceTasks[key] = Task { [weak self] in
-            try? await Task.sleep(for: self?.controlDebounceInterval ?? .milliseconds(280))
-            guard !Task.isCancelled, let self, self.optimisticLockRevision[deviceId] == expectedRevision else { return }
-            do {
-                try await self.executeDeviceCommand(command)
-                self.confirmManualControl(intents: habitIntents)
-            } catch {
-                if self.optimisticLockRevision[deviceId] == expectedRevision {
-                    if let idx = self.devices.firstIndex(where: { $0.id == deviceId }) {
-                        self.devices[idx] = fallback
-                    }
-                    self.optimisticLockUntil.removeValue(forKey: deviceId)
-                    self.coverCommandOrigins.removeValue(forKey: deviceId)
-                }
-                self.showControlFailure(error, device: fallback, adjustment: true)
-            }
-        }
     }
 }

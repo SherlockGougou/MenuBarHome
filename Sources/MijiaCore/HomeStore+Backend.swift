@@ -311,7 +311,7 @@ extension HomeStore {
                 if let lockTime = optimisticLockUntil[incoming.id], now < lockTime,
                    let local = existingById[incoming.id],
                    !waitingDeviceIds.contains(incoming.id),
-                   readBackInFlightTicket[incoming.id] == nil {
+                   !readBackTickets.isInFlight(incoming.id) {
                     if coverTravelTakesOver(deviceId: incoming.id, local: local, incoming: incoming) {
                         // The motor has confirmed the command, so its own report is authoritative.
                         // Keeping the timed lock here would hide it and make the card jump when
