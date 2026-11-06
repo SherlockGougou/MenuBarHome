@@ -2,7 +2,6 @@ import Foundation
 
 // Safety alerts: the store's preferences and actions around `SafetyMonitor` (#48).
 extension HomeStore {
-    static let sensorAlertsOnlyWhenAwayKey = "safety_alert_only_when_away_v1"
 
     public func isSensorAlertEnabled(_ kind: SensorAlertKind) -> Bool {
         sensorAlertPreferences[kind] ?? kind.enabledByDefault

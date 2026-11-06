@@ -1,7 +1,6 @@
 import Foundation
 
 extension HomeStore {
-    static let defaultDoorbellPopupSeconds = 60
     public static let doorbellPopupSecondsRange = 15...300
     static let recentDoorbellRingLimit = 20
 

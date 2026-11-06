@@ -2,7 +2,6 @@ import Foundation
 
 // Weekly home health report delivery (#182).
 extension HomeStore {
-    static let weeklyHealthReportEnabledKey = "weekly_health_report_enabled_v1"
     static let weeklyHealthReportDeliveredAtKey = "weekly_health_report_delivered_at_v1"
 
     /// This week's report from the devices on screen and the local histories.
