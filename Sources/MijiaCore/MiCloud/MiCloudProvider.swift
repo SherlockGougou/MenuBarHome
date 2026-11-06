@@ -644,7 +644,7 @@ public actor MiCloudProvider: HomeProvider {
     // MARK: Camera Live Stream Resolution
 
     public func resolveCameraStream(for device: SmartDevice) async throws -> CameraStreamSource {
-        try await resolveCameraStream(for: device, quality: .hd)
+        try await resolveCameraStream(for: device, quality: .sd)
     }
 
     public func resolveCameraStream(for device: SmartDevice, quality: XiaomiCameraStreamQuality) async throws -> CameraStreamSource {

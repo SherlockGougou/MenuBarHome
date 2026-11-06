@@ -10,7 +10,7 @@ public enum XiaomiCameraStreamQuality: String, Codable, CaseIterable, Sendable, 
     case hd
     case max
 
-    public static let storageDefault: XiaomiCameraStreamQuality = .hd
+    public static let storageDefault: XiaomiCameraStreamQuality = .sd
 
     public var subtypeQueryValue: String {
         switch self {

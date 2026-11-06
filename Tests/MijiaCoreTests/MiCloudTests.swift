@@ -1346,7 +1346,7 @@ struct MiCloudProviderTests {
         #expect(starts.first?.localIP == "192.168.50.145")
         #expect(starts.first?.vendor == "cs2")
         #expect(starts.first?.uid == "TICK-123456-ABCDE")
-        #expect(starts.first?.quality == .hd)
+        #expect(starts.first?.quality == .sd)
 
         await provider.stopCameraStream(for: cameraDevice)
         let stops = await bridge.stopCalls

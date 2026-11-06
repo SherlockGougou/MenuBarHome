@@ -43,7 +43,7 @@ struct XiaomiCameraStreamQualityTests {
             uid: nil
         )
         #expect(smooth.contains("subtype=sd"))
-        #expect(XiaomiCameraStreamQuality.storageDefault == .hd)
+        #expect(XiaomiCameraStreamQuality.storageDefault == .sd)
     }
 
     @MainActor
@@ -55,7 +55,7 @@ struct XiaomiCameraStreamQualityTests {
         let store = HomeStore(provider: mock, defaultsSuiteName: suite)
         try await store.waitForTestSnapshot()
         let camera = try #require(store.devices.first(where: { if case .camera = $0.kind { return true }; return false }))
-        #expect(store.cameraStreamQuality(for: camera.id) == .hd)
+        #expect(store.cameraStreamQuality(for: camera.id) == .sd)
         store.setCameraStreamQuality(.max, for: camera.id)
         let reloaded = HomeStore(provider: mock, defaultsSuiteName: suite)
         try await reloaded.waitForTestSnapshot()
