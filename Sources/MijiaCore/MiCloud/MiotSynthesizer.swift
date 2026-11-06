@@ -245,14 +245,8 @@ public enum MiotSynthesizer {
             }
         }
         for entry in registry {
-            // A secondary `light` service must not claim devices whose own type is something
-            // else (hood / airer / bath-heater / ceiling-fan / gateway), or those cards become
-            // bare lamps that only toggle their lamp while the primary function stays hidden.
-            if entry.service == "light",
-               deviceType != "light", !deviceType.contains("light"), !deviceType.contains("lamp") {
-                continue
-            }
-            guard claims(entry.service, spec: spec) else { continue }
+            guard fallbackAllows(deviceType: deviceType, service: entry.service),
+                  claims(entry.service, spec: spec) else { continue }
             if let service = spec.services(named: entry.service).first {
                 return (service, entry.build)
             }
@@ -264,6 +258,16 @@ public enum MiotSynthesizer {
             return (env, buildSensor)
         }
         return nil
+    }
+
+    /// Whether a device whose type names none of its own services may be drawn from `service` (#296).
+    /// Only the pairs in `deviceProfiles.json`'s `fallbackClaims` may, so a projector is no longer a
+    /// speaker and an insect killer no longer a camera or vacuum. A `light` service may still claim
+    /// light-like types (`*light*`, `*lamp*`); it must not claim a hood, airer, bath heater or
+    /// ceiling fan, whose cards would only toggle their lamp while the main function stays hidden.
+    static func fallbackAllows(deviceType: String, service: String) -> Bool {
+        if service == "light", deviceType.contains("light") || deviceType.contains("lamp") { return true }
+        return DeviceProfiles.current.fallbackClaims[deviceType]?.contains(service) == true
     }
 
     /// An `electronic-valve` is only a mains breaker when it meters electric power (#265). A water

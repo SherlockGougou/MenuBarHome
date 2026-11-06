@@ -21,6 +21,9 @@ public struct DeviceProfiles: Codable, Equatable, Sendable {
     public var version: Int
     public var noise: Noise
     public var facets: Facets
+    /// Device type → services that may claim it when the type names none of its own services
+    /// (#296). Anything not listed stays unsupported instead of being drawn as another device.
+    public var fallbackClaims: [String: [String]]
 
     public static func decode(_ data: Data) throws -> DeviceProfiles {
         try JSONDecoder().decode(DeviceProfiles.self, from: data)

@@ -45,8 +45,10 @@ struct MiotCoverageBaselineTests {
         let deviceType = spec.shortName
         let usable = usableServices(spec)
         if let (service, _) = MiotSynthesizer.primary(for: spec) {
+            // A pair the fallback table allows (#296) is the device's own kind, not a misclaim.
             let ownType = MiotSynthesizer.preferredServices(forDeviceType: deviceType).contains(service.shortName)
                 || (deviceType.hasSuffix("sensor") && service.shortName == "environment")
+                || MiotSynthesizer.fallbackAllows(deviceType: deviceType, service: service.shortName)
             guard ownType else { return Entry(deviceType: deviceType, category: .misclaimed, service: service.shortName) }
             let record = MiDeviceRecord(did: "coverage", name: "", model: "", isOnline: true)
             let polled = Set(MiotSynthesizer.requiredProps(for: record, spec: spec).map { "\($0.siid).\($0.piid)" })
@@ -99,6 +101,41 @@ struct MiotCoverageBaselineTests {
             Issue.record("\(model): baseline \(String(describing: golden.models[model])), now \(String(describing: measured.models[model]))")
         }
         #expect(golden.summary == measured.summary)
+    }
+
+    /// #296: a device type the fallback table does not list is never drawn as another device, and
+    /// the listed pairs keep the card they had.
+    @Test func fallbackClaimsFollowTheCompatibilityTable() throws {
+        let models = try Self.measure().models
+        let dropped = [
+            "ctest.inskil.duyr",      // insect killer: was a camera
+            "asu.projector.apro",     // projector: was a speaker
+            "gimi.projector.fm01",
+            "123888.tv.xhzn11",       // television: was a speaker
+            "xiaomi.split_tv.b1",
+            "chuangmi.radio.v1",
+            "miot.handdry.hd3",       // hand dryer: was a vacuum
+            "miot.flowerpot.aztest",  // flowerpot: was an air conditioner
+            "miot.dimmer.hhh",        // dimmer: was a video doorbell
+            "shuse.roller.sr01",      // roller shutter: was a lock
+            "adp.motor.adfbt6",       // motor controller: was a switch
+        ]
+        for model in dropped {
+            #expect(models[model]?.service == nil, "\(model) must not borrow another device's service")
+        }
+        let kept: [String: String] = [
+            "cuco.acpartner.ap2a": "air-conditioner",  // AC companion outlet
+            "chuangmi.door.515a01": "video-doorbell",
+            "bymiot.relay.wlv1": "switch",
+            "xiaomi.btspker.oh3s": "speaker",
+            "careco.nlight.o654": "light",
+            "lumi.plug.aq1": "switch",                 // outlet keeps its switch service
+        ]
+        for (model, service) in kept {
+            #expect(models[model]?.category == .matched, "\(model)")
+            #expect(models[model]?.service == service, "\(model)")
+        }
+        #expect(!models.values.contains { $0.category == .misclaimed })
     }
 
     /// The fixture set is only a baseline if it spans the whole library; 177 types at capture time.

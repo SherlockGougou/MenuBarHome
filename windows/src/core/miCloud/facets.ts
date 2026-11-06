@@ -15,10 +15,25 @@ export interface DeviceProfiles {
     readonly highValue: readonly string[];
     readonly lowRiskWrites: readonly string[];
   };
+  /**
+   * Device type → services that may claim it when the type names none of its own services (#296).
+   * Anything not listed stays unsupported instead of being drawn as another device.
+   */
+  readonly fallbackClaims: Readonly<Record<string, readonly string[]>>;
 }
 
 /** The same `deviceProfiles.json` the macOS bundle ships (#303). */
 export const DEVICE_PROFILES = deviceProfiles as DeviceProfiles;
+
+/**
+ * Whether a device whose type names none of its own services may be drawn from `service` (#296),
+ * mirroring `MiotSynthesizer.fallbackAllows` on macOS. A `light` service may still claim light-like
+ * types; it must not claim a hood, airer, bath heater or ceiling fan.
+ */
+export function miotFallbackAllows(deviceType: string, service: string): boolean {
+  if (service === "light" && (deviceType.includes("light") || deviceType.includes("lamp"))) return true;
+  return DEVICE_PROFILES.fallbackClaims[deviceType]?.includes(service) ?? false;
+}
 
 export type MiotFacetKind = "toggle" | "select" | "slider" | "reading" | "button";
 export type MiotFacetRisk = "low" | "high";

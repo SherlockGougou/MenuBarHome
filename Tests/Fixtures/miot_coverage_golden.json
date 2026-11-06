@@ -69,9 +69,8 @@
       "deviceType" : "stb"
     },
     "123888.tv.xhzn11" : {
-      "category" : "misclaimed",
-      "deviceType" : "television",
-      "service" : "speaker"
+      "category" : "droppedControllable",
+      "deviceType" : "television"
     },
     "1245.airfresh.cj300" : {
       "category" : "matched",
@@ -152,9 +151,8 @@
       "deviceType" : "fitting"
     },
     "adp.motor.adfbt6" : {
-      "category" : "misclaimed",
-      "deviceType" : "motor-controller",
-      "service" : "switch"
+      "category" : "droppedControllable",
+      "deviceType" : "motor-controller"
     },
     "adp.robot.ad" : {
       "category" : "droppedControllable",
@@ -241,9 +239,8 @@
       "deviceType" : "treadmill"
     },
     "asu.projector.apro" : {
-      "category" : "misclaimed",
-      "deviceType" : "projector",
-      "service" : "speaker"
+      "category" : "droppedControllable",
+      "deviceType" : "projector"
     },
     "at123.foot_bath.6sb" : {
       "category" : "droppedControllable",
@@ -382,9 +379,10 @@
       "deviceType" : "ir-remote-control"
     },
     "bymiot.relay.wlv1" : {
-      "category" : "misclaimed",
+      "category" : "matched",
       "deviceType" : "relay",
-      "service" : "switch"
+      "service" : "switch",
+      "unexposedWritable" : 12
     },
     "candy.enstor.cp02s" : {
       "category" : "droppedControllable",
@@ -413,9 +411,10 @@
       "deviceType" : "gesture"
     },
     "careco.nlight.o654" : {
-      "category" : "misclaimed",
+      "category" : "matched",
       "deviceType" : "night-light",
-      "service" : "light"
+      "service" : "light",
+      "unexposedWritable" : 0
     },
     "careli.fryer.maf01" : {
       "category" : "matched",
@@ -444,14 +443,14 @@
       "unexposedWritable" : 0
     },
     "chuangmi.door.515a01" : {
-      "category" : "misclaimed",
+      "category" : "matched",
       "deviceType" : "door",
-      "service" : "video-doorbell"
+      "service" : "video-doorbell",
+      "unexposedWritable" : 23
     },
     "chuangmi.radio.v1" : {
-      "category" : "misclaimed",
-      "deviceType" : "radio",
-      "service" : "speaker"
+      "category" : "droppedControllable",
+      "deviceType" : "radio"
     },
     "chunmi.cooker.017meu" : {
       "category" : "matched",
@@ -494,14 +493,14 @@
       "deviceType" : "clothes-dryer"
     },
     "ctest.inskil.duyr" : {
-      "category" : "misclaimed",
-      "deviceType" : "insect-killer",
-      "service" : "camera-control"
+      "category" : "droppedControllable",
+      "deviceType" : "insect-killer"
     },
     "cuco.acpartner.ap2a" : {
-      "category" : "misclaimed",
+      "category" : "matched",
       "deviceType" : "air-condition-outlet",
-      "service" : "air-conditioner"
+      "service" : "air-conditioner",
+      "unexposedWritable" : 14
     },
     "czmydz.curtain.myf5" : {
       "category" : "matched",
@@ -564,9 +563,8 @@
       "unexposedWritable" : 4
     },
     "gimi.projector.fm01" : {
-      "category" : "misclaimed",
-      "deviceType" : "projector",
-      "service" : "speaker"
+      "category" : "droppedControllable",
+      "deviceType" : "projector"
     },
     "haibao.pet_waterer.mm2" : {
       "category" : "droppedControllable",
@@ -733,19 +731,16 @@
       "deviceType" : "garbage-can"
     },
     "miot.dimmer.hhh" : {
-      "category" : "misclaimed",
-      "deviceType" : "dimmer",
-      "service" : "video-doorbell"
+      "category" : "droppedControllable",
+      "deviceType" : "dimmer"
     },
     "miot.flowerpot.aztest" : {
-      "category" : "misclaimed",
-      "deviceType" : "flowerpot",
-      "service" : "air-conditioner"
+      "category" : "droppedControllable",
+      "deviceType" : "flowerpot"
     },
     "miot.handdry.hd3" : {
-      "category" : "misclaimed",
-      "deviceType" : "hand-dryer",
-      "service" : "vacuum"
+      "category" : "droppedControllable",
+      "deviceType" : "hand-dryer"
     },
     "miot.light.hyz05" : {
       "category" : "matched",
@@ -834,9 +829,8 @@
       "deviceType" : "analyzer"
     },
     "shuse.roller.sr01" : {
-      "category" : "misclaimed",
-      "deviceType" : "roller-shutter",
-      "service" : "lock"
+      "category" : "droppedControllable",
+      "deviceType" : "roller-shutter"
     },
     "smith.w_soften.cxs05ta1" : {
       "category" : "droppedControllable",
@@ -885,9 +879,10 @@
       "unexposedWritable" : 10
     },
     "xiaomi.btspker.oh3s" : {
-      "category" : "misclaimed",
+      "category" : "matched",
       "deviceType" : "ble-speaker",
-      "service" : "speaker"
+      "service" : "speaker",
+      "unexposedWritable" : 0
     },
     "xiaomi.db.yl001" : {
       "category" : "noUsableProperties",
@@ -918,9 +913,8 @@
       "deviceType" : "repeater"
     },
     "xiaomi.split_tv.b1" : {
-      "category" : "misclaimed",
-      "deviceType" : "split-tv",
-      "service" : "speaker"
+      "category" : "droppedControllable",
+      "deviceType" : "split-tv"
     },
     "xiaomi.station.rp05" : {
       "category" : "droppedControllable",
@@ -945,15 +939,15 @@
   },
   "summary" : {
     "categories" : {
-      "droppedControllable" : 92,
+      "droppedControllable" : 103,
       "droppedReadOnly" : 13,
-      "matched" : 53,
-      "misclaimed" : 16,
+      "matched" : 58,
+      "misclaimed" : 0,
       "noUsableProperties" : 31
     },
     "deviceTypes" : 177,
     "specs" : 205,
-    "unexposedWritableTotal" : 373
+    "unexposedWritableTotal" : 422
   },
   "windowsDivergences" : {
     "aden.waterheater.ash200" : {

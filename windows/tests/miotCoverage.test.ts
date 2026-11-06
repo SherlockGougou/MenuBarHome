@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import { isDeepStrictEqual } from "node:util";
+import { miotFallbackAllows } from "../src/core/miCloud/facets.js";
 import { miotShortName, parseMiotDeviceSpec } from "../src/core/miCloud/spec.js";
 import type { MiotDeviceSpec, MiotProperty } from "../src/core/miCloud/spec.js";
 import { MiotSynthesizer, preferredMiotServices, primaryMiotService } from "../src/core/miCloud/synthesis.js";
@@ -35,8 +36,11 @@ function classify(spec: MiotDeviceSpec): Entry {
   const primary = primaryMiotService(spec);
   if (primary) {
     const service = miotShortName(primary.type);
+    // A pair the fallback table allows (#296) is the device's own kind, not a misclaim.
     const ownType =
-      preferredMiotServices(deviceType).includes(service) || (deviceType.endsWith("sensor") && service === "environment");
+      preferredMiotServices(deviceType).includes(service) ||
+      (deviceType.endsWith("sensor") && service === "environment") ||
+      miotFallbackAllows(deviceType, service);
     if (!ownType) return { deviceType, category: "misclaimed", service };
     const record = { did: "coverage", name: "", model: "", isOnline: true, specType: null };
     const polled = new Set(MiotSynthesizer.requiredProps(record, spec).map((k) => `${k.siid}.${k.piid}`));
