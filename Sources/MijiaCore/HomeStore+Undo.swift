@@ -191,7 +191,7 @@ extension HomeStore {
     /// Plugs often power a router, fridge or NAS, and 全关 should not send a cleaning vacuum home (#23).
     public nonisolated static func joinsAllOffByDefault(_ device: SmartDevice) -> Bool {
         switch device.kind {
-        case .plug, .vacuum, .camera, .cover, .appliance: return false
+        case .plug, .vacuum, .camera, .cover, .appliance, .valve: return false
         default: return true
         }
     }
@@ -266,6 +266,14 @@ extension HomeStore {
                 .setSwitch(entityId: s.powerEntityId, isOn: true),
                 .appliance(s)
             )
+        case .humidifier(var s):
+            guard s.powerWritable else { return nil }
+            s.isOn = false
+            return (.setSwitch(entityId: s.entityId, isOn: false), .setSwitch(entityId: s.entityId, isOn: true), .humidifier(s))
+        case .valve(var s):
+            guard s.closeWritable, s.isOpen else { return nil }
+            s.isOpen = false
+            return (.setSwitch(entityId: s.entityId, isOn: false), .setSwitch(entityId: s.entityId, isOn: true), .valve(s))
         case .speaker, .fridge, .sensor, .cover:
             return nil
         }
@@ -464,21 +472,42 @@ extension HomeStore {
         var applicable: [UndoApplicableCommand] = []
         for command in commands {
             // A 更多设置 write has no card-state effect; undo restores the facet value it carries.
-            if case .setMiotProperty(let entityId, let piid, let value) = command {
-                let target = FacetTarget.property(entityId: entityId, piid: piid)
-                let facetOwner = devices.first { device in
-                    deviceFacets[device.id]?.contains { $0.target == target } == true
+            if let target = Self.facetTarget(for: command),
+               let device = devices.first(where: { device in
+                   deviceFacets[device.id]?.contains { $0.target == target } == true
+               }),
+               device.isOnline {
+                if var facets = deviceFacets[device.id],
+                   let index = facets.firstIndex(where: { $0.target == target }) {
+                    cancelFacetWrite(deviceId: device.id, controlId: facets[index].id)
+                    if let value = Self.facetValue(for: command, control: facets[index]) {
+                        facets[index].value = value
+                    }
+                    deviceFacets[device.id] = facets
                 }
+                let rev = lockOptimistic(device.id, duration: .seconds(3.0))
+                applicable.append(
+                    UndoApplicableCommand(
+                        command: command,
+                        deviceId: device.id,
+                        deviceName: device.name,
+                        lockRevision: rev
+                    )
+                )
+                continue
+            }
+            // Snapshots without the facet row still resolve a MIoT write by its owning did.
+            if case .setMiotProperty(let entityId, let piid, let value) = command {
                 let did = MiotAddress.parse(entityId)?.did
                 let fallbackOwners = devices.filter { device in
                     did.map { device.id == $0 || device.miotCommandDids.contains($0) } == true
                 }
-                guard let device = facetOwner ?? (fallbackOwners.count == 1 ? fallbackOwners.first : nil),
+                guard let device = fallbackOwners.count == 1 ? fallbackOwners.first : nil,
                       device.isOnline else {
                     continue
                 }
                 if var facets = deviceFacets[device.id],
-                   let index = facets.firstIndex(where: { $0.target == target }) {
+                   let index = facets.firstIndex(where: { $0.target == .property(entityId: entityId, piid: piid) }) {
                     cancelFacetWrite(deviceId: device.id, controlId: facets[index].id)
                     facets[index].value = value
                     deviceFacets[device.id] = facets

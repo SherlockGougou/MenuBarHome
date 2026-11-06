@@ -152,6 +152,13 @@
       ]
     },
     {
+      "id": "ha-humidifiers-water-heaters-valves",
+      "en": "HA Humidifiers, Water Heaters & Valves",
+      "zh": "HA 加湿器、热水器与阀门",
+      "macos": "supported",
+      "windows": "unsupported"
+    },
+    {
       "id": "bath-heaters-hoods",
       "en": "Bath Heaters & Range Hoods",
       "zh": "浴霸与油烟机",

@@ -118,7 +118,7 @@ public struct PendingCloudConsent: Equatable, Sendable {
 // MARK: - Device Category Used by Both Resolvers
 
 public enum IntentDeviceCategory: String, Equatable, Sendable, CaseIterable {
-    case light, climate, heater, fan, airPurifier, dehumidifier, diffuser, plug, vacuum, speaker, tv, fridge, camera, sensor, cover, appliance
+    case light, climate, heater, fan, airPurifier, dehumidifier, diffuser, plug, vacuum, speaker, tv, fridge, camera, sensor, cover, appliance, valve
     private static let heaterNameHints = ["电暖", "暖气", "取暖", "暖风"]
     private static let airPurifierNameHints = ["净化", "空净", "新风", "加湿"]
 
@@ -150,6 +150,10 @@ public enum IntentDeviceCategory: String, Equatable, Sendable, CaseIterable {
         case .sensor: self = .sensor
         case .cover: self = .cover
         case .appliance: self = .appliance
+        // A humidifier keeps the air-purifier vocabulary it had as a `.fan` card: power is the
+        // only operation the assistant understands for it.
+        case .humidifier: self = .airPurifier
+        case .valve: self = .valve
         }
     }
 
@@ -157,7 +161,7 @@ public enum IntentDeviceCategory: String, Equatable, Sendable, CaseIterable {
     public var isAssistantControllable: Bool {
         switch self {
         case .light, .climate, .heater, .fan, .airPurifier, .dehumidifier, .diffuser, .plug, .vacuum, .tv, .camera: return true
-        case .speaker, .fridge, .sensor, .cover, .appliance: return false
+        case .speaker, .fridge, .sensor, .cover, .appliance, .valve: return false
         }
     }
 }
@@ -206,6 +210,10 @@ public enum IntentValidator {
             return s.actionsWritable ? operation : nil
         case (.power, .appliance(let s)):
             return s.powerWritable ? operation : nil
+        case (.power, .humidifier(let s)):
+            return s.powerWritable ? operation : nil
+        case (.power(let on), .valve(let s)):
+            return on ? (s.openWritable ? operation : nil) : (s.closeWritable ? operation : nil)
         case (.power, .tv):
             return operation
 
@@ -744,6 +752,14 @@ public struct IntentCatalog: Sendable {
             }
             if let mode = s.currentMode, !mode.isEmpty { parts.append(mode) }
             return parts.joined(separator: " ")
+        case .humidifier(let s):
+            var parts: [String] = [s.isOn ? "开" : "关"]
+            if let target = s.targetHumidity { parts.append("目标湿度\(target)%") }
+            if let current = s.currentHumidity { parts.append("当前湿度\(Int(current.rounded()))%") }
+            if let mode = s.currentMode, !mode.isEmpty { parts.append(mode) }
+            return parts.joined(separator: " ")
+        case .valve(let s):
+            return s.isOpen ? "开" : "关"
         }
     }
 }

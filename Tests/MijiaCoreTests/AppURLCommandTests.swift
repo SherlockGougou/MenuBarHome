@@ -130,7 +130,7 @@ struct AppURLCommandTests {
             provider: MockHomeProvider(snapshot: SynthesizedHome(devices: [lamp])),
             defaultsSuiteName: suite
         )
-        try await store.waitForInitialSnapshot(timeout: .seconds(5))
+        try await store.waitForTestSnapshot()
         store.raycastSnapshotTestURL = snapshotFile
 
         // Off by default: nothing is written and there is no token.
@@ -150,7 +150,9 @@ struct AppURLCommandTests {
         // A burst of changes schedules one export that lands after the quiet period.
         for _ in 0..<5 { store.scheduleRaycastSnapshotExport() }
         #expect(!FileManager.default.fileExists(atPath: snapshotFile.path))
-        try await Task.sleep(for: .milliseconds(800))
+        for _ in 0..<250 where !FileManager.default.fileExists(atPath: snapshotFile.path) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         let first = try Data(contentsOf: snapshotFile)
 
         // Nothing changed except the clock: the file is left alone.
@@ -254,7 +256,7 @@ struct AppURLCommandTests {
         )
         let store = HomeStore(provider: provider, defaultsSuiteName: suite)
         store.raycastSnapshotTestURL = snapshotFile
-        try await store.waitForInitialSnapshot(timeout: .seconds(5))
+        try await store.waitForTestSnapshot()
         store.setRaycastIntegration(enabled: true)
         store.exportRaycastSnapshotIfNeeded()
 

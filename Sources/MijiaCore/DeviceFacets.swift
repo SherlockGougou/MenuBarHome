@@ -1,10 +1,20 @@
 import Foundation
 
-/// Where a facet write goes on the Xiaomi backend. Property writes carry the new value; actions
-/// are fired as-is.
+/// Where a facet write goes. Xiaomi property writes carry the new value; actions are fired as-is.
+/// Home Assistant facets address one entity in its own domain and use that domain's service.
 public enum FacetTarget: Equatable, Sendable {
     case property(entityId: String, piid: Int)
     case action(entityId: String)
+    case haProperty(entityId: String)
+    case haAction(entityId: String)
+
+    /// True for a no-argument action (a MIoT action or a Home Assistant button).
+    public var isAction: Bool {
+        switch self {
+        case .action, .haAction: return true
+        case .property, .haProperty: return false
+        }
+    }
 }
 
 /// One row under 更多设置 (#5): a generic facet from `MiotFacetEngine` plus the value the last

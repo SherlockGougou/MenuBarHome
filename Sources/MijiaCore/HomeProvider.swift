@@ -498,6 +498,12 @@ public actor HAWebSocketProvider: HomeProvider {
             ])
 
         case .setClimateTemperature(let eid, let temp):
+            if eid.hasPrefix("water_heater.") {
+                return ("water_heater", "set_temperature", [
+                    "entity_id": eid,
+                    "temperature": temp
+                ])
+            }
             return ("climate", "set_temperature", [
                 "entity_id": eid,
                 "temperature": temp
@@ -551,6 +557,15 @@ public actor HAWebSocketProvider: HomeProvider {
             if primaryEid.hasPrefix("button.") {
                 return ("button", "press", ["entity_id": primaryEid])
             }
+            if primaryEid.hasPrefix("valve.") {
+                return ("valve", isOn ? "open_valve" : "close_valve", ["entity_id": primaryEid])
+            }
+            if primaryEid.hasPrefix("humidifier.") {
+                return ("humidifier", isOn ? "turn_on" : "turn_off", ["entity_id": primaryEid])
+            }
+            if primaryEid.hasPrefix("water_heater.") {
+                return ("water_heater", isOn ? "turn_on" : "turn_off", ["entity_id": primaryEid])
+            }
             return ("switch", isOn ? "turn_on" : "turn_off", ["entity_id": primaryEid])
 
         case .setSelectOption(let eid, let option):
@@ -569,9 +584,27 @@ public actor HAWebSocketProvider: HomeProvider {
                 }
                 return ("cover", service, ["entity_id": selectEid])
             }
+            if selectEid.hasPrefix("humidifier.") {
+                return ("humidifier", "set_mode", [
+                    "entity_id": selectEid,
+                    "mode": option
+                ])
+            }
+            if selectEid.hasPrefix("water_heater.") {
+                return ("water_heater", "set_operation_mode", [
+                    "entity_id": selectEid,
+                    "operation_mode": option
+                ])
+            }
             return ("select", "select_option", [
                 "entity_id": selectEid,
                 "option": option
+            ])
+
+        case .setHumidity(let eid, let percent):
+            return ("humidifier", "set_humidity", [
+                "entity_id": eid,
+                "humidity": max(0, min(100, percent))
             ])
 
         case .setNumberValue(let eid, let value):

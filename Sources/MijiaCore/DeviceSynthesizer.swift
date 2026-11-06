@@ -63,6 +63,8 @@ public struct HAEntityEntry: Codable, Equatable, Sendable {
     public let disabled_by: String?
     public let hidden_by: String?
     public let unique_id: String?
+    /// Integration-defined key (`sensor.temperature_p_3` etc.). Prefer it over entity-id substrings.
+    public let translation_key: String?
 
     public init(
         entity_id: String,
@@ -74,7 +76,8 @@ public struct HAEntityEntry: Codable, Equatable, Sendable {
         entity_category: String? = nil,
         disabled_by: String? = nil,
         hidden_by: String? = nil,
-        unique_id: String? = nil
+        unique_id: String? = nil,
+        translation_key: String? = nil
     ) {
         self.entity_id = entity_id
         self.device_id = device_id
@@ -86,6 +89,7 @@ public struct HAEntityEntry: Codable, Equatable, Sendable {
         self.disabled_by = disabled_by
         self.hidden_by = hidden_by
         self.unique_id = unique_id
+        self.translation_key = translation_key
     }
 }
 
@@ -270,6 +274,7 @@ public enum DeviceSynthesizer {
         var smartDevices: [SmartDevice] = []
         var envReadings: [EnvironmentReading] = []
         var identities: [String: DeviceSourceIdentity] = [:]
+        var deviceFacets: [String: [FacetControl]] = [:]
 
         for dev in devices {
             guard dev.disabled_by == nil else { continue }
@@ -289,16 +294,19 @@ public enum DeviceSynthesizer {
             let rawDeviceName = dev.name_by_user ?? dev.name ?? "智能设备"
             let cleanName = cleanDeviceName(rawDeviceName, roomName: roomName, model: model)
 
+            var claimed: Set<String> = []
+            let builtDevice = buildSmartDevice(
+                deviceId: dev.id,
+                name: cleanName,
+                roomId: roomId,
+                roomName: roomName,
+                model: model,
+                entities: devEntities,
+                states: states,
+                claimed: &claimed
+            )
             if let built = applyingSafetyObservations(
-                buildSmartDevice(
-                    deviceId: dev.id,
-                    name: cleanName,
-                    roomId: roomId,
-                    roomName: roomName,
-                    model: model,
-                    entities: devEntities,
-                    states: states
-                ),
+                builtDevice,
                 deviceId: dev.id,
                 name: cleanName,
                 roomId: roomId,
@@ -307,6 +315,9 @@ public enum DeviceSynthesizer {
                 entities: devEntities,
                 states: states
             ) {
+                if case .sensor = built.kind {
+                    claimed.formUnion(devEntities.filter { safetyKind(of: $0, states: states) != nil }.map(\.entity_id))
+                }
                 let activeCovers = devEntities.filter { entity in
                     entity.entity_id.hasPrefix("cover.")
                         && entity.entity_category != "config"
@@ -329,6 +340,7 @@ public enum DeviceSynthesizer {
                             states: states
                         )
                         let trackEntities = [coverEnt] + trackAux
+                        var trackClaimed: Set<String> = []
                         if let trackBuilt = applyingSafetyObservations(
                             buildSmartDevice(
                                 deviceId: trackId,
@@ -337,7 +349,8 @@ public enum DeviceSynthesizer {
                                 roomName: roomName,
                                 model: model,
                                 entities: trackEntities,
-                                states: states
+                                states: states,
+                                claimed: &trackClaimed
                             ),
                             deviceId: trackId,
                             name: trackName,
@@ -353,11 +366,25 @@ public enum DeviceSynthesizer {
                                 registry: dev,
                                 entities: trackEntities
                             )
+                            let facets = HAFacetEngine.controls(
+                                entities: trackEntities,
+                                states: states,
+                                excluding: trackClaimed,
+                                device: trackBuilt
+                            )
+                            if !facets.isEmpty { deviceFacets[trackBuilt.id] = facets }
                         }
                     }
                 } else {
                     smartDevices.append(built)
                     identities[built.id] = sourceIdentity(device: built, registry: dev, entities: devEntities)
+                    let facets = HAFacetEngine.controls(
+                        entities: devEntities,
+                        states: states,
+                        excluding: claimed,
+                        device: built
+                    )
+                    if !facets.isEmpty { deviceFacets[built.id] = facets }
                 }
             }
         }
@@ -371,7 +398,8 @@ public enum DeviceSynthesizer {
                     || eid.hasPrefix("camera.") || eid.hasPrefix("cover.")
                     || eid.hasPrefix("switch.") || eid.hasPrefix("media_player.")
                     || eid.hasPrefix("sensor.") || eid.hasPrefix("binary_sensor.")
-                    || eid.hasPrefix("button.") else { continue }
+                    || eid.hasPrefix("button.") || eid.hasPrefix("humidifier.")
+                    || eid.hasPrefix("water_heater.") || eid.hasPrefix("valve.") else { continue }
             let entity = entityById[eid]
             guard entity?.disabled_by == nil, entity?.hidden_by == nil else { continue }
             if let deviceId = entity?.device_id,
@@ -386,6 +414,7 @@ public enum DeviceSynthesizer {
             let orphanName = cleanDeviceName(name, roomName: roomName, model: "")
             let orphanRoomId = normalizedRoomId(for: roomName, fallback: areaId)
             let orphanEntities = [entity ?? HAEntityEntry(entity_id: eid)]
+            var claimed: Set<String> = []
             if let built = applyingSafetyObservations(
                 buildSmartDevice(
                     deviceId: eid,
@@ -394,7 +423,8 @@ public enum DeviceSynthesizer {
                     roomName: roomName,
                     model: "",
                     entities: orphanEntities,
-                    states: states
+                    states: states,
+                    claimed: &claimed
                 ),
                 deviceId: eid,
                 name: orphanName,
@@ -404,8 +434,18 @@ public enum DeviceSynthesizer {
                 entities: orphanEntities,
                 states: states
             ) {
+                if case .sensor = built.kind {
+                    claimed.formUnion(orphanEntities.filter { safetyKind(of: $0, states: states) != nil }.map(\.entity_id))
+                }
                 smartDevices.append(built)
                 identities[built.id] = sourceIdentity(device: built, registry: nil, entities: orphanEntities)
+                let facets = HAFacetEngine.controls(
+                    entities: orphanEntities,
+                    states: states,
+                    excluding: claimed,
+                    device: built
+                )
+                if !facets.isEmpty { deviceFacets[built.id] = facets }
             }
         }
 
@@ -454,6 +494,7 @@ public enum DeviceSynthesizer {
             roomNameOrder: roomNameOrder(from: areas.map(\.name))
         )
         home.deviceIdentities = identities
+        home.deviceFacets = deviceFacets
         return home
     }
 
@@ -758,13 +799,28 @@ public enum DeviceSynthesizer {
         roomName: String,
         model: String,
         entities: [HAEntityEntry],
-        states: [String: HAEntityState]
+        states: [String: HAEntityState],
+        claimed: inout Set<String>
     ) -> SmartDevice? {
         let eids = entities.map(\.entity_id)
+
+        // Prefer the integration's stable translation key; keep the entity-id substring as the
+        // fallback for older fixtures and integrations that do not publish one (#307).
+        func entityId(prefix: String, translationKeys: [String], legacyContains token: String) -> String? {
+            if let matched = eids.first(where: { eid in
+                guard eid.hasPrefix(prefix),
+                      let key = entities.first(where: { $0.entity_id == eid })?.translation_key else { return false }
+                return translationKeys.contains(key)
+            }) {
+                return matched
+            }
+            return eids.first { $0.hasPrefix(prefix) && $0.contains(token) }
+        }
 
         // 1. Climate (AC / Baseboard Heater)
         if let climateId = eids.first(where: { $0.hasPrefix("climate.") }),
            let st = states[climateId] {
+            claimed.insert(climateId)
             let spec = parseClimateSpec(entityId: climateId, state: st)
             return SmartDevice(
                 id: deviceId,
@@ -785,6 +841,7 @@ public enum DeviceSynthesizer {
         }
         if let lightEnt = primaryLights.first,
            let st = states[lightEnt.entity_id] {
+            claimed.insert(lightEnt.entity_id)
             let isOn = (st.state == "on")
             let rawBri = st.attributes["brightness"]?.doubleValue
             let briPct = rawBri.flatMap { Self.roundedInt($0 / 255.0 * 100.0).map { max(1, min(100, $0)) } }
@@ -845,7 +902,13 @@ public enum DeviceSynthesizer {
                     && (states[$0]?.attributes["device_class"]?.stringValue == "humidity"
                         || $0.contains("humidity"))
             }
-            let filterId = eids.first { $0.hasPrefix("sensor.") && $0.contains("filter_life") }
+            let filterId = eids.first { eid in
+                guard eid.hasPrefix("sensor.") else { return false }
+                if entities.first(where: { $0.entity_id == eid })?.translation_key == "filter_life_remaining" {
+                    return true
+                }
+                return eid.contains("filter_life")
+            }
 
             let pm25 = pm25Id.flatMap { states[$0] }.flatMap { $0.isAvailable ? Double($0.state).flatMap(Self.roundedInt) : nil }
                 ?? st.attributes["pm25"]?.intValue
@@ -857,6 +920,11 @@ public enum DeviceSynthesizer {
                 ?? st.attributes["humidity"]?.doubleValue
             let filterLife = filterId.flatMap { states[$0] }.flatMap { $0.isAvailable ? Double($0.state).flatMap(Self.roundedInt) : nil }
                 ?? st.attributes["filter_life_remaining"]?.intValue
+
+            claimed.insert(fanId)
+            for id in [pm25Id, aqId, fanTempId, fanHumId, filterId].compactMap({ $0 }) {
+                claimed.insert(id)
+            }
 
             return SmartDevice(
                 id: deviceId,
@@ -883,15 +951,122 @@ public enum DeviceSynthesizer {
             )
         }
 
-        // 4. Vacuum
+        // 4. Humidifier (#307)
+        if let humId = eids.first(where: { $0.hasPrefix("humidifier.") }),
+           let st = states[humId] {
+            let features = st.attributes["supported_features"]?.intValue
+            let modes = st.attributes["available_modes"]?.stringArrayValue ?? []
+            let mode = st.attributes["mode"]?.stringValue
+            let target = st.attributes["target_humidity"]?.doubleValue.flatMap(Self.roundedInt)
+            let minH = st.attributes["min_humidity"]?.intValue ?? 0
+            let maxH = st.attributes["max_humidity"]?.intValue ?? 100
+            let step = max(1, st.attributes["target_humidity_step"]?.intValue ?? 1)
+            let humiditySensorId = eids.first {
+                $0.hasPrefix("sensor.")
+                    && states[$0]?.attributes["device_class"]?.stringValue == "humidity"
+            }
+            let current = st.attributes["current_humidity"]?.doubleValue
+                ?? humiditySensorId.flatMap { states[$0] }.flatMap { $0.isAvailable ? Double($0.state) : nil }
+            // HumidifierEntityFeature: TARGET_HUMIDITY = 1, MODE = 2.
+            let humidityWritable = features.map { $0 & 1 != 0 } ?? (target != nil)
+            let modeWritable = features.map { $0 & 2 != 0 } ?? !modes.isEmpty
+
+            claimed.insert(humId)
+            if let humiditySensorId { claimed.insert(humiditySensorId) }
+
+            return SmartDevice(
+                id: deviceId,
+                name: name,
+                roomId: roomId,
+                roomName: roomName,
+                model: model,
+                isOnline: st.isAvailable,
+                kind: .humidifier(
+                    HumidifierSpec(
+                        entityId: humId,
+                        isOn: st.state == "on",
+                        currentMode: mode,
+                        availableModes: modes,
+                        modeWritable: modeWritable,
+                        targetHumidity: target,
+                        minHumidity: minH,
+                        maxHumidity: maxH,
+                        step: step,
+                        humidityWritable: humidityWritable,
+                        currentHumidity: current,
+                        powerWritable: st.isAvailable
+                    )
+                )
+            )
+        }
+
+        // 5. Water heater (#307) reuses the shared appliance card.
+        if let waterHeaterId = eids.first(where: { $0.hasPrefix("water_heater.") }),
+           let st = states[waterHeaterId] {
+            let modes = st.attributes["operation_list"]?.stringArrayValue ?? []
+            let mode = st.attributes["operation_mode"]?.stringValue
+            let target = st.attributes["temperature"]?.doubleValue
+            let temperatureSensorId = eids.first {
+                $0.hasPrefix("sensor.")
+                    && states[$0]?.attributes["device_class"]?.stringValue == "temperature"
+            }
+            let current = st.attributes["current_temperature"]?.doubleValue
+                ?? temperatureSensorId.flatMap { states[$0] }.flatMap { $0.isAvailable ? Double($0.state) : nil }
+            let minT = st.attributes["min_temp"]?.doubleValue ?? 30
+            let maxT = st.attributes["max_temp"]?.doubleValue ?? 60
+            let step = st.attributes["target_temp_step"]?.doubleValue ?? 1
+
+            claimed.insert(waterHeaterId)
+            if let temperatureSensorId, current != nil { claimed.insert(temperatureSensorId) }
+
+            return SmartDevice(
+                id: deviceId,
+                name: name,
+                roomId: roomId,
+                roomName: roomName,
+                model: model,
+                isOnline: st.isAvailable,
+                kind: .appliance(
+                    ApplianceSpec(
+                        entityId: waterHeaterId,
+                        isOn: st.isAvailable && st.state != "off",
+                        powerPresent: true,
+                        powerWritable: st.isAvailable,
+                        currentMode: mode,
+                        availableModes: modes,
+                        modeWritable: !modes.isEmpty,
+                        targetTemperature: target,
+                        currentTemperature: current,
+                        minTemp: minT,
+                        maxTemp: maxT,
+                        step: step,
+                        temperatureWritable: target != nil && st.isAvailable,
+                        powerEntityId: waterHeaterId,
+                        modeEntityId: waterHeaterId,
+                        temperatureEntityId: waterHeaterId,
+                        symbolName: "water.waves",
+                        heats: true
+                    )
+                )
+            )
+        }
+
+        // 6. Vacuum
         if let vacId = eids.first(where: { $0.hasPrefix("vacuum.") }),
            let st = states[vacId] {
-            let batId = eids.first(where: { $0.hasPrefix("sensor.") && $0.contains("battery_level") })
+            let batId = eids.first {
+                $0.hasPrefix("sensor.")
+                    && (states[$0]?.attributes["device_class"]?.stringValue == "battery"
+                        || $0.contains("battery_level"))
+            }
             let bat = batId.flatMap { states[$0]?.state }.flatMap { Self.roundedInt(Double($0) ?? -1) ?? -1 }
             let modeId = eids.first(where: { $0.hasPrefix("select.") && $0.contains("mode") })
             let modeState = modeId.flatMap { states[$0] }
             let currentMode = (modeState?.isAvailable == true) ? modeState?.state : nil
             let modes = modeState?.attributes["options"]?.stringArrayValue ?? []
+
+            claimed.insert(vacId)
+            for id in [batId, modeId].compactMap({ $0 }) { claimed.insert(id) }
 
             return SmartDevice(
                 id: deviceId,
@@ -920,16 +1095,28 @@ public enum DeviceSynthesizer {
             let curMode = modeSt?.state ?? "手动"
             let modes = modeSt?.attributes["options"]?.stringArrayValue ?? ["手动", "智能", "速冷", "速冻", "假日"]
 
-            let fridgeTempId = eids.first(where: { $0.hasPrefix("sensor.") && $0.contains("temperature_p_3") })
-            let freezerTempId = eids.first(where: { $0.hasPrefix("sensor.") && $0.contains("temperature_p_4") })
-            let fridgeTargetId = eids.first(where: { $0.hasPrefix("number.") && $0.contains("target_temperature_p_3") })
-            let freezerTargetId = eids.first(where: { $0.hasPrefix("number.") && $0.contains("target_temperature_p_4") })
+            let fridgeTempId = entityId(
+                prefix: "sensor.", translationKeys: ["temperature_p_3"], legacyContains: "temperature_p_3"
+            )
+            let freezerTempId = entityId(
+                prefix: "sensor.", translationKeys: ["temperature_p_4"], legacyContains: "temperature_p_4"
+            )
+            let fridgeTargetId = entityId(
+                prefix: "number.", translationKeys: ["target_temperature_p_3"], legacyContains: "target_temperature_p_3"
+            )
+            let freezerTargetId = entityId(
+                prefix: "number.", translationKeys: ["target_temperature_p_4"], legacyContains: "target_temperature_p_4"
+            )
 
             let fCur = fridgeTempId.flatMap { states[$0]?.state }.flatMap(Double.init)
             let zCur = freezerTempId.flatMap { states[$0]?.state }.flatMap(Double.init)
             let fTgt = fridgeTargetId.flatMap { states[$0]?.state }.flatMap(Double.init) ?? 4
             let zTgt = freezerTargetId.flatMap { states[$0]?.state }.flatMap(Double.init) ?? -18
             let online = (modeSt?.isAvailable == true) || (fCur != nil)
+
+            for id in [modeId, fridgeTempId, freezerTempId, fridgeTargetId, freezerTargetId].compactMap({ $0 }) {
+                claimed.insert(id)
+            }
 
             return SmartDevice(
                 id: deviceId,
@@ -995,6 +1182,10 @@ public enum DeviceSynthesizer {
                     ?? camSt?.attributes["access_token"]?.stringValue.flatMap { token in
                         cameraEntityId.map { "/api/camera_proxy/\($0)?token=\(token)" }
                     }
+
+                for id in [cameraEntityId, powerSwitchId, motionSw, nightSelectId].compactMap({ $0 }) {
+                    claimed.insert(id)
+                }
 
                 return SmartDevice(
                     id: deviceId,
@@ -1101,6 +1292,9 @@ public enum DeviceSynthesizer {
                 ?? st.attributes["battery_level"]?.intValue
                 ?? st.attributes["battery"]?.intValue
 
+            claimed.insert(coverEnt.entity_id)
+            if let batId { claimed.insert(batId) }
+
             return SmartDevice(
                 id: deviceId,
                 name: name,
@@ -1124,6 +1318,42 @@ public enum DeviceSynthesizer {
             )
         }
 
+        // 5d. Valve (#307): a binary open/close card, never a position.
+        if let valveEnt = entities.first(where: {
+            $0.entity_id.hasPrefix("valve.")
+                && $0.entity_category != "config"
+                && $0.entity_category != "diagnostic"
+        }), let st = states[valveEnt.entity_id] {
+            let stateLower = st.state.lowercased()
+            let features = st.attributes["supported_features"]?.intValue
+            // ValveEntityFeature: OPEN = 1, CLOSE = 2.
+            let openWritable = features.map { $0 & 1 != 0 } ?? true
+            let closeWritable = features.map { $0 & 2 != 0 } ?? true
+            let motion: String? = switch stateLower {
+            case "opening", "closing": stateLower
+            default: nil
+            }
+            claimed.insert(valveEnt.entity_id)
+            return SmartDevice(
+                id: deviceId,
+                name: name,
+                roomId: roomId,
+                roomName: roomName,
+                model: model,
+                isOnline: st.isAvailable,
+                kind: .valve(
+                    ValveSpec(
+                        entityId: valveEnt.entity_id,
+                        isOpen: stateLower == "open" || stateLower == "opening",
+                        deviceClass: st.attributes["device_class"]?.stringValue,
+                        openWritable: openWritable,
+                        closeWritable: closeWritable,
+                        motion: motion
+                    )
+                )
+            )
+        }
+
         let primarySwitches = entities.filter { entity in
             guard entity.entity_id.hasPrefix("switch."),
                   entity.entity_category != "config", entity.entity_category != "diagnostic" else { return false }
@@ -1141,6 +1371,7 @@ public enum DeviceSynthesizer {
             let batSt = batId.flatMap { states[$0] }
             let bVal = batSt.flatMap { Double($0.state).flatMap(Self.roundedInt) }
             let online = (lockSt?.isAvailable == true) || (batSt?.isAvailable == true)
+            for id in [lockId, batId].compactMap({ $0 }) { claimed.insert(id) }
             return SmartDevice(
                 id: deviceId,
                 name: name,
@@ -1164,13 +1395,22 @@ public enum DeviceSynthesizer {
                     ?? primarySwitches.first?.entity_id,
                   let st = states[swId] else { return nil }
 
-            let powerId = eids.first(where: { $0.hasPrefix("sensor.") && $0.contains("electric_power") })
-            let energyId = eids.first(where: { $0.hasPrefix("sensor.") && $0.contains("power_consumption") })
+            // `device_class` is the integration contract; the substring remains for older payloads.
+            let powerId = eids.first {
+                $0.hasPrefix("sensor.")
+                    && states[$0]?.attributes["device_class"]?.stringValue == "power"
+            } ?? eids.first(where: { $0.hasPrefix("sensor.") && $0.contains("electric_power") })
+            let energyId = eids.first {
+                $0.hasPrefix("sensor.")
+                    && states[$0]?.attributes["device_class"]?.stringValue == "energy"
+            } ?? eids.first(where: { $0.hasPrefix("sensor.") && $0.contains("power_consumption") })
             let lockId = eids.first(where: { $0.hasPrefix("switch.") && $0.contains("physical_controls_locked") })
 
             let watts = powerId.flatMap { states[$0]?.state }.flatMap(Double.init)
             let kwh = energyId.flatMap { states[$0]?.state }.flatMap(Double.init)
             let locked = lockId.flatMap { states[$0]?.state == "on" } ?? false
+
+            for id in [swId, powerId, energyId, lockId].compactMap({ $0 }) { claimed.insert(id) }
 
             return SmartDevice(
                 id: deviceId,
@@ -1203,6 +1443,7 @@ public enum DeviceSynthesizer {
                 let src = st.attributes["source"]?.stringValue
                 let srcs = st.attributes["source_list"]?.stringArrayValue ?? []
                 let turnOnBtn = eids.first(where: { $0.hasPrefix("button.") && $0.contains("turn_on") })
+                for id in [mediaId, turnOnBtn].compactMap({ $0 }) { claimed.insert(id) }
                 return SmartDevice(
                     id: deviceId,
                     name: name,
@@ -1233,6 +1474,10 @@ public enum DeviceSynthesizer {
                     ?? st.attributes["is_volume_muted"]?.boolValue
                     ?? false
                 let isSleep = sleepSw.flatMap { states[$0]?.state == "on" } ?? false
+
+                for id in [mediaId, muteSw, sleepSw, ttsNotify, dirNotify, playMusicBtn, stopAlarmBtn].compactMap({ $0 }) {
+                    claimed.insert(id)
+                }
 
                 return SmartDevice(
                     id: deviceId,
@@ -1270,6 +1515,8 @@ public enum DeviceSynthesizer {
             let bVal = batSt.flatMap { Double($0.state).flatMap(Self.roundedInt) }
             let online = (tempSt?.isAvailable == true) || (humSt?.isAvailable == true)
 
+            for id in [tempId, humId, batId].compactMap({ $0 }) { claimed.insert(id) }
+
             return SmartDevice(
                 id: deviceId,
                 name: name,
@@ -1299,6 +1546,7 @@ public enum DeviceSynthesizer {
         }
         if let btn = primaryButtons.first(where: { $0.entity_id.contains("wake_on_lan") }) ?? primaryButtons.first,
            let st = states[btn.entity_id] {
+            claimed.insert(btn.entity_id)
             return SmartDevice(
                 id: deviceId,
                 name: name,

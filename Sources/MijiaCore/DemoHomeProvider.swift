@@ -566,6 +566,24 @@ public actor DemoHomeProvider: HomeProvider {
                     }
                     next.devices[idx].kind = .vacuum(spec)
                 }
+            case .humidifier(var spec):
+                switch command {
+                case .setSwitch(let entityId, let isOn) where entityId == spec.entityId:
+                    spec.isOn = isOn
+                case .setSelectOption(let entityId, let option) where entityId == spec.entityId:
+                    spec.currentMode = option
+                case .setHumidity(let entityId, let percent) where entityId == spec.entityId:
+                    spec.targetHumidity = percent
+                default:
+                    continue
+                }
+                next.devices[idx].kind = .humidifier(spec)
+            case .valve(var spec):
+                if case .setSwitch(let entityId, let isOn) = command, entityId == spec.entityId {
+                    spec.isOpen = isOn
+                    spec.motion = nil
+                    next.devices[idx].kind = .valve(spec)
+                }
             default:
                 continue
             }

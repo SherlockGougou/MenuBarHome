@@ -231,6 +231,9 @@ public enum ModelActionPolicy {
             // a hood's plain power switch stays direct (#3, #4).
             guard case .appliance(let spec) = device.kind, spec.heats || spec.startAction != nil else { return nil }
             return .powerOnOrHotter(setpoint: spec.targetTemperature ?? 0)
+        case .valve:
+            // Opening a water or gas valve can flood or leak; closing it only makes the home safer.
+            return .powerOn
         default:
             return nil
         }

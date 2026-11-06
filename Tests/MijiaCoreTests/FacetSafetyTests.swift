@@ -96,11 +96,13 @@ struct FacetSafetyTests {
         #expect(ManualControlPolicy.confirmation(facet: facet, value: .bool(true), for: Self.device("plug")) == nil)
     }
 
-    @Test("Heaters confirm every non-off write, including brightness and indicator services")
+    @Test("Heaters confirm non-off writes but not indicator controls or power-off")
     func heaterKeepsAnyChangeExceptOff() {
         let heater = Self.device("heater")
         #expect(ManualControlPolicy.confirmation(facet: Self.facet(name: "brightness"), value: .number(2), for: heater) != nil)
-        #expect(ManualControlPolicy.confirmation(facet: Self.facet(service: "indicator-light"), value: .bool(true), for: heater) != nil)
+        #expect(ManualControlPolicy.confirmation(facet: Self.facet(name: "heater-power"), value: .bool(true), for: heater) != nil)
+        #expect(ManualControlPolicy.confirmation(facet: Self.facet(name: "heater-power"), value: .bool(false), for: heater) == nil)
+        #expect(ManualControlPolicy.confirmation(facet: Self.facet(service: "indicator-light"), value: .bool(true), for: heater) == nil)
         #expect(ManualControlPolicy.confirmation(facet: Self.facet(), value: .bool(false), for: heater) == nil)
         #expect(ManualControlPolicy.confirmation(facet: Self.facet(service: "indicator-light"), value: .bool(false), for: heater) == nil)
         #expect(ManualControlPolicy.confirmation(facet: Self.facet(name: "mode"), value: .string("off"), for: heater) == nil)

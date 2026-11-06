@@ -42,6 +42,10 @@ extension HomeStore {
                 return nil
             }
         } else {
+            if case .valve(let spec) = previous.kind {
+                let opening = !spec.isOpen
+                guard opening ? spec.openWritable : spec.closeWritable else { return nil }
+            }
             let operation: IntentOperation
             switch previous.kind {
             case .vacuum(let spec):
@@ -141,6 +145,18 @@ extension HomeStore {
             s.isOn.toggle()
             updated.kind = .appliance(s)
             command = .setSwitch(entityId: s.powerEntityId, isOn: s.isOn)
+
+        case .humidifier(var s):
+            s.isOn.toggle()
+            updated.kind = .humidifier(s)
+            command = .setSwitch(entityId: s.entityId, isOn: s.isOn)
+
+        case .valve(var s):
+            let open = !s.isOpen
+            s.isOpen = open
+            s.motion = nil
+            updated.kind = .valve(s)
+            command = .setSwitch(entityId: s.entityId, isOn: open)
 
         case .speaker, .fridge, .sensor:
             toggleExpanded(device.id)
@@ -454,6 +470,34 @@ extension HomeStore {
         commitManualWrite(from: previous, to: nil, command: .pressButton(entityId: action.entityId), lock: nil)
     }
 
+    public func setHumidifierMode(_ deviceId: String, mode: String) {
+        guard let previous = controllableDevice(deviceId), case .humidifier(var s) = previous.kind,
+              s.modeWritable, s.availableModes.contains(mode) else { return }
+        var updated = previous
+        s.currentMode = mode
+        updated.kind = .humidifier(s)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setSelectOption(entityId: s.entityId, option: mode),
+            lock: .seconds(2.2)
+        )
+    }
+
+    public func setHumidifierHumidity(_ deviceId: String, percent: Int) {
+        guard let previous = controllableDevice(deviceId), case .humidifier(var s) = previous.kind,
+              s.humidityWritable, let target = s.targetHumidity else { return }
+        let clamped = max(s.minHumidity, min(s.maxHumidity, percent))
+        guard clamped != target else { return }
+        var updated = previous
+        s.targetHumidity = clamped
+        updated.kind = .humidifier(s)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setHumidity(entityId: s.entityId, percent: clamped),
+            lock: .seconds(2.5), debounceKey: "\(deviceId).humidifier-humidity"
+        )
+    }
+
     public func setClimateFanMode(_ deviceId: String, fanMode: String) {
         guard let previous = controllableDevice(deviceId), case .climate(var s) = previous.kind else { return }
         guard allowManualControl(.fanSpeed(fanMode), for: previous) else { return }
@@ -606,11 +650,12 @@ extension HomeStore {
     public func setFacetValue(_ deviceId: String, controlId: String, value: JSONValue) {
         guard let device = controllableDevice(deviceId), device.isOnline,
               var facets = deviceFacets[deviceId],
-              let index = facets.firstIndex(where: { $0.id == controlId }),
-              facetWriteAllowed(facets[index]),
-              case .property(let entityId, let piid) = facets[index].target,
-              facets[index].value != value else { return }
+              let index = facets.firstIndex(where: { $0.id == controlId }) else { return }
         let control = facets[index]
+        guard facetWriteAllowed(control),
+              control.target?.isAction == false,
+              control.value != value,
+              let command = Self.facetCommand(for: control, value: value) else { return }
         let key = facetWriteKey(deviceId, controlId)
         let previous = facetWrites[key]
         guard previous != nil || allowManualControl(facet: control, value: value, for: device) else { return }
@@ -619,12 +664,12 @@ extension HomeStore {
         facets[index].value = value
         deviceFacets[deviceId] = facets
         extendFacetLock(deviceId, duration: .seconds(2.2))
-        if previous == nil, let origin {
+        if previous == nil, let origin, let restore = Self.facetCommand(for: control, value: origin) {
             let rawTitle = control.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let title = rawTitle.isEmpty ? control.name : rawTitle
             scheduleUndoBanner(
                 title: L10n.tr("已更新 \(device.name) 的\(title)", "Updated \(device.name): \(title)"),
-                restoreCommands: [.setMiotProperty(entityId: entityId, piid: piid, value: origin)],
+                restoreCommands: [restore],
                 previousDevices: [device], deviceCount: 1
             )
             pending.bannerID = undoBanner?.id
@@ -632,7 +677,7 @@ extension HomeStore {
         facetWrites[key] = pending
         dispatchFacetWrite(
             device: device, controlId: controlId, pending: pending,
-            command: .setMiotProperty(entityId: entityId, piid: piid, value: value),
+            command: command,
             adjustment: control.kind == .slider
         )
     }
@@ -640,13 +685,80 @@ extension HomeStore {
     public func runFacetAction(_ deviceId: String, controlId: String) {
         guard let device = controllableDevice(deviceId), device.isOnline,
               let control = deviceFacets[deviceId]?.first(where: { $0.id == controlId }),
-              facetWriteAllowed(control), case .action(let entityId) = control.target,
-              allowManualControl(facet: control, value: nil, for: device) else { return }
+              facetWriteAllowed(control), let target = control.target else { return }
+        let command: DeviceCommand
+        switch target {
+        case .action(let entityId):
+            command = .callMiotAction(entityId: entityId)
+        case .haAction(let entityId):
+            command = .pressButton(entityId: entityId)
+        case .property, .haProperty:
+            return
+        }
+        guard allowManualControl(facet: control, value: nil, for: device) else { return }
         extendFacetLock(deviceId, duration: .seconds(2.0))
         let pending = FacetWriteState(token: UUID(), origin: nil, bannerID: nil)
         facetWrites[facetWriteKey(deviceId, controlId)] = pending
         dispatchFacetWrite(device: device, controlId: controlId, pending: pending,
-                           command: .callMiotAction(entityId: entityId), adjustment: false)
+                           command: command, adjustment: false)
+    }
+
+    /// The write a facet sends for `value`. MIoT properties carry the raw value; a Home Assistant
+    /// facet picks the service by its domain and turns a select's option index back into its label.
+    nonisolated static func facetCommand(for control: FacetControl, value: JSONValue) -> DeviceCommand? {
+        guard let target = control.target else { return nil }
+        switch target {
+        case .property(let entityId, let piid):
+            return .setMiotProperty(entityId: entityId, piid: piid, value: value)
+        case .haProperty(let entityId):
+            switch control.kind {
+            case .toggle:
+                guard let isOn = value.boolValue else { return nil }
+                return .setSwitch(entityId: entityId, isOn: isOn)
+            case .select:
+                guard let index = value.intValue,
+                      let option = control.options.first(where: { $0.value == index }) else { return nil }
+                return .setSelectOption(entityId: entityId, option: option.label)
+            case .slider:
+                guard let number = value.doubleValue else { return nil }
+                return .setNumberValue(entityId: entityId, value: number)
+            case .reading, .button:
+                return nil
+            }
+        case .action, .haAction:
+            return nil
+        }
+    }
+
+    /// The facet value an undo command restores, or nil when the command is not a property write.
+    nonisolated static func facetValue(for command: DeviceCommand, control: FacetControl) -> JSONValue? {
+        switch command {
+        case .setSwitch(_, let isOn):
+            return .bool(isOn)
+        case .setSelectOption(_, let option):
+            guard let match = control.options.first(where: { $0.label == option }) else { return nil }
+            return .number(Double(match.value))
+        case .setNumberValue(_, let value):
+            return .number(value)
+        case .setMiotProperty(_, _, let value):
+            return value
+        default:
+            return nil
+        }
+    }
+
+    /// The facet target a generic property command addresses. Only a target that matches an
+    /// existing facet row makes the command a facet write, so card commands cannot be mistaken
+    /// for one.
+    nonisolated static func facetTarget(for command: DeviceCommand) -> FacetTarget? {
+        switch command {
+        case .setMiotProperty(let entityId, let piid, _):
+            return .property(entityId: entityId, piid: piid)
+        case .setSwitch(let entityId, _), .setSelectOption(let entityId, _), .setNumberValue(let entityId, _):
+            return .haProperty(entityId: entityId)
+        default:
+            return nil
+        }
     }
 
     private func facetWriteAllowed(_ control: FacetControl) -> Bool {
@@ -702,8 +814,8 @@ extension HomeStore {
             } catch {
                 guard self.controlContextID == context,
                       self.facetWrites[key]?.token == pending.token else { return }
-                if case .setMiotProperty = command,
-                   let index = self.deviceFacets[deviceId]?.firstIndex(where: { $0.id == controlId }) {
+                if let index = self.deviceFacets[deviceId]?.firstIndex(where: { $0.id == controlId }),
+                   self.deviceFacets[deviceId]?[index].target?.isAction == false {
                     self.deviceFacets[deviceId]?[index].value = pending.origin
                 }
                 if let bannerID = pending.bannerID, self.undoBanner?.id == bannerID {

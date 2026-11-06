@@ -555,6 +555,145 @@ struct SnapshotTests {
         )
     }
 
+    private static var humidifier: SmartDevice {
+        SmartDevice(
+            id: "snapshot-humidifier",
+            name: "卧室加湿器",
+            roomId: "bedroom",
+            roomName: "卧室",
+            model: "deerma.humidifier.jsq5",
+            isOnline: true,
+            kind: .humidifier(HumidifierSpec(
+                entityId: "humidifier.bedroom",
+                isOn: true,
+                currentMode: "auto",
+                availableModes: ["auto", "sleep", "strong"],
+                modeWritable: true,
+                targetHumidity: 55,
+                minHumidity: 30,
+                maxHumidity: 80,
+                step: 5,
+                humidityWritable: true,
+                currentHumidity: 48,
+                powerWritable: true
+            ))
+        )
+    }
+
+    private static var valve: SmartDevice {
+        SmartDevice(
+            id: "snapshot-valve",
+            name: "入户水阀",
+            roomId: "kitchen",
+            roomName: "厨房",
+            model: "tuya.valve",
+            isOnline: true,
+            kind: .valve(ValveSpec(
+                entityId: "valve.water_main",
+                isOpen: true,
+                deviceClass: "water"
+            ))
+        )
+    }
+
+    @Test("Humidifier and valve cards render their own controls")
+    func haDomainCardSnapshots() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+
+        assertRendered(
+            snapshotReady(
+                DeviceCardView(device: Self.humidifier, store: fixture.store, showRoomBadge: true)
+                    .padding(8)
+                    .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 140),
+            named: "card-humidifier-zh-light"
+        )
+
+        fixture.store.expandedDeviceId = Self.humidifier.id
+        assertRendered(
+            snapshotReady(
+                DeviceCardView(device: Self.humidifier, store: fixture.store, showRoomBadge: true)
+                    .padding(8)
+                    .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 280),
+            named: "expanded-humidifier-zh-light"
+        )
+
+        fixture.store.expandedDeviceId = nil
+        assertRendered(
+            snapshotReady(
+                DeviceCardView(device: Self.valve, store: fixture.store, showRoomBadge: true)
+                    .padding(8)
+                    .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 140),
+            named: "card-valve-zh-light"
+        )
+    }
+
+    @Test("Home Assistant facets render as toggles, selects, sliders, buttons and readings")
+    func haFacetDrawerSnapshot() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+        let device = Self.humidifier
+        fixture.store.deviceFacets[device.id] = [
+            FacetControl(
+                id: "switch.living_led", kind: .toggle, name: "indicator-light", title: "指示灯",
+                serviceName: "switch", value: .bool(true),
+                isWritable: true, writesByDefault: true, isHighValue: false,
+                target: .haProperty(entityId: "switch.living_led")
+            ),
+            FacetControl(
+                id: "select.living_fan_mode", kind: .select, name: "fan-mode", title: "风速",
+                serviceName: "select", value: .number(1),
+                options: [
+                    MiotFacetOption(value: 0, label: "低"),
+                    MiotFacetOption(value: 1, label: "中"),
+                    MiotFacetOption(value: 2, label: "高"),
+                ],
+                isWritable: true, writesByDefault: true, isHighValue: false,
+                target: .haProperty(entityId: "select.living_fan_mode")
+            ),
+            FacetControl(
+                id: "number.target_level", kind: .slider, name: "target-level", title: "目标档位",
+                serviceName: "number", value: .number(40),
+                range: MiotFacetRange(min: 0, max: 100, step: 10),
+                isWritable: true, writesByDefault: false, isHighValue: true,
+                target: .haProperty(entityId: "number.target_level")
+            ),
+            FacetControl(
+                id: "button.living_self_clean", kind: .button, name: "self-clean", title: "自清洁",
+                serviceName: "button",
+                isWritable: true, writesByDefault: false, isHighValue: false,
+                target: .haAction(entityId: "button.living_self_clean")
+            ),
+            FacetControl(
+                id: "sensor.living_battery", kind: .reading, name: "battery", title: "电量",
+                serviceName: "sensor", unit: "percentage", value: .number(88),
+                isWritable: false, writesByDefault: false, isHighValue: false
+            ),
+        ]
+
+        assertRendered(
+            snapshotReady(
+                DeviceFacetSection(
+                    device: device,
+                    store: fixture.store,
+                    accent: DesignTokens.active,
+                    statusColor: DesignTokens.active,
+                    initiallyExpanded: true
+                )
+                .padding(10)
+                .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 360),
+            named: "ha-facet-drawer-expanded-zh-light"
+        )
+    }
+
     @Test("Climate card wears its tinted platter when on")
     func climateOnCardSnapshot() async throws {
         let fixture = try await SnapshotFixture()
