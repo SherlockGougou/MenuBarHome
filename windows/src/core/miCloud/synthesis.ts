@@ -1,8 +1,12 @@
+import { t } from "../i18n.js";
 import {
   deviceEnvironmentReading,
   environmentReadingPriority,
+  type ApplianceActionKind,
   type DeviceKind,
   type EnvironmentReading,
+  type FacetControl,
+  type GenericSpec,
   type RoomCategory,
   type SmartDevice,
   type SynthesizedHome,
@@ -19,6 +23,7 @@ import {
   hvacModeFromDescription,
   inferFallbackSpec,
   isMainsBreaker,
+  makeMiotActionAddress,
   makeMiotAddress,
   miotShortName,
   type MiotDeviceSpec,
@@ -26,7 +31,8 @@ import {
   type MiotService,
   type MiotValueListItem,
 } from "./spec.js";
-import { miotFallbackAllows } from "./facets.js";
+import { DEVICE_PROFILES, buildMiotFacets, facetControls, miotFallbackAllows } from "./facets.js";
+import { facetValue, genericSymbolName, genericTypeTitle } from "../miotFacetText.js";
 import { percentFromRaw } from "./percentScale.js";
 
 export function exposesWrite(access: readonly string[] | undefined): boolean {
@@ -41,6 +47,9 @@ export function readOnlyFlags(flags: Record<string, boolean>): Record<string, fa
   return out;
 }
 
+/** A read-only property map: synthesis also runs to discover which keys it polls. */
+const EMPTY_VALUES: ReadonlyMap<string, unknown> = new Map<string, unknown>();
+
 export function miotBool(val: unknown): boolean | null {
   if (typeof val === "boolean") return val;
   if (typeof val === "number") return val !== 0;
@@ -53,35 +62,196 @@ interface MiotBuildPlan {
   readonly spec: MiotDeviceSpec;
 }
 
-/** Exact motor value-list words only, matching macOS `coverMotorDescription`. */
+type CoverSubtype = "curtain" | "window-opener" | "garage-door" | "clothes-airer";
+type CoverMotion = "stopped" | "opening" | "closing";
+
+/** MIoT service short name → subtype, matching macOS `CoverSubtype(miotServiceShortName:)`. */
+export function coverSubtype(serviceName: string): CoverSubtype {
+  switch (serviceName) {
+    case "curtain":
+      return "curtain";
+    case "airer":
+      return "clothes-airer";
+    default:
+      // An unlisted cover service keeps the riskier class so a new cover never lands in a
+      // safer one by omission.
+      return "window-opener";
+  }
+}
+
+/** An airer reports how far it has lowered (0 at the top); the card shows height (#299). */
+function coverInvertsPosition(subtype: CoverSubtype): boolean {
+  return subtype === "clothes-airer";
+}
+
+/** A position within two points of either end is parked on that limit (#298). */
+function snapCoverPosition(percent: number): number {
+  if (percent <= 2) return 0;
+  if (percent >= 98) return 100;
+  return percent;
+}
+
+/** One MIoT `status` value-list word, classified by its letters only (macOS `CoverStatusWord`). */
+type CoverStatusWord = "opening" | "closing" | "open" | "closed" | "stopped";
+
+function coverStatusWord(description: string | null | undefined): CoverStatusWord | null {
+  const trimmed = (description ?? "").trim();
+  switch (trimmed) {
+    case "打开中":
+    case "开启中":
+      return "opening";
+    case "关闭中":
+      return "closing";
+    case "已开":
+    case "完全打开":
+      return "open";
+    case "已关":
+    case "完全关闭":
+      return "closed";
+    case "停止":
+    case "已停止":
+    case "暂停":
+    case "空闲":
+      return "stopped";
+    default:
+      break;
+  }
+  const letters = Array.from(trimmed.toLowerCase())
+    .filter((c) => c >= "a" && c <= "z")
+    .join("");
+  switch (letters) {
+    case "opening":
+    case "up":
+    case "uping":
+    case "rise":
+    case "rising":
+      return "opening";
+    case "closing":
+    case "down":
+    case "dowm":
+    case "falling":
+    case "fallin":
+    case "dropping":
+    case "downing":
+    case "lower":
+      return "closing";
+    case "open":
+    case "opened":
+    case "fullyopen":
+    case "stopathighest":
+    case "stopatupperlimit":
+    case "stopupperlimit":
+    case "upperlimitstop":
+    case "ceiling":
+      return "open";
+    case "close":
+    case "closed":
+    case "closeover":
+    case "stopatlowest":
+    case "stoplowerlimit":
+    case "lowerlimitstop":
+    case "floor":
+    case "lowerlimit":
+      return "closed";
+    case "stop":
+    case "stopped":
+    case "pause":
+    case "paused":
+    case "idle":
+    case "calibration":
+    case "calibrating":
+    case "partialopen":
+    case "partialclosed":
+    case "manual":
+      return "stopped";
+    default:
+      return null;
+  }
+}
+
+/** A status value whose list names travel is the authoritative motion signal. */
+function coverStatusDefinesTravel(status: MiotProperty | null): boolean {
+  return (
+    status?.valueList?.some((item) => {
+      const word = coverStatusWord(item.description);
+      return word === "opening" || word === "closing";
+    }) ?? false
+  );
+}
+
+/** The only motion signal for a spec without travel words; snap before comparing (#298). */
+function inferredCoverMotion(current: number | null, target: number | null): CoverMotion {
+  const snappedCurrent = current === null ? null : snapCoverPosition(current);
+  const snappedTarget = target === null ? null : snapCoverPosition(target);
+  if (snappedCurrent === null || snappedTarget === null || snappedCurrent === snappedTarget) return "stopped";
+  return snappedTarget > snappedCurrent ? "opening" : "closing";
+}
+
+/**
+ * A dedicated travel word (`Opening`, `Rising`, `Closing`, `Falling`) is authoritative. Bare
+ * `Open`/`Close` are terminal end words in the released library, so they only become travel when
+ * the status list has no dedicated travel word and the position still differs from the target.
+ */
+function coverMotion(
+  statusDefinesTravel: boolean,
+  word: CoverStatusWord | null,
+  current: number | null,
+  target: number | null,
+): CoverMotion {
+  if (word === "opening" || word === "closing") return word;
+  if (word === "stopped") return "stopped";
+  if (word === "open" || word === "closed") {
+    return statusDefinesTravel ? "stopped" : inferredCoverMotion(current, target);
+  }
+  if (statusDefinesTravel) return "stopped";
+  return inferredCoverMotion(current, target);
+}
+
+/**
+ * The target is the card's position while the motor travels, so intermediate current-position
+ * reports cannot pull the card back. At rest the real current position wins.
+ */
+function coverDisplayPosition(
+  current: number | null,
+  target: number | null,
+  motion: CoverMotion,
+): number | null {
+  const snappedCurrent = current === null ? null : snapCoverPosition(current);
+  const snappedTarget = target === null ? null : snapCoverPosition(target);
+  const resting = snappedCurrent ?? snappedTarget;
+  if (motion === "stopped") return resting;
+  if (snappedCurrent === null || snappedTarget === null) return resting;
+  return motion === "opening" ? Math.max(snappedCurrent, snappedTarget) : Math.min(snappedCurrent, snappedTarget);
+}
+
+function coverStatusFallbackPosition(word: CoverStatusWord | null): number | null {
+  if (word === "open") return 100;
+  if (word === "closed") return 0;
+  return null;
+}
+
+/**
+ * Exact motor value-list words only: a substring match could turn "Not Open" into an open
+ * command. Airers and roller blinds say `Up` / `Down` (#299).
+ */
 function coverMotorDescription(
   items: readonly MiotValueListItem[],
   word: "open" | "close" | "pause",
 ): string | null {
   const aliases =
-    word === "open" ? ["open", "打开"] : word === "close" ? ["close", "关闭"] : ["pause", "stop", "暂停"];
+    word === "open"
+      ? ["open", "打开", "up", "raise"]
+      : word === "close"
+        ? ["close", "关闭", "down", "lower"]
+        : ["pause", "stop", "暂停"];
   return items.find((item) => aliases.includes(item.description.trim().toLowerCase()))?.description ?? null;
 }
 
-/** Some curtain specs use `fault`, and some publish a healthy code of 1 named "No Fault". */
-function coverFaultText(code: number | null, description: string | null): string | null {
+/** Some specs use `fault`, and some publish a healthy code of 1 named "No Fault". */
+function faultDescription(code: number | null, description: string | null): string | null {
   if (code === null || code === 0) return null;
   if (description?.toLowerCase().includes("no fault")) return null;
   return description ?? String(code);
-}
-
-/** Only a status that names travel counts as moving; "Open"/"Close" are end states on some specs. */
-function coverMotion(description: string | null | undefined): "stopped" | "opening" | "closing" {
-  switch ((description ?? "").trim().toLowerCase()) {
-    case "opening":
-    case "打开中":
-      return "opening";
-    case "closing":
-    case "关闭中":
-      return "closing";
-    default:
-      return "stopped";
-  }
 }
 
 /** A track card takes its service description, localized like macOS `trackName`. */
@@ -103,6 +273,237 @@ function curtainTrackName(description: string | undefined, fallback: string): st
     default:
       return value;
   }
+}
+
+/** Services the shared appliance card reads by default, matching macOS `applianceServiceNames`. */
+export const APPLIANCE_SERVICE_NAMES: readonly string[] = [
+  "water-heater",
+  "boiler",
+  "washer",
+  "dryer",
+  "clothes-dryer",
+  "cleanfly-dryer",
+  "dishwasher",
+];
+
+/** Families whose `status` and `run-status` words belong to the shared activity vocabulary. */
+const ACTIVITY_SERVICES = new Set(["washer", "dryer", "clothes-dryer", "cleanfly-dryer", "dishwasher"]);
+
+/**
+ * Whether a service can carry the generic tile's main switch. The device's own service is the
+ * only candidate; light-like types may also use their `light` service. Companion services
+ * (`indicator-light`, `night-light`, `ambient-light`, `screen`, `led`) never qualify (#6).
+ */
+function isMainPowerService(serviceName: string, deviceType: string): boolean {
+  if (serviceName === deviceType) return true;
+  if (deviceType.startsWith(`${serviceName}-`) || deviceType.endsWith(`-${serviceName}`)) return true;
+  if (deviceType.includes("light") || deviceType.includes("lamp")) return serviceName === "light";
+  return false;
+}
+
+/** The no-argument actions the shared appliance card can run, with the names each may use. */
+const APPLIANCE_ACTION_ALIASES: Readonly<Record<ApplianceActionKind, readonly string[]>> = {
+  start: ["start", "start-heating", "start-wash", "start-dry", "start-drying", "开始"],
+  pause: ["pause", "暂停"],
+  stop: ["stop", "stop-washing", "stop-dry", "stop-drying", "停止"],
+};
+
+interface ApplianceActivityWord {
+  readonly label: string;
+  readonly isStage: boolean;
+  readonly isTerminal: boolean;
+}
+
+/**
+ * One MIoT `status` or `run-status` word, classified by its letters only. Vendors spell the same
+ * phase differently (`Rinsing` / `Rinsh`), so punctuation, spaces and digits are dropped (#3).
+ */
+function applianceActivity(description: string | null | undefined): ApplianceActivityWord | null {
+  const trimmed = (description ?? "").trim();
+  const word = (label: string, isStage: boolean, isTerminal: boolean): ApplianceActivityWord => ({
+    label,
+    isStage,
+    isTerminal,
+  });
+  switch (trimmed) {
+    case "待机":
+    case "空闲":
+    case "关机":
+      return word(t("待机"), false, true);
+    case "预约中":
+      return word(t("预约中"), false, true);
+    case "称重中":
+      return word(t("称重中"), true, false);
+    case "预洗中":
+      return word(t("预洗中"), true, false);
+    case "洗涤中":
+    case "洗护中":
+      return word(t("洗涤中"), true, false);
+    case "漂洗中":
+    case "漂洗":
+      return word(t("漂洗中"), true, false);
+    case "脱水中":
+    case "脱水":
+      return word(t("脱水中"), true, false);
+    case "排水中":
+    case "排水":
+      return word(t("排水中"), true, false);
+    case "浸泡中":
+      return word(t("浸泡中"), true, false);
+    case "烘干中":
+      return word(t("烘干中"), true, false);
+    case "护衣中":
+      return word(t("护衣中"), true, false);
+    case "除菌中":
+      return word(t("除菌中"), true, false);
+    case "保管中":
+      return word(t("保管中"), false, true);
+    case "运行中":
+    case "工作中":
+      return word(t("运行中"), false, false);
+    case "已暂停":
+    case "暂停中":
+      return word(t("已暂停"), false, true);
+    case "已完成":
+    case "完成":
+      return word(t("已完成"), false, true);
+    case "中止中":
+      return word(t("正在中止"), false, true);
+    case "故障":
+    case "报警":
+      return word(t("故障"), false, true);
+    default:
+      break;
+  }
+  const letters = Array.from(trimmed.toLowerCase())
+    .filter((c) => c >= "a" && c <= "z")
+    .join("");
+  if (!letters) return null;
+  // A terminal word wins over the phase it names: `Washing Completed` is not washing.
+  if (letters.includes("paus")) return word(t("已暂停"), false, true);
+  if (letters.includes("fault") || letters.includes("error")) {
+    // `No Faults` is the healthy code several specs publish, not a fault state.
+    return letters.includes("nofault") ? null : word(t("故障"), false, true);
+  }
+  if (letters.includes("abort") || letters.includes("cancel")) return word(t("正在中止"), false, true);
+  if (letters.includes("complete") || letters.includes("finish") || letters === "done") {
+    return word(t("已完成"), false, true);
+  }
+  // Before the scheduled words: `Preservation` also contains `reserv`.
+  if (letters.includes("preserv")) return word(t("保管中"), false, true);
+  if (
+    letters.includes("reserv") ||
+    letters.includes("delay") ||
+    letters.includes("appoint") ||
+    letters.includes("schedul")
+  ) {
+    return word(t("预约中"), false, true);
+  }
+  if (["idle", "inactive", "off", "notrun", "ready", "standby", "shutdown", "standbymode"].includes(letters)) {
+    return word(t("待机"), false, true);
+  }
+  if (
+    letters.includes("anticrease") ||
+    letters.includes("blow") ||
+    letters.includes("shake") ||
+    letters.includes("care")
+  ) {
+    return word(t("护衣中"), true, false);
+  }
+  if (letters.includes("prewash")) return word(t("预洗中"), true, false);
+  // `Rinse`, `Rinsing`, and the released spelling `Rinsh`.
+  if (letters.includes("rins")) return word(t("漂洗中"), true, false);
+  if (letters.includes("drain")) return word(t("排水中"), true, false);
+  if (letters.includes("spin")) return word(t("脱水中"), true, false);
+  if (letters.includes("steril")) return word(t("除菌中"), true, false);
+  if (letters.includes("weigh")) return word(t("称重中"), true, false);
+  if (letters.includes("dry")) return word(t("烘干中"), true, false);
+  if (letters.includes("soak")) return word(t("浸泡中"), true, false);
+  if (letters.includes("wash")) return word(t("洗涤中"), true, false);
+  if (["busy", "running", "working", "on", "run"].includes(letters)) return word(t("运行中"), false, false);
+  return null;
+}
+
+/**
+ * One activity line. The coarse `status` owns a terminal word, because a washer keeps naming the
+ * phase it was paused in; while the machine works, a `run-status` phase is more specific (#3).
+ * A word this vocabulary does not know is shown as the spec wrote it.
+ */
+function applianceActivityText(status: string | null, runStatus: string | null): string | null {
+  const coarse = applianceActivity(status);
+  if (coarse?.isTerminal) return coarse.label;
+  const stage = applianceActivity(runStatus);
+  if (stage?.isStage) return stage.label;
+  if (coarse) return coarse.label;
+  if (stage) return stage.label;
+  return status ?? runStatus;
+}
+
+/** Shared appliance-card statuses: `Close` means standby and `Wash` means bathing (#300, #4). */
+function applianceStatusDescription(description: string): string {
+  switch (description.trim().toLowerCase()) {
+    case "close":
+    case "closed":
+    case "off":
+    case "shutdown":
+      return t("待机");
+    case "open":
+    case "on":
+      return t("已开启");
+    case "wash":
+    case "washing":
+      return t("洗浴中");
+    default:
+      break;
+  }
+  const lower = description.trim().toLowerCase();
+  if (lower.includes("idle") || lower.includes("standby") || lower.includes("off") || lower.includes("shutdown")) {
+    return t("待机");
+  }
+  if (
+    lower.includes("keep warm") ||
+    lower.includes("keep-warm") ||
+    lower.includes("warm") ||
+    lower.includes("insulation")
+  ) {
+    return t("保温中");
+  }
+  if (
+    lower.includes("cook") ||
+    lower.includes("work") ||
+    lower.includes("busy") ||
+    lower.includes("run") ||
+    lower.includes("boil") ||
+    lower.includes("heat")
+  ) {
+    return t("运行中");
+  }
+  if (lower.includes("preheat")) return t("预热中");
+  if (lower.includes("delayed") || lower.includes("delay-off") || lower.includes("延时")) return t("延时关机");
+  if (lower.includes("delay") || lower.includes("appoint") || lower.includes("reservation")) return t("预约中");
+  if (lower.includes("clean") || lower.includes("清洗")) return t("清洗中");
+  if (lower.includes("paus")) return t("已暂停");
+  if (lower.includes("finish") || lower.includes("complete") || lower.includes("cooked")) return t("已完成");
+  if (lower.includes("error") || lower.includes("fault")) return t("故障");
+  return description;
+}
+
+function applianceStatusText(service: string, status: string | null, runStatus: string | null): string | null {
+  if (ACTIVITY_SERVICES.has(service)) return applianceActivityText(status, runStatus);
+  return status === null ? null : applianceStatusDescription(status);
+}
+
+/** `left-time` is minutes in most specs; a few released models publish seconds or hours (#3). */
+function remainingMinutes(ref: { readonly prop: MiotProperty; readonly val: unknown } | null): number | null {
+  if (!ref || typeof ref.val !== "number" || !Number.isFinite(ref.val) || ref.val <= 0) return null;
+  const unit = (ref.prop.unit ?? "").trim().toLowerCase();
+  const minutes =
+    unit === "seconds" || unit === "second" || unit === "sec" || unit === "s"
+      ? Math.ceil(ref.val / 60)
+      : unit === "hours" || unit === "hour" || unit === "h"
+        ? ref.val * 60
+        : Math.round(ref.val);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
 }
 
 export function hasScaleToken(comment: string, token: string): boolean {
@@ -222,6 +623,8 @@ export function interpretLockStatus(description: string): string | null {
 
 /** Services that count as this device type's own primary service. */
 export function preferredMiotServices(deviceType: string): string[] {
+  const appliance = DEVICE_PROFILES.appliances[deviceType];
+  if (appliance) return [...appliance.primary];
   if (deviceType === "outlet") return ["outlet", "switch"];
   if (deviceType === "camera" || deviceType === "cateye" || deviceType === "video-doorbell") {
     return ["camera-control", "video-doorbell"];
@@ -249,6 +652,12 @@ export function primaryMiotService(spec: MiotDeviceSpec): MiotService | undefine
     "vacuum",
     "curtain",
     "window-opener",
+    "airer",
+    "water-heater",
+    "washer",
+    "dryer",
+    "clothes-dryer",
+    "dishwasher",
     "fridge",
     "camera-control",
     "outlet",
@@ -272,9 +681,22 @@ export function primaryMiotService(spec: MiotDeviceSpec): MiotService | undefine
     "temperature-humidity-sensor",
   ];
   const devShort = miotShortName(spec.type);
+  // A device type the profile table lists as an appliance takes the first service the table
+  // names, even though the type itself has no same-name service (#4).
+  const appliance = DEVICE_PROFILES.appliances[devShort];
+  if (appliance) {
+    for (const serviceName of appliance.primary) {
+      const service = spec.services.find((s) => miotShortName(s.type) === serviceName);
+      if (service) return service;
+    }
+    return undefined;
+  }
   const preferredServices = preferredMiotServices(devShort);
-  // A shut-off valve without a power meter is not a breaker and stays unsupported (#265).
-  const claims = (short: string) => short !== "electronic-valve" || isMainsBreaker(spec);
+  // A shut-off valve without a power meter is not a breaker and stays unsupported (#265), and a
+  // `water-heater` service belongs to a water heater rather than claiming another device (#300).
+  const claims = (short: string) =>
+    (short !== "electronic-valve" || isMainsBreaker(spec)) &&
+    (short !== "water-heater" || devShort === "water-heater");
   let primaryService: MiotService | undefined = spec.services.find((s) => {
     const sShort = miotShortName(s.type);
     return preferredServices.includes(sShort) && priority.includes(sShort) && claims(sShort);
@@ -358,6 +780,7 @@ export const MiotSynthesizer = {
 
     const smartDevices: SmartDevice[] = [];
     const readings: EnvironmentReading[] = [];
+    const facetsByDevice: Record<string, readonly FacetControl[]> = {};
 
     for (const record of devices) {
       if (splitParents.has(record.did)) continue;
@@ -371,9 +794,30 @@ export const MiotSynthesizer = {
       const roomName = room?.name.trim() || "全屋";
       const roomId = room ? `room_${room.id}` : "other";
 
-      for (const plan of this.buildPlans(record, spec)) {
-        const built = this.buildDeviceKind(miotDid(record), plan.spec, values);
-        if (!built) continue;
+      const plans = this.buildPlans(record, spec);
+      for (const plan of plans) {
+        const touched = new Set<string>();
+        const consumed = new Set<string>();
+        const built = this.buildDeviceKind(miotDid(record), plan.spec, values, touched, consumed);
+        if (!built) {
+          // The last rung of the resolution ladder (#6): no dedicated builder, but the generic
+          // facet layer still finds a control or a reading. A mains breaker stays out.
+          if (plans.length > 1 || isMainsBreaker(spec)) continue;
+          const generic = this.genericCard(record, plan.spec, values);
+          if (!generic) continue;
+          smartDevices.push({
+            id: plan.id,
+            name: plan.name,
+            roomId,
+            roomName,
+            model: record.model,
+            isOnline: record.isOnline,
+            kind: generic.kind,
+            ...(room?.isSharedHome === true ? { isSharedHome: true } : {}),
+          });
+          if (generic.facets.length > 0) facetsByDevice[plan.id] = generic.facets;
+          continue;
+        }
 
         const kind =
           record.isOnline || built.kind !== "sensor" || !built.statusText || !AFFIRMATIVE_LOCK_STATUS.has(built.statusText)
@@ -394,6 +838,19 @@ export const MiotSynthesizer = {
         const reading = deviceEnvironmentReading(smartDevice);
         if (reading) {
           readings.push(reading);
+        }
+
+        // A mains breaker offers no 更多设置 writes even with advanced writes on (#265).
+        if (!isMainsBreaker(spec)) {
+          const facets = facetControls(
+            plan.spec,
+            miotDid(record),
+            values,
+            primaryMiotService(plan.spec)?.iid ?? null,
+            new Set([...touched, ...consumed]),
+            record.model,
+          );
+          if (facets.length > 0) facetsByDevice[plan.id] = facets;
         }
       }
     }
@@ -442,40 +899,135 @@ export const MiotSynthesizer = {
       rooms: roomCategories,
       environmentReadings: readings,
       scenes: [],
+      deviceFacets: facetsByDevice,
     };
   },
 
+  /**
+   * The fallback card content (#6): every generic facet, the first low-risk `on` as the main
+   * switch, and up to two high-value readings. Null when the facet layer finds nothing.
+   */
+  genericCard(
+    record: MiDeviceRecord,
+    spec: MiotDeviceSpec,
+    values: ReadonlyMap<string, unknown>
+  ): { kind: GenericSpec; facets: FacetControl[] } | null {
+    const deviceType = miotShortName(spec.type);
+    const controls = facetControls(spec, miotDid(record), values, null, new Set(), record.model);
+    if (controls.length === 0) return null;
+    const power =
+      controls
+        .map((control, index) => ({ control, index }))
+        .filter(
+          ({ control }) =>
+            control.kind === "toggle" &&
+            control.name === "on" &&
+            control.isWritable &&
+            control.writesByDefault &&
+            control.target !== null &&
+            // Only the device's own main service may supply the tile's switch. A companion
+            // indicator, night light or ambient light must never impersonate device power.
+            isMainPowerService(control.serviceName, deviceType),
+        )
+        .sort((lhs, rhs) => {
+          const lhsOwn = lhs.control.serviceName === deviceType;
+          const rhsOwn = rhs.control.serviceName === deviceType;
+          if (lhsOwn !== rhsOwn) return lhsOwn ? -1 : 1;
+          return lhs.index - rhs.index;
+        })[0]?.control ?? null;
+    const readable = controls
+      .map((control, index) => ({ control, index }))
+      .filter(({ control }) => control.kind === "reading" && control.value !== null)
+      .sort((lhs, rhs) => {
+        if (lhs.control.isHighValue !== rhs.control.isHighValue) return lhs.control.isHighValue ? -1 : 1;
+        return lhs.index - rhs.index;
+      })
+      .slice(0, 2)
+      .map(({ control }) => facetValue(control));
+    return {
+      kind: {
+        kind: "generic",
+        deviceType,
+        typeTitle: genericTypeTitle(deviceType),
+        // MIoT booleans arrive as `true`/`false` or as `1`/`0`, and both mean on.
+        isOn: miotBool(power?.value) === true,
+        powerControl: power,
+        isReadOnly: !controls.some((control) => control.isWritable),
+        readouts: readable,
+        symbolName: genericSymbolName(deviceType),
+      },
+      // The tile's main switch is not repeated under 更多设置.
+      facets: controls.filter((control) => control.id !== power?.id),
+    };
+  },
+
+  /**
+   * The (did, siid, piid) triples the synthesizer reads for this device; poll exactly these.
+   * A builder records every property it reads, so `facetProps` can poll the rest (#5).
+   */
   requiredProps(device: MiDeviceRecord, spec: MiotDeviceSpec): MiotPropKey[] {
+    const did = miotDid(device);
     const touched: MiotPropKey[] = [];
     const seen = new Set<string>();
-    const proxyValues = new Proxy(new Map<string, unknown>(), {
-      get(target, prop) {
-        if (prop === "get") {
-          return (keyStr: string) => {
-            if (!seen.has(keyStr)) {
-              seen.add(keyStr);
-              const parts = keyStr.split(".");
-              const siid = Number(parts[parts.length - 2]);
-              const piid = Number(parts[parts.length - 1]);
-              const did = parts.slice(0, -2).join(".");
-              touched.push({ did, siid, piid });
-            }
-            return target.get(keyStr);
-          };
-        }
-        return Reflect.get(target, prop);
-      },
-    });
     for (const plan of this.buildPlans(device, spec)) {
-      this.buildDeviceKind(miotDid(device), plan.spec, proxyValues);
+      const keys = new Set<string>();
+      this.buildDeviceKind(did, plan.spec, EMPTY_VALUES, keys);
+      for (const key of keys) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const parts = key.split(".");
+        touched.push({ did, siid: Number(parts[0]), piid: Number(parts[1]) });
+      }
     }
     return touched;
+  },
+
+  /**
+   * Readable properties behind the 更多设置 rows (#5), polled so the drawer's values arrive with
+   * the snapshot instead of showing empty rows until a write. Card properties are excluded here
+   * because `requiredProps` already covers them.
+   */
+  facetProps(device: MiDeviceRecord, spec: MiotDeviceSpec): MiotPropKey[] {
+    if (isMainsBreaker(spec)) return [];
+    const did = miotDid(device);
+    const scoped = specForRecord(device, spec);
+    const plans = this.buildPlans(device, spec);
+    const keys: MiotPropKey[] = [];
+    const seen = new Set<string>();
+    const addReadable = (facetSpec: MiotDeviceSpec, excluding: ReadonlySet<string>) => {
+      for (const facet of buildMiotFacets(facetSpec)) {
+        if (facet.propertyId === undefined) continue;
+        const service = facetSpec.services.find((s) => s.iid === facet.serviceId);
+        const property = service?.properties.find((p) => p.iid === facet.propertyId);
+        if (!property?.access.includes("read")) continue;
+        const key = `${facet.serviceId}.${facet.propertyId}`;
+        if (excluding.has(key) || seen.has(key)) continue;
+        seen.add(key);
+        keys.push({ did, siid: facet.serviceId, piid: facet.propertyId });
+      }
+    };
+    // A generic card has no dedicated builder, so every readable facet property is its state.
+    if (plans.length === 0) {
+      addReadable(scoped, new Set());
+      return keys;
+    }
+    for (const plan of plans) {
+      const touched = new Set<string>();
+      const consumed = new Set<string>();
+      this.buildDeviceKind(did, plan.spec, EMPTY_VALUES, touched, consumed);
+      addReadable(plan.spec, new Set([...touched, ...consumed]));
+    }
+    return keys;
   },
 
   buildDeviceKind(
     did: string,
     spec: MiotDeviceSpec,
-    values: ReadonlyMap<string, unknown>
+    values: ReadonlyMap<string, unknown>,
+    /** Readable properties the builder read; they are polled and hidden from 更多设置. */
+    touched?: Set<string>,
+    /** Properties the builder owns even without reading them, e.g. a write-only motor control. */
+    consumed?: Set<string>
   ): DeviceKind | null {
     const primaryService = primaryMiotService(spec);
     if (!primaryService) return null;
@@ -485,6 +1037,7 @@ export const MiotSynthesizer = {
         (p) => miotShortName(p.type) === short && p.access.includes("read") && (!predicate || predicate(p))
       );
       if (!prop) return null;
+      touched?.add(`${s.iid}.${prop.iid}`);
       const val = values.get(propKeyString({ did, siid: s.iid, piid: prop.iid }));
       return { service: s, prop, val };
     };
@@ -492,11 +1045,14 @@ export const MiotSynthesizer = {
     const readProps = (s: MiotService, short: string) =>
       s.properties
         .filter((p) => miotShortName(p.type) === short && p.access.includes("read"))
-        .map((prop) => ({
-          service: s,
-          prop,
-          val: values.get(propKeyString({ did, siid: s.iid, piid: prop.iid })),
-        }));
+        .map((prop) => {
+          touched?.add(`${s.iid}.${prop.iid}`);
+          return {
+            service: s,
+            prop,
+            val: values.get(propKeyString({ did, siid: s.iid, piid: prop.iid })),
+          };
+        });
 
     const readFirst = (services: readonly MiotService[], short: string, predicate?: (p: MiotProperty) => boolean) => {
       const seen = new Set<number>();
@@ -817,7 +1373,7 @@ export const MiotSynthesizer = {
       };
     }
 
-    if (sName === "curtain" || sName === "window-opener") {
+    if (sName === "curtain" || sName === "window-opener" || sName === "airer") {
       const current = readProp(primaryService, "current-position");
       const target = readProp(primaryService, "target-position");
       const status = readProp(primaryService, "status");
@@ -829,33 +1385,183 @@ export const MiotSynthesizer = {
       const motor = primaryService.properties.find(
         (p) => miotShortName(p.type) === "motor-control" && p.access.includes("write"),
       );
+      // The motor is reachable from the card's own open/close/pause taps, so it never repeats
+      // under 更多设置 (macOS marks a write-only motor control as consumed, not as polled).
+      if (motor) consumed?.add(`${primaryService.iid}.${motor.iid}`);
       const items = motor?.valueList ?? [];
-      const positionSource = current ?? target;
+      const targetProperty = primaryService.properties.find((p) => miotShortName(p.type) === "target-position");
       const statusCode = typeof status?.val === "number" ? Math.trunc(status.val) : null;
       const statusDescription =
         statusCode !== null
           ? (status?.prop.valueList?.find((i) => i.value === statusCode)?.description ?? null)
           : null;
       const faultCode = typeof fault?.val === "number" ? Math.trunc(fault.val) : null;
-      const faultDescription =
+      const faultWord =
         faultCode !== null
           ? (fault?.prop.valueList?.find((i) => i.value === faultCode)?.description ?? null)
           : null;
+      const subtype = coverSubtype(sName);
+      const inverted = coverInvertsPosition(subtype);
+      const coverPercent = (ref: typeof current): number | null =>
+        ref && typeof ref.val === "number" ? percentFromRaw(ref.val, ref.prop, "proportional") : null;
+      const rawCurrent = coverPercent(current);
+      const rawTarget = coverPercent(target);
+      const currentPosition = rawCurrent === null ? null : inverted ? 100 - rawCurrent : rawCurrent;
+      const targetPosition = rawTarget === null ? null : inverted ? 100 - rawTarget : rawTarget;
+      const word = coverStatusWord(statusDescription);
+      const motion = coverMotion(
+        coverStatusDefinesTravel(status?.prop ?? null),
+        word,
+        currentPosition,
+        targetPosition,
+      );
       return {
         kind: "cover",
         entityId: makeMiotAddress(did, primaryService.iid),
-        subtype: sName,
+        subtype,
         positionPercent:
-          positionSource && typeof positionSource.val === "number"
-            ? percentFromRaw(positionSource.val, positionSource.prop, "proportional")
-            : null,
-        positionWritable: exposesWrite(target?.prop.access),
+          coverDisplayPosition(currentPosition, targetPosition, motion) ?? coverStatusFallbackPosition(word),
+        positionWritable: exposesWrite(targetProperty?.access),
         openDescription: coverMotorDescription(items, "open"),
         closeDescription: coverMotorDescription(items, "close"),
         pauseDescription: coverMotorDescription(items, "pause"),
         batteryPercent: typeof battery?.val === "number" ? Math.trunc(battery.val) : null,
-        faultText: coverFaultText(faultCode, faultDescription),
-        motion: coverMotion(statusDescription),
+        faultText: faultDescription(faultCode, faultWord),
+        motion,
+      };
+    }
+
+    const deviceType = miotShortName(spec.type);
+    const applianceProfile = DEVICE_PROFILES.appliances[deviceType];
+    const isApplianceCard =
+      (applianceProfile !== undefined && applianceProfile.primary.includes(sName)) ||
+      APPLIANCE_SERVICE_NAMES.includes(sName);
+    if (isApplianceCard) {
+      // A spec may publish a richer companion service beside the one its device type names, so
+      // the card merges the primary with the profile's companions and skips duplicates.
+      const services: MiotService[] = [];
+      const serviceIds = new Set<number>();
+      for (const service of [
+        primaryService,
+        ...(applianceProfile?.companions ?? APPLIANCE_SERVICE_NAMES).flatMap((name) =>
+          spec.services.filter((s) => miotShortName(s.type) === name),
+        ),
+      ]) {
+        if (serviceIds.has(service.iid)) continue;
+        serviceIds.add(service.iid);
+        services.push(service);
+      }
+      // A `light` companion contributes its own switch only; its `on`/`mode` must never be
+      // mistaken for the appliance's main function.
+      const lightService = services.find(
+        (service) =>
+          miotShortName(service.type) === "light" &&
+          service.properties.some((p) => miotShortName(p.type) === "on"),
+      );
+      const controls = services.filter((service) => service.iid !== lightService?.iid);
+      const companionControls = controls.filter((service) => service.iid !== primaryService.iid);
+      const writablePower = (group: readonly MiotService[]) =>
+        readFirst(group, "on", (p) => exposesWrite(p.access)) ??
+        readFirst(group, "heating", (p) => exposesWrite(p.access));
+      // The main function's own service owns power whenever it publishes it. A companion can
+      // carry the only writable copy while the primary publishes the same name read-only (#300),
+      // and this order keeps a bath heater's `heating` from being replaced by a fan switch (#4).
+      const power =
+        writablePower([primaryService]) ??
+        writablePower(companionControls) ??
+        readFirst([primaryService], "on") ??
+        readFirst([primaryService], "heating") ??
+        readFirst(companionControls, "on") ??
+        readFirst(companionControls, "heating");
+      const mode =
+        readFirst(controls, "mode", (p) => exposesWrite(p.access) && (p.valueList?.length ?? 0) > 0) ??
+        readFirst(controls, "mode", (p) => (p.valueList?.length ?? 0) > 0);
+      const target =
+        readFirst(controls, "target-temperature", (p) => exposesWrite(p.access)) ??
+        readFirst(controls, "target-temperature");
+      const readingServices = [
+        ...services,
+        ...spec.services.filter((s) => miotShortName(s.type) === "environment"),
+        ...spec.services.filter((s) => miotShortName(s.type) === "temperature-humidity-sensor"),
+      ];
+      const current = readFirst(readingServices, "temperature");
+      const humidity =
+        readFirst(readingServices, "relative-humidity") ?? readFirst(readingServices, "humidity");
+      const status = readFirst(controls, "status");
+      const runStatus = readFirst(controls, "run-status");
+      const fault = readFirst(controls, "fault") ?? readFirst(controls, "device-fault");
+      const remaining = readFirst(controls, "left-time");
+      const faultCode = typeof fault?.val === "number" ? Math.trunc(fault.val) : null;
+      const faultWord =
+        faultCode === null
+          ? null
+          : (fault?.prop.valueList?.find((i) => i.value === faultCode)?.description ?? null);
+      const lightOn = lightService ? readProp(lightService, "on") : null;
+      const fan =
+        readFirst(controls, "fan-level", (p) => exposesWrite(p.access) && (p.valueList?.length ?? 0) > 0) ??
+        readFirst(controls, "fan-level", (p) => (p.valueList?.length ?? 0) > 0);
+      const description = (ref: { readonly prop: MiotProperty; readonly val: unknown } | null) => {
+        const raw = ref?.val;
+        if (ref === null || typeof raw !== "number") return null;
+        return ref.prop.valueList?.find((i) => i.value === Math.trunc(raw))?.description ?? null;
+      };
+      const applianceAction = (kind: ApplianceActionKind) => {
+        for (const service of controls) {
+          for (const action of service.actions) {
+            if ((action.in?.length ?? 0) > 0) continue;
+            if (!APPLIANCE_ACTION_ALIASES[kind].includes(miotShortName(action.type).toLowerCase())) continue;
+            return { kind, entityId: makeMiotActionAddress(did, service.iid, action.iid) };
+          }
+        }
+        return null;
+      };
+      const address = (ref: { readonly service: MiotService } | null) =>
+        ref === null ? null : makeMiotAddress(did, ref.service.iid);
+      return {
+        kind: "appliance",
+        entityId: makeMiotAddress(did, primaryService.iid),
+        isOn: miotBool(power?.val) ?? false,
+        powerPresent: power !== null,
+        powerWritable: exposesWrite(power?.prop.access),
+        currentMode: description(mode),
+        availableModes: mode?.prop.valueList?.map((i) => i.description) ?? [],
+        modeWritable: exposesWrite(mode?.prop.access),
+        targetTemperature: typeof target?.val === "number" ? target.val : null,
+        currentTemperature: typeof current?.val === "number" ? current.val : null,
+        minTemp: target?.prop.valueRange?.[0] ?? 0,
+        maxTemp: target?.prop.valueRange?.[1] ?? 100,
+        step: target?.prop.valueRange?.[2] ?? 1,
+        temperatureWritable: exposesWrite(target?.prop.access),
+        statusText: applianceStatusText(sName, description(status), description(runStatus)),
+        faultText: faultDescription(faultCode, faultWord),
+        remainingMinutes: remainingMinutes(remaining),
+        startAction: applianceAction("start"),
+        pauseAction: applianceAction("pause"),
+        stopAction: applianceAction("stop"),
+        powerEntityId: address(power) ?? makeMiotAddress(did, primaryService.iid),
+        modeEntityId: address(mode) ?? makeMiotAddress(did, primaryService.iid),
+        temperatureEntityId: address(target) ?? makeMiotAddress(did, primaryService.iid),
+        light:
+          lightOn === null
+            ? null
+            : {
+                entityId: makeMiotAddress(did, lightOn.service.iid),
+                isOn: miotBool(lightOn.val) ?? false,
+                writable: exposesWrite(lightOn.prop.access),
+              },
+        fanLevel:
+          fan === null
+            ? null
+            : {
+                entityId: makeMiotAddress(did, fan.service.iid),
+                current: description(fan),
+                options: fan.prop.valueList?.map((i) => i.description) ?? [],
+                writable: exposesWrite(fan.prop.access),
+              },
+        currentHumidity: typeof humidity?.val === "number" ? humidity.val : null,
+        symbolName: applianceProfile?.symbol ?? null,
+        roomReading: applianceProfile?.roomReading === true,
+        heats: applianceProfile?.heats ?? deviceType === "water-heater",
       };
     }
 

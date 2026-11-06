@@ -65,6 +65,25 @@ function confirmationHazard(dev: SmartDevice): ConfirmationHazard | null {
   ) {
     return { kind: "powerOnOrHotter", setpoint: dev.kind.targetTemperature };
   }
+  if (dev.kind.kind === "cover") {
+    switch (dev.kind.subtype) {
+      // A curtain is the ticket's low-risk case; an airer moves like a window opener, and a
+      // garage door follows the stricter any-direction rule (macOS ModelActionPolicy).
+      case "curtain":
+        return null;
+      case "window-opener":
+      case "clothes-airer":
+        return { kind: "powerOn" };
+      case "garage-door":
+        return { kind: "anyPower" };
+    }
+  }
+  if (dev.kind.kind === "appliance") {
+    // Starting a cycle (a wash, a dry) is hazardous even when the appliance does not heat;
+    // a hood's plain power switch stays direct (#3, #4).
+    if (!dev.kind.heats && dev.kind.startAction === null) return null;
+    return { kind: "powerOnOrHotter", setpoint: dev.kind.targetTemperature ?? 0 };
+  }
   switch (deviceCategory(dev)) {
     case "heater":
       return { kind: "anyChangeExceptOff" };

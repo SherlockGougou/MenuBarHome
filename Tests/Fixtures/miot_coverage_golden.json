@@ -986,61 +986,6 @@
     "unexposedWritableTotal" : 470
   },
   "windowsDivergences" : {
-    "090615.bhf_light.ptxyb" : {
-      "category" : "genericControllable",
-      "deviceType" : "bath-heater"
-    },
-    "aden.waterheater.ash200" : {
-      "category" : "genericControllable",
-      "deviceType" : "water-heater"
-    },
-    "alsmai.hood.a31203" : {
-      "category" : "genericControllable",
-      "deviceType" : "hood"
-    },
-    "aupu.airer.d350m" : {
-      "category" : "genericControllable",
-      "deviceType" : "airer"
-    },
-    "bshcn.dishwasher.23eb33" : {
-      "category" : "genericControllable",
-      "deviceType" : "dishwasher"
-    },
-    "bshcn.dishwasher.zb69mc" : {
-      "category" : "genericControllable",
-      "deviceType" : "dishwasher"
-    },
-    "bshcn.dry.2j7x10" : {
-      "category" : "genericControllable",
-      "deviceType" : "dryer"
-    },
-    "bshcn.washer.0au00w" : {
-      "category" : "genericControllable",
-      "deviceType" : "washer"
-    },
-    "coc.dryer.fdpsm" : {
-      "category" : "genericControllable",
-      "deviceType" : "clothes-dryer"
-    },
-    "leishi.bhf_light.ls109" : {
-      "category" : "genericControllable",
-      "deviceType" : "bath-heater"
-    },
-    "mibx5.washer.f27vn" : {
-      "category" : "genericControllable",
-      "deviceType" : "washer"
-    },
-    "mrbond.airer.m1super" : {
-      "category" : "genericControllable",
-      "deviceType" : "airer"
-    },
-    "viomi.hood.c26" : {
-      "category" : "genericControllable",
-      "deviceType" : "hood"
-    },
-    "viomi.waterheater.u3" : {
-      "category" : "genericControllable",
-      "deviceType" : "water-heater"
-    }
+
   }
 }

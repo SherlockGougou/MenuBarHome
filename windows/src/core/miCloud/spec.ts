@@ -74,6 +74,23 @@ export function parseMiotAddress(entityId: string): { did: string; siid: number 
   return { did, siid };
 }
 
+/** A no-argument MIoT action address: `miot-action:<did>:<siid>:<aiid>` (macOS `MiotAddress.makeAction`). */
+export function makeMiotActionAddress(did: string, siid: number, aiid: number): string {
+  return `miot-action:${did}:${siid}:${aiid}`;
+}
+
+export function parseMiotActionAddress(entityId: string): { did: string; siid: number; aiid: number } | null {
+  const prefix = "miot-action:";
+  if (!entityId.startsWith(prefix)) return null;
+  const parts = entityId.slice(prefix.length).split(":");
+  if (parts.length < 3) return null;
+  const aiid = Number(parts[parts.length - 1]);
+  const siid = Number(parts[parts.length - 2]);
+  const did = parts.slice(0, -2).join(":");
+  if (!did || !Number.isInteger(siid) || !Number.isInteger(aiid)) return null;
+  return { did, siid, aiid };
+}
+
 export function hvacModeFromDescription(desc: string): string | null {
   switch (desc.trim().toLowerCase()) {
     case "cool":

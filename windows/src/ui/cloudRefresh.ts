@@ -80,17 +80,29 @@ export async function refreshDevices(host: MenuMijiaWindowsApp, silent = false):
       );
       if (stage1Home.devices.length > 0 && host.devices.length === 0) {
         host.devices = stage1Home.devices;
+        host.deviceFacets = stage1Home.deviceFacets ?? {};
         presentationChanged = true;
         host.render();
       }
 
       // Stage 2: Resolve exact MIoT specs + fetch live device properties
       const specs = await host.specResolver.resolveForDevices(rawDevices);
+      // Card properties plus the 更多设置 rows (#5), deduped so one snapshot covers both.
       const propKeys: MiotPropKey[] = [];
+      const propKeySeen = new Set<string>();
+      const addPropKeys = (keys: readonly MiotPropKey[]) => {
+        for (const key of keys) {
+          const id = `${key.did}.${key.siid}.${key.piid}`;
+          if (propKeySeen.has(id)) continue;
+          propKeySeen.add(id);
+          propKeys.push(key);
+        }
+      };
       for (const dev of rawDevices) {
         const spec = specs[dev.model];
         if (spec) {
-          propKeys.push(...MiotSynthesizer.requiredProps(dev, spec));
+          addPropKeys(MiotSynthesizer.requiredProps(dev, spec));
+          addPropKeys(MiotSynthesizer.facetProps(dev, spec));
         }
       }
 
@@ -117,6 +129,7 @@ export async function refreshDevices(host: MenuMijiaWindowsApp, silent = false):
       // Cloud list order is not a layout preference. Keep known devices in their
       // displayed order, use fresh values, drop removed ids and append new ones.
       host.devices = applyOrder(host.devices.map((device) => device.id), home.devices);
+      host.deviceFacets = home.deviceFacets ?? {};
       const readingPriorityById = new Map(
         home.devices.map((device) => [device.id, environmentReadingPriority(device.kind)]),
       );
@@ -199,6 +212,7 @@ export async function refreshHADevices(host: MenuMijiaWindowsApp, silent = false
       if (!identity) throw new Error("Invalid Home Assistant URL");
       if (host.settings.connectionMode !== "homeAssistant" || host.settings.haBaseURL !== endpoint || host.settings.haToken !== token || host.localControlRevision !== revision || host.syncGeneration !== syncGen) return;
       host.devices = applyOrder(host.devices.map((device) => device.id), home.devices);
+      host.deviceFacets = home.deviceFacets ?? {};
       host.scenes = home.scenes;
       const readingPriorityById = new Map(
         home.devices.map((device) => [device.id, environmentReadingPriority(device.kind)]),

@@ -53,6 +53,7 @@ import {
   parseMiotInstanceIndex,
   type MiotDeviceSpec,
 } from "../src/core/miCloudClient.js";
+import type { FacetControl } from "../src/core/models.js";
 import {
   checkForUpdate,
   compareVersions,
@@ -478,7 +479,14 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
         },
       ],
     };
-    assert.equal(MiotSynthesizer.buildDeviceKind("did_hood", hoodSpec, new Map()), null);
+    // The hood service owns the card; its lamp is a secondary switch (#4).
+    const hoodKind = MiotSynthesizer.buildDeviceKind("did_hood", hoodSpec, new Map());
+    assert.equal(hoodKind?.kind, "appliance");
+    if (hoodKind?.kind === "appliance") {
+      assert.equal(hoodKind.entityId, "miot:did_hood:2");
+      assert.equal(hoodKind.powerEntityId, "miot:did_hood:2");
+      assert.deepEqual(hoodKind.light, { entityId: "miot:did_hood:6", isOn: false, writable: true });
+    }
 
     const ceilingFanSpec: MiotDeviceSpec = {
       type: "urn:miot-spec-v2:device:ceiling-fan:0000A02C:test:1",
@@ -550,7 +558,14 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
         },
       ],
     };
-    assert.equal(MiotSynthesizer.buildDeviceKind("did_bh", bathHeaterSpec, new Map()), null);
+    // The bat heater's PTC service owns the card even though a lamp service carries `on` (#4).
+    const bathHeaterKind = MiotSynthesizer.buildDeviceKind("did_bh", bathHeaterSpec, new Map());
+    assert.equal(bathHeaterKind?.kind, "appliance");
+    if (bathHeaterKind?.kind === "appliance") {
+      assert.equal(bathHeaterKind.entityId, "miot:did_bh:4");
+      assert.equal(bathHeaterKind.light?.entityId, "miot:did_bh:2");
+      assert.equal(bathHeaterKind.heats, true);
+    }
 
     // Offline fallback specs (miot-spec.org unreachable) still synthesize the two
     // categories added in #98.
@@ -959,6 +974,17 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
     }
   });
 
+  /** The 更多设置 row a drawer lists, in the shape the shared golden pins (#5, #6). */
+  const facetSummary = (control: FacetControl) => ({
+    id: control.id,
+    kind: control.kind,
+    name: control.name,
+    serviceName: control.serviceName,
+    isWritable: control.isWritable,
+    writesByDefault: control.writesByDefault,
+    isHighValue: control.isHighValue,
+  });
+
   it("matches the cross-platform MIoT golden JSON corpus shared with MijiaCoreTests", () => {
     const raw = readFileSync(resolve(process.cwd(), "../Tests/Fixtures/miot_golden.json"), "utf8");
     const corpus = JSON.parse(raw) as {
@@ -990,6 +1016,26 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
         spec: unknown;
         values: Array<{ siid: number; piid: number; value: unknown }>;
         expectedKind: unknown;
+      }>;
+      facetCases?: Array<{
+        did: string;
+        model: string;
+        expected: ReturnType<typeof facetSummary>[];
+      }>;
+      genericCases?: Array<{
+        did: string;
+        model: string;
+        values: Array<{ siid: number; piid: number; value: unknown }>;
+        expected: {
+          deviceType: string;
+          typeTitle: string;
+          isOn: boolean;
+          isReadOnly: boolean;
+          readouts: string[];
+          symbolName: string | null;
+          powerFacet: ReturnType<typeof facetSummary> | null;
+          facets: ReturnType<typeof facetSummary>[];
+        };
       }>;
     };
 
@@ -1050,6 +1096,43 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
       assert.ok(spec, `Missing spec for ${item.model}`);
       const actualWrite = MiotCommandMapper.map(item.command, spec);
       assert.deepEqual(actualWrite, item.expected, `${item.model} ${item.command.kind}`);
+    }
+
+    // 更多设置 rows come from the same shared rules on both platforms (#5).
+    for (const item of corpus.facetCases ?? []) {
+      const actual = (home.deviceFacets?.[item.did] ?? []).map(facetSummary);
+      assert.deepEqual(actual, item.expected, `facet drawer drift on ${item.model}`);
+    }
+
+    // A spec with no dedicated builder still shows its generic card (#6).
+    for (const item of corpus.genericCases ?? []) {
+      const spec = parsedSpecs[item.model];
+      assert.ok(spec, `Missing spec for ${item.model}`);
+      const genericHome = MiotSynthesizer.synthesize(
+        [{ did: item.did, name: item.did, model: item.model, isOnline: true, specType: null }],
+        [],
+        { [item.model]: spec },
+        new Map(item.values.map((v) => [`${item.did}.${v.siid}.${v.piid}`, v.value])),
+      );
+      const kind = genericHome.devices[0]?.kind;
+      assert.equal(kind?.kind, "generic", `${item.model} must fall back to a generic card`);
+      if (kind?.kind !== "generic") continue;
+      assert.equal(kind.deviceType, item.expected.deviceType, `${item.model} type`);
+      assert.equal(kind.typeTitle, item.expected.typeTitle, `${item.model} title`);
+      assert.equal(kind.isOn, item.expected.isOn, `${item.model} power`);
+      assert.equal(kind.isReadOnly, item.expected.isReadOnly, `${item.model} read-only`);
+      assert.deepEqual(kind.readouts, item.expected.readouts, `${item.model} readouts`);
+      assert.equal(kind.symbolName, item.expected.symbolName, `${item.model} symbol`);
+      assert.deepEqual(
+        kind.powerControl === null ? null : facetSummary(kind.powerControl),
+        item.expected.powerFacet,
+        `${item.model} power facet`,
+      );
+      assert.deepEqual(
+        (genericHome.deviceFacets?.[item.did] ?? []).map(facetSummary),
+        item.expected.facets,
+        `${item.model} drawer`,
+      );
     }
     const dev2 = home.devices.find((d) => d.id === "did_panel.s2");
     assert.equal(dev2?.roomName, "客厅");

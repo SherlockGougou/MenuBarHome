@@ -82,6 +82,8 @@ export interface PersistedSettings {
   hideOfflineDevices: boolean;
   /** Individual lights of a visible Mi light group fold into the group card (#214). */
   hideGroupedLights: boolean;
+  /** 更多设置 writes outside the low-risk whitelist ask for this switch first (#5). */
+  allowAdvancedFacetWrites: boolean;
   cachedXiaomiDevices: SmartDevice[];
   /** Version of the cached device shape; legacy caches are migrated once on load (#148). */
   cachedDevicesVersion: number;

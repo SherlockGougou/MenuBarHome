@@ -89,6 +89,10 @@ export function assistantDeviceCategory(device: SmartDevice): string | null {
     case "sensor":
     case "cover":
     case "speaker":
+    // An appliance or a generic fallback card is controlled from the panel, not by the
+    // assistant, the same rule macOS applies to those kinds (#3, #4, #6).
+    case "appliance":
+    case "generic":
       return null;
   }
 }
@@ -143,6 +147,14 @@ export function catalogStateSummary(device: SmartDevice): string {
       return "";
     case "cover":
       return kind.positionPercent === null ? "" : `开${kind.positionPercent}%`;
+    case "appliance": {
+      const parts = [kind.isOn ? "开" : "关"];
+      if (kind.statusText) parts.push(kind.statusText);
+      if (kind.targetTemperature !== null) parts.push(`${formatTemperatureValue(kind.targetTemperature)}°C`);
+      return parts.join(" ");
+    }
+    case "generic":
+      return kind.readouts.length > 0 ? kind.readouts.join(" ") : kind.typeTitle;
   }
 }
 

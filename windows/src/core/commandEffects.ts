@@ -1,4 +1,4 @@
-import type { DeviceCommand, SmartDevice } from "./models.js";
+import { readMiotPower, type DeviceCommand, type FacetControl, type SmartDevice } from "./models.js";
 
 /**
  * What a sent command does to the device rows, and the commands that undo it.
@@ -24,6 +24,7 @@ export function applyCommandToDevices(
   devices: SmartDevice[],
   command: DeviceCommand,
   connectionMode: ConnectionMode,
+  facets: Readonly<Record<string, readonly FacetControl[]>> = {},
 ): CameraPowerChange[] {
   const cameraPower: CameraPowerChange[] = [];
   for (const dev of devices) {
@@ -71,11 +72,16 @@ export function applyCommandToDevices(
             k.isOn = true;
           }
           k.targetTemperature = command.temperature;
+        } else if (k.kind === "appliance" && k.temperatureEntityId === command.entityId) {
+          // An appliance reports its programme; the target is the only setting shown ahead of it.
+          k.targetTemperature = command.temperature;
         }
         break;
       case "setClimateFanMode":
         if (k.kind === "climate" && k.entityId === command.entityId) {
           k.fanMode = command.fanMode;
+        } else if (k.kind === "appliance" && k.fanLevel?.entityId === command.entityId) {
+          k.fanLevel.current = command.fanMode;
         }
         break;
       case "setFanPower":
@@ -116,6 +122,12 @@ export function applyCommandToDevices(
         } else if (k.kind === "speaker") {
           if (k.muteSwitchEntityId === command.entityId) k.isMuted = command.isOn;
           else if (k.sleepModeEntityId === command.entityId) k.isSleepMode = command.isOn;
+        } else if (k.kind === "appliance") {
+          // Power may live on a companion service, and the lamp is its own switch (#4).
+          if (k.powerEntityId === command.entityId) k.isOn = command.isOn;
+          else if (k.light?.entityId === command.entityId) k.light.isOn = command.isOn;
+        } else if (k.kind === "generic" && k.powerControl?.target?.entityId === command.entityId) {
+          k.isOn = command.isOn;
         }
         break;
       case "mediaSetVolume":
@@ -127,6 +139,8 @@ export function applyCommandToDevices(
         if (k.kind === "camera" && k.entityId === command.entityId) {
           k.nightShot = command.option;
         } else if (k.kind === "fridge" && k.modeEntityId === command.entityId) {
+          k.currentMode = command.option;
+        } else if (k.kind === "appliance" && k.modeEntityId === command.entityId) {
           k.currentMode = command.option;
         } else if (k.kind === "cover" && k.entityId === command.entityId) {
           const option = command.option.toLowerCase();
@@ -160,6 +174,35 @@ export function applyCommandToDevices(
                 : "returning";
         }
         break;
+      case "pressButton":
+        // An appliance reports the programme it started; nothing is shown ahead of it (#3, #4).
+        break;
+      case "setMiotProperty": {
+        // The drawer's row shows the value the write asked for until the next snapshot (#5).
+        for (const control of facets[dev.id] ?? []) {
+          const target = control.target;
+          if (target?.kind !== "property" || target.entityId !== command.entityId || target.piid !== command.piid) {
+            continue;
+          }
+          control.value = command.value;
+        }
+        if (k.kind === "generic") {
+          // Only the card's own switch changes the power state; a mode write on the same service
+          // must not flip it (#6).
+          const target = k.powerControl?.target;
+          const isOn = readMiotPower(command.value);
+          if (
+            target?.kind === "property" &&
+            target.entityId === command.entityId &&
+            target.piid === command.piid &&
+            isOn !== null
+          ) {
+            k.isOn = isOn;
+            k.powerControl!.value = command.value;
+          }
+        }
+        break;
+      }
       case "activateScene":
         break;
     }
@@ -257,7 +300,11 @@ export function inverseCommands(dev: SmartDevice, command: DeviceCommand): Devic
     case "mediaSetVolume":
       return k.kind === "speaker" ? [{ kind: "mediaSetVolume", entityId: k.mediaEntityId, level: k.volumePercent / 100 }] : [];
     case "vacuumAction":
+    case "pressButton":
+    case "setMiotProperty":
     case "activateScene":
+      // A cycle action, an appliance programme write and a 更多设置 write carry no previous
+      // value on the card, so undo does not offer them (#5).
       return [];
     default: {
       const exhaustive: never = command;

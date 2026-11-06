@@ -1,5 +1,6 @@
 import deviceProfiles from "./deviceProfiles.json";
-import { miotShortName } from "./spec.js";
+import type { FacetControl, FacetKind, FacetOption, FacetRange, FacetTarget } from "../models.js";
+import { makeMiotActionAddress, makeMiotAddress, miotShortName } from "./spec.js";
 import type { MiotAction, MiotDeviceSpec, MiotProperty, MiotService, MiotValueListItem } from "./spec.js";
 
 export interface DeviceProfiles {
@@ -30,6 +31,20 @@ export interface DeviceProfiles {
    * Anything not listed stays unsupported instead of being drawn as another device.
    */
   readonly fallbackClaims: Readonly<Record<string, readonly string[]>>;
+  /**
+   * Device type → the services one appliance card merges (#4). `primary` carries the main function
+   * (heat for a bath heater, exhaust for a hood); `companions` fill the other controls and readings.
+   */
+  readonly appliances: Readonly<Record<string, ApplianceProfile>>;
+}
+
+export interface ApplianceProfile {
+  readonly primary: readonly string[];
+  readonly companions: readonly string[];
+  readonly symbol?: string;
+  readonly roomReading?: boolean;
+  /** The card can start a heater, so power-on and warmer targets ask first (#4). */
+  readonly heats?: boolean;
 }
 
 export interface DeviceOverride {
@@ -56,19 +71,10 @@ export function miotFallbackAllows(deviceType: string, service: string): boolean
   return DEVICE_PROFILES.fallbackClaims[deviceType]?.includes(service) ?? false;
 }
 
-export type MiotFacetKind = "toggle" | "select" | "slider" | "reading" | "button";
+export type MiotFacetKind = FacetKind;
 export type MiotFacetRisk = "low" | "high";
-
-export interface MiotFacetOption {
-  readonly value: number;
-  readonly label: string;
-}
-
-export interface MiotFacetRange {
-  readonly min: number;
-  readonly max: number;
-  readonly step: number;
-}
+export type MiotFacetOption = FacetOption;
+export type MiotFacetRange = FacetRange;
 
 export interface MiotFacetArgument {
   readonly propertyId: number;
@@ -388,4 +394,61 @@ function matchesPattern(value: string, pattern: string): boolean {
     patternIndex += 1;
   }
   return patternIndex === patternChars.length;
+}
+
+const COVER_SERVICES = new Set(["curtain", "window-opener", "airer", "clothes-airer", "garage-door"]);
+
+/**
+ * Drawer rows for 更多设置 (#5), mirroring macOS `MiotFacetEngine.controls`. A property the primary
+ * card already read is left out, and so is any action of the card's own service: both are already
+ * reachable from the main controls. An action with inputs has no generic editor, so it stays on its
+ * dedicated card.
+ */
+export function facetControls(
+  spec: MiotDeviceSpec,
+  did: string,
+  values: ReadonlyMap<string, unknown>,
+  primaryServiceId: number | null,
+  excluding: ReadonlySet<string> = new Set(),
+  model?: string,
+): FacetControl[] {
+  const controls: FacetControl[] = [];
+  for (const facet of buildMiotFacets(spec, DEVICE_PROFILES, model)) {
+    if (facet.propertyId !== undefined && excluding.has(`${facet.serviceId}.${facet.propertyId}`)) continue;
+    if (facet.actionId !== undefined && facet.serviceId === primaryServiceId) continue;
+    if ((facet.arguments?.length ?? 0) > 0) continue;
+    const value = facet.propertyId !== undefined
+      ? (values.get(`${did}.${facet.serviceId}.${facet.propertyId}`) ?? null)
+      : null;
+    let target: FacetTarget | null = null;
+    if (facet.isWritable) {
+      if (facet.propertyId !== undefined) {
+        target = { kind: "property", entityId: makeMiotAddress(did, facet.serviceId), piid: facet.propertyId };
+      } else if (facet.actionId !== undefined) {
+        target = {
+          kind: "action",
+          entityId: makeMiotActionAddress(did, facet.serviceId, facet.actionId),
+        };
+      }
+    }
+    controls.push({
+      id: facet.id,
+      kind: facet.kind,
+      name: facet.name,
+      title: facet.title ?? null,
+      serviceName: facet.serviceName,
+      unit: facet.unit ?? null,
+      scale: facet.scale ?? null,
+      value,
+      options: facet.options ?? [],
+      range: facet.range ?? null,
+      isWritable: facet.isWritable,
+      // A cover's `mode` calibrates or re-zeroes the motor, so it never writes by default (#5).
+      writesByDefault:
+        facet.writesByDefault && !(facet.name === "mode" && COVER_SERVICES.has(facet.serviceName)),
+      isHighValue: facet.highValue,
+      target,
+    });
+  }
+  return controls;
 }

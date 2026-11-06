@@ -133,6 +133,11 @@ export interface SettingsViewContext {
           </div>
 
           <div class="cc-field cc-field-row">
+            <label for="settings-allow-advanced-facets">${t("允许写入高级/高风险设备属性")}</label>
+            <input id="settings-allow-advanced-facets" type="checkbox" ${ctx.settings.allowAdvancedFacetWrites ? "checked" : ""} />
+          </div>
+
+          <div class="cc-field cc-field-row">
             <label for="settings-quick-actions">${t("显示顶部快捷场景栏")}</label>
             <input id="settings-quick-actions" type="checkbox" ${ctx.settings.showQuickActionsBar ? "checked" : ""} />
           </div>

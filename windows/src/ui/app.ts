@@ -60,6 +60,7 @@ import {
   type DeviceCommand,
   type DeviceIntent,
   type EnvironmentReading,
+  type FacetControl,
   type HomeScene,
   type IntentPlan,
   type ScheduledCommand,
@@ -163,6 +164,8 @@ export class MenuMijiaWindowsApp {
   // Assigned in the constructor, after the interface language is resolved: the demo home is
   // generated per language (#52), so a field initializer would freeze the module default.
   public devices: SmartDevice[];
+  /** Device id → 更多设置 rows from the latest snapshot (#5); empty until one arrives. */
+  public deviceFacets: Readonly<Record<string, readonly FacetControl[]>> = {};
   public scenes: HomeScene[];
   public environmentReadings: EnvironmentReading[] = [];
   public listCut: DeviceListCut = { kind: "all" };
@@ -212,6 +215,16 @@ export class MenuMijiaWindowsApp {
   }
 
   public expandedDeviceId: string | null = null;
+  /**
+   * A high-risk manual write that needs one more tap on the same card within a few seconds.
+   * `actionKey` binds the arm to one exact command, so tapping a different high-risk control
+   * on the same device re-arms instead of spending the previous confirmation.
+   */
+  public pendingHighRisk: {
+    readonly deviceId: string;
+    readonly actionKey: string;
+    readonly expiresAtMs: number;
+  } | null = null;
   public isShowingAssistantBar = true;
   public activeSheet: "none" | "onboarding" | "settings" = "none";
   private onboardingStep = 0;
@@ -1127,6 +1140,8 @@ export class MenuMijiaWindowsApp {
       waitingDeviceIds: this.waitingDeviceIds,
       compactGrid: this.settings.isCompactGridMode,
       dimPreview: this.dimPreview,
+      deviceFacets: this.deviceFacets,
+      allowAdvancedFacetWrites: this.settings.allowAdvancedFacetWrites,
       escapeHtml: (v) => this.escapeHtml(v),
     });
   }

@@ -153,7 +153,7 @@
       "en": "Water Heaters",
       "zh": "热水器",
       "macos": "supported",
-      "windows": "unsupported",
+      "windows": "supported",
       "miotTypes": [
         "water-heater"
       ]
@@ -170,7 +170,7 @@
       "en": "Bath Heaters & Range Hoods",
       "zh": "浴霸与油烟机",
       "macos": "supported",
-      "windows": "unsupported",
+      "windows": "supported",
       "miotTypes": [
         "bath-heater",
         "hood"
@@ -181,7 +181,7 @@
       "en": "Washers, Dryers & Dishwashers",
       "zh": "洗衣机、烘干机与洗碗机",
       "macos": "supported",
-      "windows": "unsupported",
+      "windows": "supported",
       "miotTypes": [
         "washer",
         "dryer",
@@ -223,14 +223,14 @@
       "en": "Generic Fallback Cards",
       "zh": "通用兜底卡片",
       "macos": "supported",
-      "windows": "unsupported"
+      "windows": "supported"
     },
     {
       "id": "fish-tanks-pet-feeders",
       "en": "Fish Tanks & Pet Feeders",
       "zh": "智能鱼缸与宠物喂食器",
       "macos": "supported",
-      "windows": "unsupported"
+      "windows": "partial"
     },
     {
       "id": "camera-live",
@@ -258,7 +258,7 @@
       "en": "Curtains & Window Openers",
       "zh": "窗帘与开窗器",
       "macos": "supported",
-      "windows": "partial"
+      "windows": "supported"
     },
     {
       "id": "code-signing",

@@ -278,6 +278,19 @@ export const IntentValidator = {
           const option = op.isOn ? k.openDescription : k.closeDescription;
           return option ? [{ kind: "setSelectOption", entityId: k.entityId, option }] : [];
         }
+        if (k.kind === "appliance") {
+          // The card's switch addresses the service that actually carries power (#300, #4).
+          return k.powerPresent && k.powerWritable
+            ? [{ kind: "setSwitch", entityId: k.powerEntityId, isOn: op.isOn }]
+            : [];
+        }
+        if (k.kind === "generic") {
+          const target = k.powerControl?.target;
+          if (!target) return [];
+          return target.kind === "property"
+            ? [{ kind: "setMiotProperty", entityId: target.entityId, piid: target.piid, value: op.isOn }]
+            : [{ kind: "pressButton", entityId: target.entityId }];
+        }
         return [];
       }
       case "brightness":
