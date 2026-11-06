@@ -532,8 +532,9 @@ public actor DemoHomeProvider: HomeProvider {
                     spec.targetTemperature = temperature
                 case .pressButton(let entityId) where entityId == spec.startAction?.entityId:
                     spec.isOn = true
+                    spec.statusText = L10n.tr("运行中", "Running")
                 case .pressButton(let entityId) where entityId == spec.pauseAction?.entityId:
-                    spec.isOn = false
+                    spec.statusText = L10n.tr("已暂停", "Paused")
                 default:
                     continue
                 }

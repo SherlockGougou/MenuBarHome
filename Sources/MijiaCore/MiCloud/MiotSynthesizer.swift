@@ -65,7 +65,6 @@ public enum MiotSynthesizer {
         ("microwave-oven", buildKitchenAppliance),
         ("health-pot", buildKitchenAppliance),
         ("water-heater", buildApplianceCard),
-        ("boiler", buildApplianceCard),
         ("lock", buildSensor),
         ("motion-sensor", buildSensor),
         ("occupancy-sensor", buildSensor),
@@ -231,7 +230,6 @@ public enum MiotSynthesizer {
         case "outlet": ["outlet", "switch"]
         case "camera", "cateye", "video-doorbell": ["camera-control", "video-doorbell"]
         case "kettle", "ble-kettle": ["kettle", "ble-kettle", "water-dispenser"]
-        case "boiler": ["water-heater", "boiler"]
         default: [deviceType]
         }
     }
@@ -274,6 +272,7 @@ public enum MiotSynthesizer {
     /// An `electronic-valve` is only a mains breaker when it meters electric power (#265). A water
     /// or gas shut-off valve uses the same service and stays unsupported rather than becoming a plug.
     static func claims(_ serviceName: String, spec: MiotDeviceSpec) -> Bool {
+        if serviceName == "water-heater" { return spec.shortName == "water-heater" }
         guard serviceName == "electronic-valve" else { return true }
         return isMainsBreaker(spec)
     }
@@ -768,7 +767,7 @@ public enum MiotSynthesizer {
 
     /// The shared appliance card (#300). Power, mode, target temperature, status, fault, remaining
     /// time and start/pause actions are each exposed only when the spec publishes them. This first
-    /// cut registers it for water heaters and boilers; the generic shape engine is #303.
+    /// cut registers the `water-heater` type only; the generic shape engine is #303.
     static func buildApplianceCard(_ r: MiotReader, _ s: MiotService) -> DeviceKind {
         let companions = r.spec.services(named: "water-heater") + r.spec.services(named: "boiler")
         let services = [s] + companions
@@ -795,13 +794,13 @@ public enum MiotSynthesizer {
             currentMode: mode?.valueDescription,
             availableModes: mode?.property.valueList?.map(\.description) ?? [],
             modeWritable: mode?.property.isWritable == true,
-            targetTemperature: target.map { $0.value?.doubleValue ?? $0.property.rangeMin ?? 0 },
+            targetTemperature: target.flatMap { $0.value?.doubleValue },
             currentTemperature: current?.value?.doubleValue,
             minTemp: target?.property.rangeMin ?? 0,
             maxTemp: target?.property.rangeMax ?? 100,
             step: target?.property.rangeStep ?? 1,
             temperatureWritable: target?.property.isWritable == true,
-            statusText: status?.valueDescription.map(applianceStatusText(forDescription:)),
+            statusText: status?.valueDescription.map(waterHeaterStatusText(forDescription:)),
             faultText: faultDescription(
                 code: faultCode,
                 description: faultCode.flatMap { fault?.property.description(forValue: $0) }
@@ -1099,14 +1098,26 @@ public enum MiotSynthesizer {
         return "idle"
     }
 
+    /// Water heater statuses use words the shared kitchen mapping must not reinterpret
+    /// (`Close` as standby, `Wash` as bathing). Keep those meanings scoped to this family.
+    static func waterHeaterStatusText(forDescription description: String) -> String {
+        switch description.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "close", "closed", "off", "shutdown":
+            return L10n.tr("待机", "Standby")
+        case "open", "on":
+            return L10n.tr("已开启", "On")
+        case "wash", "washing":
+            return L10n.tr("洗浴中", "Washing")
+        default:
+            return applianceStatusText(forDescription: description)
+        }
+    }
+
     static func applianceStatusText(forDescription description: String) -> String {
         let lower = description.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        if lower.contains("idle") || lower.contains("standby") || lower.contains("off") || lower.contains("shutdown")
-            || lower.contains("close") {
+        if lower.contains("idle") || lower.contains("standby") || lower.contains("off") || lower.contains("shutdown") {
             return L10n.tr("待机", "Standby")
         }
-        if lower == "open" { return L10n.tr("已开启", "On") }
-        if lower.contains("wash") { return L10n.tr("洗浴中", "Washing") }
         if lower.contains("keep warm") || lower.contains("keep-warm") || lower.contains("warm") || lower.contains("insulation") {
             return L10n.tr("保温中", "Keep Warm")
         }

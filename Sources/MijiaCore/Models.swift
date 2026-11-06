@@ -718,7 +718,7 @@ public enum ApplianceActionKind: String, Equatable, Sendable, CaseIterable {
         case .start:
             return ["start", "start-heating", "开始"]
         case .pause:
-            return ["pause", "stop", "暂停"]
+            return ["pause", "暂停"]
         }
     }
 
@@ -1059,7 +1059,7 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
             return spec.positionWritable || spec.canMove || spec.pauseDescription != nil
                 || spec.batteryPercent != nil || spec.faultText != nil
         case .appliance(let spec):
-            return spec.temperatureWritable || spec.modeWritable
+            return (spec.temperatureWritable && spec.targetTemperature != nil) || spec.modeWritable
                 || spec.statusText != nil || spec.faultText != nil || spec.remainingMinutes != nil
                 || spec.startAction != nil || spec.pauseAction != nil
         }
