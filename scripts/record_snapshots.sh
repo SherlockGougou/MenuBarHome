@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Record the UI snapshot baselines on the CI runner and copy the changed PNGs back.
-# Forgejo has no macOS runner yet, so only --from works until one is registered.
+# GitLab has no macOS runner for this project yet, so only --from works until one is registered.
 #
 #   scripts/record_snapshots.sh [ref] [--dry-run] [--from <dir>]
 #
@@ -53,8 +53,8 @@ if [ -z "$download_dir" ]; then
         exit 1
     fi
 
-    # 迁到 Forgejo 后还没有 macos-26 runner，CI 录制无处可跑；有了 runner 再经 scripts/forge.py 派发 workflow。
-    echo "❌ Forgejo 上还没有 macOS runner，无法在 CI 录制基线。" >&2
+    # 迁到 GitLab 后还没有 macOS runner，CI 录制无处可跑；有了 runner 再经 scripts/forge.py 触发流水线。
+    echo "❌ GitLab 上还没有 macOS runner，无法在 CI 录制基线。" >&2
     echo "   已有 artifact 时用 --from <目录>；或在 runner 机器上跑 SNAPSHOT_RECORD=1 swift test --filter SnapshotTests。" >&2
     exit 1
 fi
