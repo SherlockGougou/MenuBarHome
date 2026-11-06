@@ -60,7 +60,10 @@ public enum DeviceKindTag: String, Equatable, Sendable {
                 "Also small appliances that have no power switch"
             )
         case .appliance:
-            return L10n.tr("目前包括热水器", "Currently includes water heaters")
+            return L10n.tr(
+                "目前包括热水器、洗衣机、烘干机与洗碗机",
+                "Currently includes water heaters, washers, dryers, and dishwashers"
+            )
         case .light, .fridge, .vacuum, .speaker, .tv, .camera, .cover:
             return nil
         }

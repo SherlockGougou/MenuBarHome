@@ -227,7 +227,9 @@ public enum ModelActionPolicy {
             guard case .climate(let spec) = device.kind else { return nil }
             return .powerOnOrHotter(setpoint: spec.targetTemperature)
         case .appliance:
-            guard case .appliance(let spec) = device.kind, spec.heats else { return nil }
+            // Starting a cycle (a wash, a dry) is hazardous even when the appliance does not heat;
+            // a hood's plain power switch stays direct (#3, #4).
+            guard case .appliance(let spec) = device.kind, spec.heats || spec.startAction != nil else { return nil }
             return .powerOnOrHotter(setpoint: spec.targetTemperature ?? 0)
         default:
             return nil

@@ -549,6 +549,10 @@ public actor DemoHomeProvider: HomeProvider {
                     spec.statusText = L10n.tr("运行中", "Running")
                 case .pressButton(let entityId) where entityId == spec.pauseAction?.entityId:
                     spec.statusText = L10n.tr("已暂停", "Paused")
+                case .pressButton(let entityId) where entityId == spec.stopAction?.entityId:
+                    // A stop ends the cycle; the appliance stays plugged in.
+                    spec.statusText = L10n.tr("待机", "Standby")
+                    spec.remainingMinutes = nil
                 default:
                     continue
                 }

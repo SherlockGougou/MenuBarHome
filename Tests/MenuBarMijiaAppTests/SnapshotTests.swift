@@ -380,6 +380,66 @@ struct SnapshotTests {
         )
     }
 
+    @Test("Washer card shows the wash stage, remaining time and its long programme row")
+    func laundryApplianceCardSnapshots() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+        let device = Self.washer
+
+        assertRendered(
+            snapshotReady(
+                DeviceCardView(device: device, store: fixture.store, showRoomBadge: true)
+                    .padding(8)
+                    .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 140),
+            named: "card-appliance-washer-zh-light"
+        )
+
+        fixture.store.expandedDeviceId = device.id
+        assertRendered(
+            snapshotReady(
+                DeviceCardView(device: device, store: fixture.store, showRoomBadge: true)
+                    .padding(8)
+                    .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 320),
+            named: "expanded-appliance-washer-zh-light"
+        )
+    }
+
+    /// The program names are the released `mibx5.washer.f27vn` list (#3); 25 entries is what the
+    /// drawer's scrolling pill row is for.
+    private static var washer: SmartDevice {
+        SmartDevice(
+            id: "snapshot-washer",
+            name: "阳台洗衣机",
+            roomId: "balcony",
+            roomName: "阳台",
+            model: "mibx5.washer.f27vn",
+            isOnline: true,
+            kind: .appliance(ApplianceSpec(
+                entityId: "miot:snapshot-washer:2",
+                isOn: true,
+                powerPresent: true,
+                powerWritable: true,
+                currentMode: "Mix",
+                availableModes: [
+                    "Mix", "Quick Wash", "Delicate Wash", "Heavy Wash", "Rinse Spin", "Spin", "Intensive",
+                    "Baby Care", "Drum Clean", "Wool", "Down Coat", "Cotton", "Synthetic", "Underwear",
+                    "Jacket", "Smart", "Sportswear", "New-Clothes Wash", "Silk", "Jeans", "Pleased Wash",
+                    "Turban", "User Define", "Bedding", "Shirt",
+                ],
+                modeWritable: true,
+                statusText: L10n.tr("洗涤中", "Washing"),
+                remainingMinutes: 42,
+                startAction: ApplianceAction(kind: .start, entityId: "miot-action:snapshot-washer:2:2"),
+                pauseAction: ApplianceAction(kind: .pause, entityId: "miot-action:snapshot-washer:2:3"),
+                stopAction: ApplianceAction(kind: .stop, entityId: "miot-action:snapshot-washer:2:1")
+            ))
+        )
+    }
+
     @Test("A bath heater and a hood render every control merged onto one card")
     func aggregatedApplianceCardSnapshots() async throws {
         let fixture = try await SnapshotFixture()

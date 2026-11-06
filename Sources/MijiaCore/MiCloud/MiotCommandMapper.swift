@@ -60,17 +60,22 @@ public enum MiotCommandMapper {
             return .action(MiotActionCall(did: address.did, siid: address.siid, aiid: address.aiid))
         }
         let entityId = command.targetEntityId
+        // The services the shared appliance card reads. A control it exposes may live on a
+        // companion service while the card addresses the primary one (#300, laundry in #3).
+        let applianceServices = MiotSynthesizer.applianceServiceNames
         if let address = MiotAddress.parseAction(entityId) {
             guard let service = spec.service(iid: address.siid),
                   let action = service.actions.first(where: { $0.iid == address.aiid }) else {
                 throw MiotCommandError.unsupported("action")
             }
-            let isApplianceService = service.shortName == "water-heater" || service.shortName == "boiler"
+            // A no-argument start or pause is accepted only on a service the appliance card builds
+            // from, keyed by its own short name (#300 review, laundry added in #3).
+            let isApplianceAction = applianceServices.contains(service.shortName)
+                && ApplianceActionKind.matching(action.shortName) != nil
             let inputs: [JSONValue]
             switch command {
             case .pressButton where action.inputProperties.isEmpty
-                && (["play-music", "stop-alarm"].contains(action.shortName)
-                    || (isApplianceService && ApplianceActionKind.matching(action.shortName) != nil)):
+                && (["play-music", "stop-alarm"].contains(action.shortName) || isApplianceAction):
                 inputs = []
             case .sendNotifyMessage(_, let text):
                 let expected = action.shortName == "play-text" ? ["text-content"]
@@ -117,7 +122,7 @@ public enum MiotCommandMapper {
 
         case .setClimateTemperature(_, let temperature):
             if let target = ctx.property("target-temperature")
-                ?? ctx.writableProperty("target-temperature", in: ["boiler", "water-heater"]) {
+                ?? ctx.writableProperty("target-temperature", in: applianceServices) {
                 return .setProps([ctx.write(target, .number(temperature))])
             }
             throw MiotCommandError.unsupported("target-temperature")
@@ -144,10 +149,10 @@ public enum MiotCommandMapper {
 
         case .setSwitch(_, let isOn):
             // A gas water heater publishes its power switch on the companion `boiler` service
-            // while the card addresses the `water-heater` service (#300). A bath heater publishes
-            // its heat as `heating` instead of `on` (#4).
+            // while the card addresses the `water-heater` service (#300); a cleanfly dryer
+            // likewise (#3). A bath heater publishes its heat as `heating` instead of `on` (#4).
             if let power = ctx.property("on")
-                ?? ctx.writableProperty("on", in: ["boiler", "water-heater"]) {
+                ?? ctx.writableProperty("on", in: applianceServices) {
                 return .setProps([ctx.write(power, .bool(isOn))])
             }
             if let heating = ctx.property("heating") {
@@ -178,7 +183,7 @@ public enum MiotCommandMapper {
             if let w = try? ctx.writeListValue("mode", description: option) {
                 return .setProps([w])
             }
-            if let match = ctx.listValue("mode", description: option, in: ["boiler", "water-heater"]) {
+            if let match = ctx.listValue("mode", description: option, in: applianceServices) {
                 return .setProps([ctx.write(match.found, .number(Double(match.item.value)))])
             }
             return .setProps([try ctx.writeListValue("night-shot", description: option)])

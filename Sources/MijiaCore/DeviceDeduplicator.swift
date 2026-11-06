@@ -419,7 +419,7 @@ public enum DeviceDeduplicator {
             if !spec.availableModes.isEmpty { score += 1 }
             if spec.currentTemperature != nil { score += 1 }
             if spec.statusText != nil { score += 1 }
-            if spec.startAction != nil || spec.pauseAction != nil { score += 1 }
+            if spec.startAction != nil || spec.pauseAction != nil || spec.stopAction != nil { score += 1 }
             if spec.fanLevel != nil { score += 1 }
             if spec.light != nil { score += 1 }
             return score

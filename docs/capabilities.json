@@ -163,6 +163,19 @@
       ]
     },
     {
+      "id": "laundry-appliances",
+      "en": "Washers, Dryers & Dishwashers",
+      "zh": "洗衣机、烘干机与洗碗机",
+      "macos": "supported",
+      "windows": "unsupported",
+      "miotTypes": [
+        "washer",
+        "dryer",
+        "clothes-dryer",
+        "dishwasher"
+      ]
+    },
+    {
       "id": "dehumidifiers-blankets-diffusers-speakers",
       "en": "Dehumidifiers, Blankets, Diffusers & Speakers",
       "zh": "除湿机 / 水暖毯 / 香氛机 / 音箱",

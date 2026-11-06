@@ -95,13 +95,16 @@ struct ApplianceDetailDrawer: View {
                 )
             }
 
-            if spec.startAction != nil || spec.pauseAction != nil {
+            if spec.startAction != nil || spec.pauseAction != nil || spec.stopAction != nil {
                 HStack(spacing: 8) {
                     if let start = spec.startAction {
                         actionButton(start)
                     }
                     if let pause = spec.pauseAction {
                         actionButton(pause)
+                    }
+                    if let stop = spec.stopAction {
+                        actionButton(stop)
                     }
                     Spacer(minLength: 0)
                 }
