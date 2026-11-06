@@ -691,10 +691,8 @@
       "deviceType" : "vibration-sensor"
     },
     "macro.boiler.combgl" : {
-      "category" : "matched",
-      "deviceType" : "boiler",
-      "service" : "water-heater",
-      "unexposedWritable" : 3
+      "category" : "droppedControllable",
+      "deviceType" : "boiler"
     },
     "maijia.ajh.mj9001" : {
       "category" : "noUsableProperties",
@@ -943,15 +941,15 @@
   },
   "summary" : {
     "categories" : {
-      "droppedControllable" : 101,
+      "droppedControllable" : 102,
       "droppedReadOnly" : 13,
-      "matched" : 60,
+      "matched" : 59,
       "misclaimed" : 0,
       "noUsableProperties" : 31
     },
     "deviceTypes" : 177,
     "specs" : 205,
-    "unexposedWritableTotal" : 428
+    "unexposedWritableTotal" : 425
   },
   "windowsDivergences" : {
     "aden.waterheater.ash200" : {
@@ -961,10 +959,6 @@
     "aupu.airer.d350m" : {
       "category" : "droppedControllable",
       "deviceType" : "airer"
-    },
-    "macro.boiler.combgl" : {
-      "category" : "droppedControllable",
-      "deviceType" : "boiler"
     },
     "mrbond.airer.m1super" : {
       "category" : "droppedControllable",

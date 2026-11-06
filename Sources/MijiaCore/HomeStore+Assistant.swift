@@ -898,6 +898,9 @@ extension HomeStore {
         guard let idx = devices.firstIndex(where: { $0.id == intent.targetId }) else { return .skipped }
         let previous = devices[idx]
         guard previous.isOnline else { return .offline(previous.name) }
+        // Appliance cards are not assistant-controllable in this cut. Their `.power` effect exists
+        // only so All Off undo can restore them; direct assistant plans still skip them (#300).
+        guard IntentDeviceCategory(previous).isAssistantControllable else { return .skipped }
         guard let effect = Self.assistantEffect(of: intent.operation, on: previous) else { return .skipped }
 
         let lockRevision: UInt64?
@@ -1125,6 +1128,16 @@ extension HomeStore {
                 command: .setSwitch(entityId: s.entityId, isOn: on),
                 restore: [restore]
             )
+        case (.power(let on), .appliance(var s)):
+            let restore = DeviceCommand.setSwitch(entityId: s.entityId, isOn: s.isOn)
+            s.isOn = on
+            updated.kind = .appliance(s)
+            return AssistantEffect(
+                updated: updated,
+                command: .setSwitch(entityId: s.entityId, isOn: on),
+                restore: [restore]
+            )
+
         case (.fanSpeed(let preset), .fan(var s)):
             var restore: [DeviceCommand] = []
             if !s.isOn { restore.append(.setFanPower(entityId: s.entityId, isOn: false)) }

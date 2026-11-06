@@ -8,7 +8,6 @@ import Testing
 struct WaterHeaterDeviceTests {
     static let electricModel = "aden.waterheater.ash200"
     static let gasModel = "viomi.waterheater.u19"
-    static let companionPowerModel = "macro.boiler.combgl"
     static let noModeModel = "viomi.waterheater.u3"
 
     private func spec(_ model: String) throws -> MiotDeviceSpec {
@@ -141,36 +140,6 @@ struct WaterHeaterDeviceTests {
             == .setProps([.init(did: "gas", siid: 2, piid: 4, value: .number(3))]))
         #expect(try MiotCommandMapper.map(.setClimateTemperature(entityId: appliance.entityId, temperature: 50), spec: spec)
             == .setProps([.init(did: "gas", siid: 2, piid: 2, value: .number(50))]))
-    }
-
-    @Test("A boiler whose power lives in its own service still reads it through the water-heater card")
-    func companionServicePowerCard() throws {
-        let did = "gas-boiler"
-        let (device, spec, _) = try synthesize(Self.companionPowerModel, did: did, values: [
-            .init(did: did, siid: 2, piid: 1): .bool(true),
-            .init(did: did, siid: 3, piid: 2): .number(45),
-            .init(did: did, siid: 3, piid: 35): .number(48),
-            .init(did: did, siid: 3, piid: 1): .number(0),
-        ])
-
-        guard case .appliance(let appliance) = device.kind else {
-            Issue.record("boiler was not synthesized as an appliance")
-            return
-        }
-        #expect(appliance.entityId == "miot:gas-boiler:3")
-        #expect(appliance.isOn)
-        #expect(appliance.currentTemperature == 48)
-        #expect(appliance.targetTemperature == 45)
-        #expect(appliance.minTemp == 32)
-        #expect(appliance.maxTemp == 60)
-        #expect(appliance.step == 1)
-        #expect(appliance.availableModes.isEmpty)
-        #expect(appliance.faultText == nil)
-
-        #expect(try MiotCommandMapper.map(.setSwitch(entityId: appliance.entityId, isOn: false), spec: spec)
-            == .setProps([.init(did: "gas-boiler", siid: 2, piid: 1, value: .bool(false))]))
-        #expect(try MiotCommandMapper.map(.setClimateTemperature(entityId: appliance.entityId, temperature: 50), spec: spec)
-            == .setProps([.init(did: "gas-boiler", siid: 3, piid: 2, value: .number(50))]))
     }
 
     @Test("A water heater without a mode hides the mode selector but keeps its status reading")
@@ -486,6 +455,7 @@ struct WaterHeaterDeviceTests {
             return
         }
         #expect(startedSpec.isOn)
+        #expect(startedSpec.statusText == L10n.tr("运行中", "Running"))
 
         let paused = DemoHomeProvider.applying(
             .pressButton(entityId: pause.entityId),
@@ -495,7 +465,8 @@ struct WaterHeaterDeviceTests {
             Issue.record("demo appliance disappeared after pause")
             return
         }
-        #expect(!pausedSpec.isOn)
+        #expect(pausedSpec.isOn, "pause does not power the appliance off")
+        #expect(pausedSpec.statusText == L10n.tr("已暂停", "Paused"))
     }
 
     @Test("Writable companion properties win over read-only primary ones and map to their service")
@@ -600,6 +571,224 @@ struct WaterHeaterDeviceTests {
         }
         #expect(appliance.startAction == nil, "a custom-service start action is not this card's start")
         #expect(appliance.pauseAction == nil)
+        #expect(throws: MiotCommandError.self) {
+            try MiotCommandMapper.map(.pressButton(entityId: "miot-action:unrelated:4:1"), spec: spec)
+        }
+    }
+
+    @Test("A boiler device type is not claimed by the water heater cut")
+    func boilerTypeIsNotClaimed() throws {
+        let spec = MiotDeviceSpec(
+            type: "urn:miot-spec-v2:device:boiler:0000A0E8:test-boiler:1",
+            description: "Boiler",
+            services: [
+                MiotService(
+                    iid: 2,
+                    type: "urn:miot-spec-v2:service:boiler:0000793F:test-boiler:1",
+                    properties: [
+                        MiotProperty(iid: 1, type: "urn:miot-spec-v2:property:on:00000006:test-boiler:1", format: "bool", access: ["read", "write"]),
+                    ]
+                ),
+                MiotService(
+                    iid: 3,
+                    type: "urn:miot-spec-v2:service:water-heater:0000783E:test-boiler:1",
+                    properties: [
+                        MiotProperty(iid: 2, type: "urn:miot-spec-v2:property:target-temperature:00000021:test-boiler:1", format: "float", access: ["read", "write"], valueRange: [32, 60, 1]),
+                    ]
+                ),
+            ]
+        )
+        let record = MiDeviceRecord(did: "boiler", name: "壁挂炉", model: "test.boiler.one", isOnline: true)
+        let home = MiotSynthesizer.synthesize(
+            devices: [record], rooms: [], specs: [record.model: spec],
+            values: [
+                .init(did: "boiler", siid: 2, piid: 1): .bool(true),
+                .init(did: "boiler", siid: 3, piid: 2): .number(45),
+            ]
+        )
+        #expect(home.devices.isEmpty, "boiler is a separate appliance family, not #300's water heater")
+    }
+
+    @Test("A missing target reading hides the stepper instead of inventing the minimum")
+    func missingTargetReadingHidesStepper() throws {
+        let spec = MiotDeviceSpec(
+            type: "urn:miot-spec-v2:device:water-heater:0000A02A:no-reading:1",
+            description: "Water Heater",
+            services: [
+                MiotService(
+                    iid: 2,
+                    type: "urn:miot-spec-v2:service:water-heater:0000783E:no-reading:1",
+                    properties: [
+                        MiotProperty(iid: 1, type: "urn:miot-spec-v2:property:on:00000006:no-reading:1", format: "bool", access: ["read", "write"]),
+                        MiotProperty(iid: 2, type: "urn:miot-spec-v2:property:target-temperature:00000021:no-reading:1", format: "float", access: ["read", "write"], valueRange: [40, 80, 2]),
+                    ]
+                )
+            ]
+        )
+        let record = MiDeviceRecord(did: "no-reading", name: "热水器", model: "test.wh.no-reading", isOnline: true)
+        let home = MiotSynthesizer.synthesize(
+            devices: [record], rooms: [], specs: [record.model: spec],
+            values: [.init(did: "no-reading", siid: 2, piid: 1): .bool(true)]
+        )
+        let device = try #require(home.devices.first)
+        guard case .appliance(let appliance) = device.kind else {
+            Issue.record("water heater was not synthesized as an appliance")
+            return
+        }
+        #expect(appliance.targetTemperature == nil)
+        #expect(!device.hasDetailDrawer, "no target reading means no temperature control")
+    }
+
+    @Test("Undoing All Off restores an opted-in water heater")
+    @MainActor
+    func allOffUndoRestoresWaterHeater() async throws {
+        let (device, _, _) = try electric(isOn: true)
+        let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: [device]))
+        let store = HomeStore(provider: mock, defaultsSuiteName: "test.waterheater.undo.\(UUID().uuidString)")
+        for _ in 0..<50 where store.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        store.setJoinsAllOff(true, deviceId: device.id)
+        #expect(store.allOffTargets.map(\.id) == [device.id])
+
+        store.turnAllOff()
+        await waitUntil { await mock.executedCommands.count == 1 }
+        #expect(await mock.executedCommands == [.setSwitch(entityId: "miot:electric:2", isOn: false)])
+        #expect(store.devices.first?.isActiveOn == false)
+
+        let undo = try #require(store.undoTurnAllOff(), "All Off undo must apply to an appliance")
+        await undo.value
+        #expect(await mock.executedCommands.last == .setSwitch(entityId: "miot:electric:2", isOn: true))
+        #expect(store.devices.first?.isActiveOn == true)
+    }
+
+    @Test("A Fahrenheit tap moves a step-2 appliance target")
+    @MainActor
+    func fahrenheitStepOnCoarseStep() async throws {
+        let device = SmartDevice(
+            id: "coarse", name: "热水器", roomId: "bath", roomName: "浴室",
+            model: "test.wh.coarse", isOnline: true,
+            kind: .appliance(ApplianceSpec(
+                entityId: "miot:coarse:2",
+                isOn: true,
+                powerPresent: true,
+                powerWritable: true,
+                targetTemperature: 50,
+                currentTemperature: 48,
+                minTemp: 40,
+                maxTemp: 80,
+                step: 2,
+                temperatureWritable: true
+            ))
+        )
+        let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: [device]))
+        let store = HomeStore(provider: mock, defaultsSuiteName: "test.waterheater.fahrenheit.\(UUID().uuidString)")
+        for _ in 0..<50 where store.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        store.manualControlConfirmationHandler = { _ in true }
+
+        try await L10n.$overrideTemperatureUnit.withValue(.fahrenheit) {
+            store.stepApplianceTemperature(device.id, delta: L10n.celsiusStep(2))
+            await waitUntil { await mock.executedCommands.count == 1 }
+            #expect(store.devices.first?.applianceTargetTemperature == 52)
+            #expect(await mock.executedCommands.last == .setClimateTemperature(entityId: "miot:coarse:2", temperature: 52))
+
+            store.stepApplianceTemperature(device.id, delta: -L10n.celsiusStep(2))
+            await waitUntil { await mock.executedCommands.count == 2 }
+            #expect(store.devices.first?.applianceTargetTemperature == 50)
+            #expect(await mock.executedCommands.last == .setClimateTemperature(entityId: "miot:coarse:2", temperature: 50))
+        }
+    }
+
+    @Test("A Fahrenheit tap moves a half-degree appliance target")
+    @MainActor
+    func fahrenheitStepOnHalfDegreeStep() async throws {
+        let (device, _, _) = try electric(target: 40)
+        let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: [device]))
+        let store = HomeStore(provider: mock, defaultsSuiteName: "test.waterheater.fahrenheit-half.\(UUID().uuidString)")
+        for _ in 0..<50 where store.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        store.manualControlConfirmationHandler = { _ in true }
+
+        try await L10n.$overrideTemperatureUnit.withValue(.fahrenheit) {
+            store.stepApplianceTemperature(device.id, delta: L10n.celsiusStep(0.5))
+            await waitUntil { await mock.executedCommands.count == 1 }
+            #expect(store.devices.first?.applianceTargetTemperature == 40.5)
+            #expect(await mock.executedCommands.last == .setClimateTemperature(entityId: "miot:electric:2", temperature: 40.5))
+
+            store.stepApplianceTemperature(device.id, delta: -L10n.celsiusStep(0.5))
+            await waitUntil { await mock.executedCommands.count == 2 }
+            #expect(store.devices.first?.applianceTargetTemperature == 40)
+
+            store.stepApplianceTemperature(device.id, delta: -L10n.celsiusStep(0.5))
+            await waitUntil { await mock.executedCommands.count == 3 }
+            #expect(store.devices.first?.applianceTargetTemperature == 39.5)
+            #expect(await mock.executedCommands.last == .setClimateTemperature(entityId: "miot:electric:2", temperature: 39.5))
+        }
+    }
+
+    @Test("A 0.1 °C step lands on the adjacent target")
+    @MainActor
+    func decimalStepKeepsAdjacentTarget() async throws {
+        let device = SmartDevice(
+            id: "fine", name: "热水器", roomId: "bath", roomName: "浴室",
+            model: "test.wh.fine", isOnline: true,
+            kind: .appliance(ApplianceSpec(
+                entityId: "miot:fine:2",
+                isOn: true,
+                powerPresent: true,
+                powerWritable: true,
+                targetTemperature: 40.1,
+                currentTemperature: 38,
+                minTemp: 30,
+                maxTemp: 50,
+                step: 0.1,
+                temperatureWritable: true
+            ))
+        )
+        let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: [device]))
+        let store = HomeStore(provider: mock, defaultsSuiteName: "test.waterheater.decimal.\(UUID().uuidString)")
+        for _ in 0..<50 where store.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        store.manualControlConfirmationHandler = { _ in true }
+
+        try await L10n.$overrideTemperatureUnit.withValue(.celsius) {
+            store.stepApplianceTemperature(device.id, delta: L10n.celsiusStep(0.1))
+            await waitUntil { await mock.executedCommands.count == 1 }
+            #expect(store.devices.first?.applianceTargetTemperature == 40.2)
+            #expect(await mock.executedCommands.last == .setClimateTemperature(entityId: "miot:fine:2", temperature: 40.2))
+
+            store.stepApplianceTemperature(device.id, delta: -L10n.celsiusStep(0.1))
+            await waitUntil { await mock.executedCommands.count == 2 }
+            #expect(store.devices.first?.applianceTargetTemperature == 40.1)
+            #expect(await mock.executedCommands.last == .setClimateTemperature(entityId: "miot:fine:2", temperature: 40.1))
+        }
+    }
+
+    @Test("Assistant plans still skip appliance cards")
+    @MainActor
+    func assistantDoesNotControlAppliances() async throws {
+        let (device, _, _) = try electric(isOn: true)
+        let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: [device]))
+        let store = HomeStore(provider: mock, defaultsSuiteName: "test.waterheater.assistant.\(UUID().uuidString)")
+        for _ in 0..<50 where store.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        _ = await store.executeIntentPlan(
+            IntentPlan(
+                intents: [DeviceIntent(targetId: device.id, operation: .power(false))],
+                reply: "关闭热水器",
+                source: .local
+            ),
+            recordedUtterance: "关闭热水器",
+            origin: .userInitiated
+        )
+        #expect(await mock.executedCommands.isEmpty)
+        #expect(store.devices.first?.isActiveOn == true)
     }
 
     @Test("A water heater from both sources produces one card")
@@ -639,7 +828,13 @@ struct WaterHeaterDeviceTests {
 
         let merged = DeviceDeduplicator.merge(homeAssistant: haHome, xiaomiCloud: miHome)
         #expect(merged.home.devices.count == 1)
-        #expect(merged.routes[try #require(merged.home.devices.first?.id)] != nil)
+        let card = try #require(merged.home.devices.first)
+        guard case .appliance = card.kind else {
+            Issue.record("the merged card kept the Home Assistant climate card instead of the appliance")
+            return
+        }
+        #expect(merged.routes[card.id]?.backend == .xiaomiCloud)
+        #expect(ManualControlPolicy.requiresConfirmation(.power(true), for: card))
     }
 
     @Test("A water heater stays out of All Off unless the user opts in")
@@ -658,5 +853,12 @@ struct WaterHeaterDeviceTests {
             try? await Task.sleep(for: .milliseconds(20))
         }
         Issue.record("condition was not met in time")
+    }
+}
+
+private extension SmartDevice {
+    var applianceTargetTemperature: Double? {
+        guard case .appliance(let spec) = kind else { return nil }
+        return spec.targetTemperature
     }
 }

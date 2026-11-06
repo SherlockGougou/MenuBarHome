@@ -204,6 +204,8 @@ public enum IntentValidator {
             return s.powerWritable ? operation : nil
         case (.power, .vacuum(let s)):
             return s.actionsWritable ? operation : nil
+        case (.power, .appliance(let s)):
+            return s.powerWritable ? operation : nil
         case (.power, .tv):
             return operation
 

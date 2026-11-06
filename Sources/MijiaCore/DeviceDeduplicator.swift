@@ -470,6 +470,10 @@ public enum DeviceDeduplicator {
         let ha = homeAssistant.device
         let mi = xiaomiCloud.device
         if ha.isOnline != mi.isOnline { return ha.isOnline ? homeAssistant : xiaomiCloud }
+        // The appliance shape carries the water heater's mode, fault and remaining time. When the
+        // other source only knows it as a generic climate card, keep the appliance card.
+        if case .appliance = mi.kind, case .climate = ha.kind { return xiaomiCloud }
+        if case .appliance = ha.kind, case .climate = mi.kind { return homeAssistant }
         // A camera card exists to show video. Home Assistant's Xiaomi integration exposes the
         // power, night-vision and motion switches but no stream, so it can out-score the Mi copy
         // and leave the window stuck on "no live stream". Every Mi cloud camera can play live

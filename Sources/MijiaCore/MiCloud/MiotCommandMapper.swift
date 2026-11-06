@@ -39,11 +39,12 @@ public enum MiotCommandMapper {
                   let action = service.actions.first(where: { $0.iid == address.aiid }) else {
                 throw MiotCommandError.unsupported("action")
             }
+            let isApplianceService = service.shortName == "water-heater" || service.shortName == "boiler"
             let inputs: [JSONValue]
             switch command {
             case .pressButton where action.inputProperties.isEmpty
                 && (["play-music", "stop-alarm"].contains(action.shortName)
-                    || ApplianceActionKind.matching(action.shortName) != nil):
+                    || (isApplianceService && ApplianceActionKind.matching(action.shortName) != nil)):
                 inputs = []
             case .sendNotifyMessage(_, let text):
                 let expected = action.shortName == "play-text" ? ["text-content"]

@@ -454,7 +454,13 @@ extension HomeStore {
         let previous = devices[idx]
         let step = s.step > 0 ? s.step : 1
         let raw = max(s.minTemp, min(s.maxTemp, target + delta))
-        let stepped = s.minTemp + ((raw - s.minTemp) / step).rounded() * step
+        // A Fahrenheit tap is 5/9 °C, smaller than a coarse step. Round to the nearest step so a
+        // small decimal step keeps its adjacent value, then move one step when that is the target.
+        var units = ((raw - s.minTemp) / step).rounded()
+        if s.minTemp + units * step == target {
+            units += delta > 0 ? 1 : -1
+        }
+        let stepped = s.minTemp + units * step
         let nextTemp = max(s.minTemp, min(s.maxTemp, stepped))
         guard nextTemp != target, allowManualControl(.targetTemperature(nextTemp), for: previous) else { return }
         s.targetTemperature = nextTemp
