@@ -14,7 +14,7 @@ struct UpdateCheckerTests {
 
     static func checker(status: Int, body: String) -> UpdateChecker {
         UpdateChecker(currentVersion: "1.0.0", transport: { request in
-            #expect(request.url?.absoluteString == "https://api.github.com/repos/jryang1997/MenuBarMijia/releases/latest")
+            #expect(request.url?.absoluteString == "https://gitlab.com/api/v4/projects/88577673/releases/permalink/latest")
             let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
             return (Data(body.utf8), response)
         })
@@ -22,12 +22,12 @@ struct UpdateCheckerTests {
 
     @Test("A newer release is reported with its download page")
     func newerRelease() async throws {
-        let json = #"{"tag_name":"v1.1.0","html_url":"https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.1.0","body":"新功能"}"#
+        let json = #"{"tag_name":"v1.1.0","_links":{"self":"https://gitlab.com/jryang1997/MenuBarMijia/-/releases/v1.1.0"},"description":"新功能"}"#
         let result = try await Self.checker(status: 200, body: json).checkRelease()
         #expect(
             result == AppRelease(
                 version: "1.1.0",
-                pageURL: URL(string: "https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.1.0")!,
+                pageURL: URL(string: "https://gitlab.com/jryang1997/MenuBarMijia/-/releases/v1.1.0")!,
                 notes: "新功能",
                 packageAsset: nil
             )
@@ -67,79 +67,61 @@ struct UpdateCheckerTests {
         #expect(try SHA256Digest.hashFile(at: tempFile) == fromInline)
     }
 
+    @Test("A release page outside gitlab.com falls back to the project's releases page")
+    func foreignReleasePageFallsBack() async throws {
+        let json = #"{"tag_name":"v1.1.0","_links":{"self":"https://evil.example/jryang1997/MenuBarMijia/-/releases/v1.1.0"}}"#
+        let result = try await Self.checker(status: 200, body: json).checkRelease()
+        #expect(result?.pageURL == UpdateChecker.releasesPage)
+    }
+
     @Test("checkRelease selects the DMG only when the update manifest is listed")
     func checkReleaseSelectsDMGWhenManifestIsListed() async throws {
         let zipOnly = """
         {
           "tag_name": "v1.2.0",
-          "html_url": "https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.2.0",
-          "body": "支持应用内更新",
-          "assets": [
-            {
-              "name": "MenuBarMijia-1.2.0.zip",
-              "browser_download_url": "https://example.com/MenuBarMijia-1.2.0.zip",
-              "size": 1024,
-              "digest": "sha256:\(String(repeating: "a", count: 64))"
-            },
-            {
-              "name": "MenuBarMijia-1.2.0.update.json",
-              "browser_download_url": "https://example.com/MenuBarMijia-1.2.0.update.json"
-            }
-          ]
+          "_links": {"self": "https://gitlab.com/jryang1997/MenuBarMijia/-/releases/v1.2.0"},
+          "description": "支持应用内更新",
+          "assets": {"links": [
+            {"name": "MenuBarMijia-1.2.0.zip", "url": "https://example.com/MenuBarMijia-1.2.0.zip"},
+            {"name": "MenuBarMijia-1.2.0.update.json", "url": "https://example.com/MenuBarMijia-1.2.0.update.json"}
+          ]}
         }
         """
         let withoutDMG = try await Self.checker(status: 200, body: zipOnly).checkRelease()
         #expect(withoutDMG?.version == "1.2.0")
         #expect(withoutDMG?.packageAsset == nil)
 
-        let digestOnly = """
+        let dmgWithoutManifest = """
         {
           "tag_name": "v1.2.0",
-          "html_url": "https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.2.0",
-          "assets": [
-            {
-              "name": "MenuBarMijia-1.2.0.dmg",
-              "browser_download_url": "https://example.com/MenuBarMijia-1.2.0.dmg",
-              "size": 2048,
-              "digest": "sha256:\(String(repeating: "a", count: 64))"
-            }
-          ]
+          "assets": {"links": [
+            {"name": "MenuBarMijia-1.2.0.dmg", "url": "https://example.com/MenuBarMijia-1.2.0.dmg"}
+          ]}
         }
         """
-        #expect(try await Self.checker(status: 200, body: digestOnly).checkRelease()?.packageAsset == nil)
+        #expect(try await Self.checker(status: 200, body: dmgWithoutManifest).checkRelease()?.packageAsset == nil)
 
         let listed = """
         {
           "tag_name": "v1.3.0",
-          "html_url": "https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.3.0",
-          "body": "清单在场",
-          "assets": [
-            {
-              "name": "MenuBarMijia-1.3.0.zip",
-              "browser_download_url": "https://example.com/MenuBarMijia-1.3.0.zip",
-              "digest": "sha256:\(String(repeating: "b", count: 64))"
-            },
-            {
-              "name": "MenuBarMijia-1.3.0.dmg",
-              "browser_download_url": "https://example.com/MenuBarMijia-1.3.0.dmg",
-              "size": 4096
-            },
-            {
-              "name": "MenuBarMijia-1.3.0.update.json",
-              "size": 526
-            }
-          ]
+          "_links": {"self": "https://gitlab.com/jryang1997/MenuBarMijia/-/releases/v1.3.0"},
+          "description": "清单在场",
+          "assets": {"links": [
+            {"name": "MenuBarMijia-1.3.0.zip", "url": "https://example.com/MenuBarMijia-1.3.0.zip"},
+            {"name": "MenuBarMijia-1.3.0.dmg", "url": "https://evil.example/MenuBarMijia-1.3.0.dmg"},
+            {"name": "MenuBarMijia-1.3.0.update.json", "url": "https://example.com/MenuBarMijia-1.3.0.update.json"}
+          ]}
         }
         """
         let release = try await Self.checker(status: 200, body: listed).checkRelease()
         #expect(release?.notes == "清单在场")
         #expect(release?.packageAsset?.kind == .dmg)
         #expect(release?.packageAsset?.name == "MenuBarMijia-1.3.0.dmg")
-        #expect(release?.packageAsset?.sizeBytes == 4096)
-        #expect(release?.packageAsset?.downloadURL == UpdateChecker.releaseAssetURL(
-            version: "1.3.0",
-            fileName: "MenuBarMijia-1.3.0.dmg"
-        ))
+        // GitLab release links carry no size; the download shows indeterminate progress.
+        #expect(release?.packageAsset?.sizeBytes == 0)
+        // The link URL in the release JSON is ignored; the download comes from the project's package registry.
+        #expect(release?.packageAsset?.downloadURL.absoluteString
+            == "https://gitlab.com/api/v4/projects/88577673/packages/generic/MenuBarMijia/1.3.0/MenuBarMijia-1.3.0.dmg")
         #expect(UpdateChecker.releaseAssetURL(version: "1.2", fileName: "MenuBarMijia-1.2.dmg") == nil)
         #expect(UpdateChecker.releaseAssetURL(version: "v1.2.0", fileName: "MenuBarMijia-1.2.0.dmg") == nil)
         #expect(UpdateChecker.releaseAssetURL(version: "1.2.0", fileName: "MenuBarMijia-1.2.0.zip") == nil)
@@ -179,7 +161,7 @@ struct UpdateCheckerTests {
         let packageURL = try #require(UpdateChecker.releaseAssetURL(version: "1.2.0", fileName: "MenuBarMijia-1.2.0.dmg"))
         let release = AppRelease(
             version: "1.2.0",
-            pageURL: URL(string: "https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.2.0")!,
+            pageURL: URL(string: "https://gitlab.com/jryang1997/MenuBarMijia/-/releases/v1.2.0")!,
             notes: "Release notes",
             packageAsset: .init(
                 name: "MenuBarMijia-1.2.0.dmg",
@@ -321,7 +303,7 @@ struct UpdateCheckerTests {
         let signed = try signedUpdateManifest(version: "1.1.6", package: Data("old-dmg".utf8))
         let release = AppRelease(
             version: "1.1.8",
-            pageURL: URL(string: "https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.1.8")!,
+            pageURL: URL(string: "https://gitlab.com/jryang1997/MenuBarMijia/-/releases/v1.1.8")!,
             notes: "replay",
             packageAsset: .init(
                 name: "MenuBarMijia-1.1.8.dmg",
@@ -413,18 +395,12 @@ struct UpdateCheckerTests {
         let releaseJSON = """
         {
           "tag_name": "v1.4.0",
-          "html_url": "https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.4.0",
-          "body": "支持状态栏气泡提醒",
-          "assets": [
-            {
-              "name": "MenuBarMijia-1.4.0.dmg",
-              "size": \(archiveBytes.count)
-            },
-            {
-              "name": "MenuBarMijia-1.4.0.update.json",
-              "size": \(signed.bytes.count)
-            }
-          ]
+          "_links": {"self": "https://gitlab.com/jryang1997/MenuBarMijia/-/releases/v1.4.0"},
+          "description": "支持状态栏气泡提醒",
+          "assets": {"links": [
+            {"name": "MenuBarMijia-1.4.0.dmg", "url": "https://example.com/MenuBarMijia-1.4.0.dmg"},
+            {"name": "MenuBarMijia-1.4.0.update.json", "url": "https://example.com/MenuBarMijia-1.4.0.update.json"}
+          ]}
         }
         """
 
@@ -542,7 +518,7 @@ struct UpdateCheckerTests {
         await store.startUpdateInstallation()
         if case .failed(let failure) = store.updateState {
             #expect(failure.canRetryInstall)
-            #expect(failure.fallbackURL.absoluteString == "https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.4.0")
+            #expect(failure.fallbackURL.absoluteString == "https://gitlab.com/jryang1997/MenuBarMijia/-/releases/v1.4.0")
         } else {
             Issue.record("Expected .failed state on unpack error, got \(store.updateState)")
         }

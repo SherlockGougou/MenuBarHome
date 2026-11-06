@@ -28,7 +28,7 @@ enum SigningError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .usage:
-            return "用法：MENUBARMIJIA_UPDATE_SIGNING_KEY=<私钥> swift scripts/sign_update.swift --min-from <x.y.z> <DMG> <EXE> <MSI>"
+            return "用法：swift scripts/sign_update.swift --min-from <x.y.z> <DMG> [<EXE> <MSI>]（省略 EXE/MSI 即仅 macOS）；或 --verify <清单> <签名>"
         case .missingKey:
             return "缺少环境变量 MENUBARMIJIA_UPDATE_SIGNING_KEY（32 字节 seed 的 base64 或 PKCS#8 PEM）"
         case .invalidKey(let detail):
@@ -111,16 +111,37 @@ func versionFromDMG(_ url: URL) throws -> String {
     return version
 }
 
+/// `--verify <manifest> <signature>`: checks a signed manifest against the built-in public key
+/// without touching the private key, so a release can be re-checked right before it is published.
+func verify(manifestPath: String, signaturePath: String) throws {
+    let manifest = try Data(contentsOf: URL(fileURLWithPath: manifestPath))
+    let signatureText = try String(contentsOf: URL(fileURLWithPath: signaturePath), encoding: .utf8)
+    guard let signature = Data(base64Encoded: signatureText.trimmingCharacters(in: .whitespacesAndNewlines)),
+          let keyData = Data(base64Encoded: expectedPublicKeyBase64) else {
+        throw SigningError.invalidPackage("签名或内置公钥不是合法 base64")
+    }
+    let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: keyData)
+    guard publicKey.isValidSignature(signature, for: manifest) else {
+        throw SigningError.invalidPackage("签名与清单不匹配")
+    }
+    print("✅ 签名有效：\(manifestPath)")
+}
+
 func main() throws {
     let arguments = Array(CommandLine.arguments.dropFirst())
-    guard arguments.count == 5, arguments[0] == "--min-from" else { throw SigningError.usage }
+    if arguments.count == 3, arguments[0] == "--verify" {
+        try verify(manifestPath: arguments[1], signaturePath: arguments[2])
+        return
+    }
+    // 5 个参数：完整发布（DMG + EXE + MSI）；3 个参数：仅 macOS 发布（只有 DMG）。
+    guard arguments.count == 5 || arguments.count == 3, arguments[0] == "--min-from" else { throw SigningError.usage }
     let minFrom = arguments[1]
     guard isReleaseVersion(minFrom) else {
         throw SigningError.invalidPackage("--min-from 必须是 x.y.z")
     }
     let dmgURL = URL(fileURLWithPath: arguments[2])
-    let exeURL = URL(fileURLWithPath: arguments[3])
-    let msiURL = URL(fileURLWithPath: arguments[4])
+    let exeURL = arguments.count == 5 ? URL(fileURLWithPath: arguments[3]) : nil
+    let msiURL = arguments.count == 5 ? URL(fileURLWithPath: arguments[4]) : nil
     guard let rawKey = ProcessInfo.processInfo.environment["MENUBARMIJIA_UPDATE_SIGNING_KEY"] ?? readKeyFromKeychain() else {
         throw SigningError.missingKey
     }
@@ -135,10 +156,12 @@ func main() throws {
     let version = try versionFromDMG(dmgURL)
     let exeName = "MenuBarMijia-\(version)-windows-x64-setup.exe"
     let msiName = "MenuBarMijia-\(version)-windows-x64.msi"
-    guard exeURL.lastPathComponent == exeName, msiURL.lastPathComponent == msiName else {
-        throw SigningError.invalidPackage("EXE 与 MSI 必须带上与 DMG 相同的版本")
+    if let exeURL, let msiURL {
+        guard exeURL.lastPathComponent == exeName, msiURL.lastPathComponent == msiName else {
+            throw SigningError.invalidPackage("EXE 与 MSI 必须带上与 DMG 相同的版本")
+        }
     }
-    for package in [dmgURL, exeURL, msiURL] {
+    for package in [dmgURL, exeURL, msiURL].compactMap({ $0 }) {
         let leftover = package.appendingPathExtension("ed25519.sig")
         if FileManager.default.fileExists(atPath: leftover.path) {
             throw SigningError.invalidPackage("目录里还有旧的安装包签名 \(leftover.lastPathComponent)，请先删除")
@@ -154,9 +177,10 @@ func main() throws {
         "python3", manifestTool.path, "encode",
         "--min-from", minFrom,
         "--dmg", dmgURL.path,
-        "--exe", exeURL.path,
-        "--msi", msiURL.path,
     ]
+    if let exeURL, let msiURL {
+        encoder.arguments? += ["--exe", exeURL.path, "--msi", msiURL.path]
+    }
     var environment: [String: String] = [:]
     if let path = ProcessInfo.processInfo.environment["PATH"] {
         environment["PATH"] = path
