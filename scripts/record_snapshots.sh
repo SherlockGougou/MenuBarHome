@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Record the UI snapshot baselines on the CI runner and copy the changed PNGs back.
+# Forgejo has no macOS runner yet, so only --from works until one is registered.
 #
 #   scripts/record_snapshots.sh [ref] [--dry-run] [--from <dir>]
 #
@@ -52,31 +53,10 @@ if [ -z "$download_dir" ]; then
         exit 1
     fi
 
-    sha="$(git -C "$ROOT_DIR" rev-parse HEAD)"
-    echo "▶ 在 $REF ($(git -C "$ROOT_DIR" rev-parse --short HEAD)) 上派发基线录制…"
-    gh workflow run ci.yml --ref "$REF" -f record_only=true >/dev/null
-
-    run_id=""
-    for _ in $(seq 1 40); do
-        sleep 3
-        run_id="$(gh run list --workflow=ci.yml --branch "$REF" --event workflow_dispatch \
-            --limit 10 --json databaseId,headSha \
-            --jq "map(select(.headSha == \"$sha\")) | .[0].databaseId // empty")"
-        [ -n "$run_id" ] && break
-    done
-    if [ -z "$run_id" ]; then
-        echo "❌ 没等到录制任务出现，去 Actions 页面确认" >&2
-        exit 1
-    fi
-
-    echo "▶ 等待录制任务 $run_id 完成（只跑 snapshot-record）…"
-    gh run watch "$run_id" --interval 20 --exit-status >/dev/null || {
-        echo "❌ 录制任务失败：https://github.com/$(gh repo view --json nameWithOwner -q .nameWithOwner)/actions/runs/$run_id" >&2
-        exit 1
-    }
-
-    download_dir="$(mktemp -d)"
-    gh run download "$run_id" -n snapshot-baselines -D "$download_dir" >/dev/null
+    # 迁到 Forgejo 后还没有 macos-26 runner，CI 录制无处可跑；有了 runner 再经 scripts/forge.py 派发 workflow。
+    echo "❌ Forgejo 上还没有 macOS runner，无法在 CI 录制基线。" >&2
+    echo "   已有 artifact 时用 --from <目录>；或在 runner 机器上跑 SNAPSHOT_RECORD=1 swift test --filter SnapshotTests。" >&2
+    exit 1
 fi
 
 if [ ! -d "$download_dir" ]; then

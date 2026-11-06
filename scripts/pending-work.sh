@@ -4,7 +4,7 @@
 # Usage: bash scripts/pending-work.sh [base]   # base defaults to origin/main
 #
 # A squash-merged branch looks "ahead" in `git rev-list`, so the authoritative landed signal is
-# the PR state from GitHub. The OWN column is the branch's own diff against its merge base, which
+# the PR state from the Forgejo forge (scripts/forge.py). The OWN column is the branch's own diff against its merge base, which
 # stays stable while the base branch moves.
 set -euo pipefail
 
@@ -14,8 +14,8 @@ git rev-parse --verify --quiet "$base^{commit}" >/dev/null || {
     exit 1
 }
 
-prs="$(gh pr list --state all --limit 200 --json headRefName,state,number \
-    --jq '.[] | "\(.headRefName)\t\(.state)\t\(.number)"' 2>/dev/null || true)"
+prs="$(python3 "$(dirname "$0")/forge.py" pr list --state all 2>/dev/null \
+    | awk -F'\t' '{ sub(/^#/, "", $1); print $3 "\t" $2 "\t" $1 }' || true)"
 
 pr_state() {
     printf '%s\n' "$prs" | awk -F'\t' -v b="$1" '!found && $1 == b { print $2 " #" $3; found = 1 } END { if (!found) print "no PR" }'

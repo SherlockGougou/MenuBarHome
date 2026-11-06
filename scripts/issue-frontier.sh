@@ -7,10 +7,12 @@
 # 可做：ticket 格式（## What to build + ## Acceptance criteria），没有未关闭的 blocker、
 #       没有 assignee、没有 claimed:* 标签、没有关联的 open PR、远端没有 issue-<号> 分支。
 # 可拆：spec 格式（## Problem Statement 或 ## User Stories），还没有 sub-issue，其余条件同上。
-# 所有会话共用一个 GitHub 账号，所以 assignee 和 claimed:* 标签都算已被认领。
+# 所有会话共用一个 Forgejo 账号，所以 assignee 和 claimed:* 标签都算已被认领。
+# 从 GitHub 迁来的票标题带 [GH#旧号]，正文里的编号是旧号：按标题前缀翻译成新号，翻不到的旧号已归档关闭；
+# 分支名和 PR 里提到新号或旧号都算关联。
 # 找票顺序：priority:high → medium → 没标优先级 → low，同级编号小的在前。
 #
-# 只取三次数据：全部 open issue（REST 自带依赖与 sub-issue 摘要）、open PR、git ls-remote。
+# 只取三次数据：全部 open issue、open PR（都走 scripts/forge.py 调 Forgejo API）、git ls-remote。
 # 设了 ISSUE_FRONTIER_FIXTURES=<目录> 时改读其中的 issues.json / prs.json / branches.txt（自测用）。
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -37,8 +39,14 @@ else
     data_dir="$(mktemp -d "${TMPDIR:-/tmp}/issue-frontier.XXXXXX")"
     trap 'rm -rf "$data_dir"' EXIT
     # 取全部 open issue 而不只是 ready-for-agent：正文 Blocked by 里的票要靠它判断是否还开着。
-    gh api --paginate --slurp 'repos/{owner}/{repo}/issues?state=open&per_page=100' > "$data_dir/issues.json"
-    gh pr list --state open --limit 1000 --json number,title,body,headRefName,closingIssuesReferences > "$data_dir/prs.json"
+    python3 scripts/forge.py api GET '{repo}/issues?state=open&type=issues' --paginate \
+        | python3 -c 'import json, sys; json.dump([json.load(sys.stdin)], sys.stdout)' > "$data_dir/issues.json"
+    # Forgejo 没有 closingIssuesReferences：关联只靠标题、正文和分支名里的编号。
+    python3 scripts/forge.py api GET '{repo}/pulls?state=open' --paginate | python3 -c '
+import json, sys
+prs = json.load(sys.stdin)
+json.dump([{"number": p["number"], "title": p["title"], "body": p.get("body") or "", "headRefName": p["head"]["ref"],
+            "closingIssuesReferences": []} for p in prs], sys.stdout)' > "$data_dir/prs.json"
     git ls-remote --heads origin > "$data_dir/branches.txt"
 fi
 
@@ -58,8 +66,15 @@ def load(name):
 
 # --paginate --slurp 给的是「页」的数组。
 issues = [issue for page in json.loads(load("issues.json")) for issue in page]
-issues = [issue for issue in issues if "pull_request" not in issue]
+issues = [issue for issue in issues if not issue.get("pull_request")]
 open_numbers = {issue["number"] for issue in issues}
+LEGACY_TITLE = re.compile(r"^\s*\[GH#(\d+)\]")
+legacy_of = {}
+for issue in issues:
+    match = LEGACY_TITLE.match(issue.get("title") or "")
+    if match:
+        legacy_of[issue["number"]] = int(match.group(1))
+new_of_legacy = {legacy: number for number, legacy in legacy_of.items()}
 prs = json.loads(load("prs.json"))
 branches = [line.split("refs/heads/", 1)[1] for line in load("branches.txt").splitlines() if "refs/heads/" in line]
 
@@ -76,7 +91,7 @@ def has_heading(body, *names):
     return any(re.search(rf"(?mi)^##\s+{re.escape(name)}\b", body) for name in names)
 
 
-def body_blockers(body):
+def body_blockers(body, legacy):
     # docs/agents/issue-tracker.md 的回退写法：没有原生依赖时，blocker 写在正文的 Blocked by 一节或一行里，
     # 格式不固定（列表、勾选框、一句话）。宁可多跳过：这一节里出现的、仍开着的编号都算。
     refs = set()
@@ -85,18 +100,26 @@ def body_blockers(body):
         refs.update(int(n) for n in re.findall(r"#(\d+)", section.group(1)))
     for line in re.findall(r"(?im)^[*_ ]*Blocked by[*_ ]*:(.*)$", body):
         refs.update(int(n) for n in re.findall(r"#(\d+)", line))
+    # 迁移横幅「> 原 GitHub Issue `#305` | 前置：Blocked by `GH#304`（`#303` 已合入）」：括号里是已合入的旁注。
+    for line in re.findall(r"(?im)^>\s*原 GitHub Issue.*?Blocked by(.*)$", body):
+        line = re.sub(r"（[^）]*）|\([^)]*\)", "", line)
+        refs.update(int(n) for n in re.findall(r"#(\d+)", line))
+    if legacy:
+        # 迁移票正文里是 GitHub 旧号；没有对应新票的旧号都已合入归档。
+        refs = {new_of_legacy[n] for n in refs if n in new_of_legacy}
     return refs & open_numbers
 
 
-def linked_prs(number):
+def linked_prs(numbers):
     # 前面不能紧挨英文字母、数字、_、/ 或 &，后面不能再接数字：#280、other/repo#28、&#28; 都不算提到 #28，
-    # 「修复#28」算。
-    mention = re.compile(rf"(?<![A-Za-z0-9_/&])#{number}(?!\d)")
+    # 「修复#28」算；GH#28 也算（迁移票的旧号）。
+    alternatives = "|".join(str(n) for n in sorted(numbers))
+    mention = re.compile(rf"(?:(?<=GH)|(?<![A-Za-z0-9_/&]))#(?:{alternatives})(?!\d)")
     found = []
     for pr in prs:
         closes = {ref.get("number") for ref in pr.get("closingIssuesReferences") or []}
         text = f"{pr.get('title') or ''}\n{pr.get('body') or ''}"
-        if number in closes or mention.search(text) or number in branch_issue_numbers(pr.get("headRefName") or ""):
+        if closes & numbers or mention.search(text) or branch_issue_numbers(pr.get("headRefName") or "") & numbers:
             found.append(pr["number"])
     return found
 
@@ -114,7 +137,7 @@ for issue in issues:
     if dependencies.get("total_blocked_by"):
         blockers = dependencies.get("blocked_by") or 0
     else:
-        blockers = len(body_blockers(body))
+        blockers = len(body_blockers(body, number in legacy_of))
     sub_issues = (issue.get("sub_issues_summary") or {}).get("total") or 0
     if has_heading(body, "What to build") and has_heading(body, "Acceptance criteria"):
         kind, kind_cell = "ticket", "ticket"
@@ -124,8 +147,9 @@ for issue in issues:
         kind, kind_cell = "other", "其他"
     assignees = [assignee["login"] for assignee in issue.get("assignees") or []]
     claims = [label.split(":", 1)[1] for label in labels if label.startswith("claimed:")]
-    pr_numbers = linked_prs(number)
-    own_branches = [name for name in branches if number in branch_issue_numbers(name)]
+    aliases = {number} | ({legacy_of[number]} if number in legacy_of else set())
+    pr_numbers = linked_prs(aliases)
+    own_branches = [name for name in branches if branch_issue_numbers(name) & aliases]
     free = not (blockers or assignees or claims or pr_numbers or own_branches)
     if free and kind == "ticket":
         verdict = "可做"

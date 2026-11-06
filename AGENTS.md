@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-GitHub Issues (`jryang1997/MenuBarMijia`) via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Self-hosted Forgejo on the NAS (`http://10.10.1.4:3000/jryang/MenuBarMijia`, LAN only) via `python3 scripts/forge.py`; the GitHub account is suspended, so never use `gh`. Migrated issues were renumbered and cite old GitHub numbers. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
@@ -28,7 +28,7 @@ Windows 上没有 Swift 工具链：本机跑 `bash scripts/check.sh --lint-only
 
 本仓库的 Swift 与 Rust 没有语言服务器：引用与定义检索用 `grep` 或 `xd://ast_grep`，不要反复尝试 `xd://lsp`。
 
-CI 失败先看 `bash scripts/ci_errors.sh <run-id>`（只打失败 job、错误与失败用例）；盘点未合并分支和工作树用 `bash scripts/pending-work.sh`；挑票用 `bash scripts/issue-frontier.sh`（一次列出所有 `ready-for-agent` 票能不能做：blocker、assignee、`claimed:*` 标签、关联的 open PR 和分支；`--doable` 只输出可做编号）。
+CI 失败先看 `bash scripts/ci_errors.sh <run-number|log-file>`（只打失败 job、错误与失败用例）；盘点未合并分支和工作树用 `bash scripts/pending-work.sh`；挑票用 `bash scripts/issue-frontier.sh`（一次列出所有 `ready-for-agent` 票能不能做：blocker、assignee、`claimed:*` 标签、关联的 open PR 和分支；`--doable` 只输出可做编号）。
 
 ### Commit & PR policy
 
@@ -38,8 +38,8 @@ CI 失败先看 `bash scripts/ci_errors.sh <run-id>`（只打失败 job、错误
 - 登录、凭据与钥匙串、安全权限、设备控制、撤销、定时任务、数据迁移、自动更新、签名、打包发布、跨平台逻辑，以及牵涉多个模块的改动，走 PR，检查通过后再合并。
 - 检查失败原因尚未确认时，走 PR 排查，解决后再合并。已复现并确认与本轮无关的既有失败，需记录证据及例外原因；跳过检查不是默认流程。
 - 一个完整问题对应一次提交或一个 PR；同一问题的后续调整继续使用原 PR。
-- 直接 push 后确认云端检查的最终结果；交付时区分“已推送”与“检查已通过”。直接 push 不等于发布新版本。
-- PR 创建后用 `gh pr checks <n>`（或 `gh pr view <n> --json statusCheckRollup`）确认云端结果；首次查询为空时按退避重试，不要据此报告「还没有 CI」。
+- 直接 push 后，有 runner 时确认云端检查的最终结果；交付时区分“已推送”与“检查已通过”。直接 push 不等于发布新版本。
+- PR 用 `python3 scripts/forge.py pr create` 开，`pr checks <n>` 看云端结果。Forgejo 还没注册 Actions runner，检查列表一直为空：本地 `bash scripts/check.sh --skip-snapshots` 就是合并闸门，交付时如实说明「没有云端 CI」。GitHub Actions、Codex 审查与 `pr-wait`/babysit 一类依赖 GitHub 的技能都已不可用。
 
 ### Worktrees
 

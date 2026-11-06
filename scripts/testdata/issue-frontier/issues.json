@@ -61,6 +61,18 @@
      "issue_dependencies_summary": {"blocked_by": 0, "total_blocked_by": 0}, "sub_issues_summary": {"total": 0}},
     {"number": 99, "title": "issues 接口也会返回 PR", "labels": [{"name": "ready-for-agent"}], "assignees": [],
      "body": "## What to build\nx\n## Acceptance criteria\n- [ ] y\n", "pull_request": {"url": "https://example.invalid/pulls/99"},
-     "issue_dependencies_summary": null, "sub_issues_summary": null}
+     "issue_dependencies_summary": null, "sub_issues_summary": null},
+    {"number": 32, "title": "[GH#320] 迁移票，旧号 blocker 还开着", "labels": [{"name": "ready-for-agent"}], "assignees": [],
+     "body": "## What to build\nx\n## Acceptance criteria\n- [ ] y\n## Blocked by\n- `GH#410`\n"},
+    {"number": 33, "title": "[GH#410] 迁移票，被 #32 依赖的那张", "labels": [], "assignees": [], "body": "说明"},
+    {"number": 34, "title": "[GH#311] 迁移票，旧号 blocker 已归档（同号的新票 #12 还开着）", "labels": [{"name": "ready-for-agent"}], "assignees": [],
+     "body": "## What to build\nx\n## Acceptance criteria\n- [ ] y\n## Blocked by\n- #12\n"},
+    {"number": 35, "title": "[GH#312] 迁移票，远端有旧号分支", "labels": [{"name": "ready-for-agent"}], "assignees": [], "body": "## What to build\nx\n## Acceptance criteria\n- [ ] y\n"},
+    {"number": 36, "title": "[GH#313] 迁移票，blocker 只写在迁移横幅里", "labels": [{"name": "ready-for-agent"}], "assignees": [],
+     "body": "> 原 GitHub Issue `#313` | 前置：Blocked by `GH#410`（`#12` 已合入）\n\n## What to build\nx\n## Acceptance criteria\n- [ ] y\n## Blocked by\n\n- #$(cat n9)\n"},
+    {"number": 37, "title": "[GH#314] 迁移票，横幅括号里的已合入编号不算", "labels": [{"name": "ready-for-agent"}], "assignees": [],
+     "body": "> 原 GitHub Issue `#314` | 前置：Blocked by `GH#411`（`#410` 已合入）\n\n## What to build\nx\n## Acceptance criteria\n- [ ] y\n"},
+    {"number": 38, "title": "Forgejo 的普通 issue 带 pull_request: null", "labels": [{"name": "ready-for-agent"}], "assignees": [],
+     "body": "## What to build\nx\n## Acceptance criteria\n- [ ] y\n", "pull_request": null}
   ]
 ]
