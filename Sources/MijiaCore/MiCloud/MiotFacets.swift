@@ -18,12 +18,41 @@ public struct DeviceProfiles: Codable, Equatable, Sendable {
         public var lowRiskWrites: [String]
     }
 
+    /// Device type → the services one appliance card merges. `primary` is the one carrying the
+    /// main function (heat for a bath heater, exhaust for a hood); `companions` fill the other
+    /// controls and readings. Types absent here keep the water-heater card shape.
+    public struct ApplianceProfile: Codable, Equatable, Sendable {
+        public var primary: [String]
+        public var companions: [String]
+        public var symbol: String?
+        public var roomReading: Bool?
+        /// The card can start a heater. Non-heating appliances (a range hood) skip the high-risk
+        /// power-on confirmation.
+        public var heats: Bool?
+
+        public init(
+            primary: [String],
+            companions: [String] = [],
+            symbol: String? = nil,
+            roomReading: Bool? = nil,
+            heats: Bool? = nil
+        ) {
+            self.primary = primary
+            self.companions = companions
+            self.symbol = symbol
+            self.roomReading = roomReading
+            self.heats = heats
+        }
+    }
+
     public var version: Int
     public var noise: Noise
     public var facets: Facets
     /// Device type → services that may claim it when the type names none of its own services
     /// (#296). Anything not listed stays unsupported instead of being drawn as another device.
     public var fallbackClaims: [String: [String]]
+    /// Device type → the services its appliance card aggregates (#4).
+    public var appliances: [String: ApplianceProfile]
 
     public static func decode(_ data: Data) throws -> DeviceProfiles {
         try JSONDecoder().decode(DeviceProfiles.self, from: data)

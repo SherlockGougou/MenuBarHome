@@ -534,12 +534,16 @@ public actor DemoHomeProvider: HomeProvider {
                 next.devices[idx].kind = .camera(spec)
             case .appliance(var spec):
                 switch command {
-                case .setSwitch(let entityId, let isOn) where entityId == spec.entityId:
+                case .setSwitch(let entityId, let isOn) where entityId == spec.powerEntityId:
                     spec.isOn = isOn
-                case .setSelectOption(let entityId, let option) where entityId == spec.entityId:
+                case .setSwitch(let entityId, let isOn) where entityId == spec.light?.entityId:
+                    spec.light?.isOn = isOn
+                case .setSelectOption(let entityId, let option) where entityId == spec.modeEntityId:
                     spec.currentMode = option
-                case .setClimateTemperature(let entityId, let temperature) where entityId == spec.entityId:
+                case .setClimateTemperature(let entityId, let temperature) where entityId == spec.temperatureEntityId:
                     spec.targetTemperature = temperature
+                case .setClimateFanMode(let entityId, let level) where entityId == spec.fanLevel?.entityId:
+                    spec.fanLevel?.current = level
                 case .pressButton(let entityId) where entityId == spec.startAction?.entityId:
                     spec.isOn = true
                     spec.statusText = L10n.tr("运行中", "Running")

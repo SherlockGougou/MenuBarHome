@@ -397,7 +397,8 @@ struct WaterHeaterDeviceTests {
                 step: 1,
                 temperatureWritable: true,
                 startAction: start,
-                pauseAction: pause
+                pauseAction: pause,
+                heats: true
             ))
         )
         let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: [device]))

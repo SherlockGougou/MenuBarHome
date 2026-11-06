@@ -227,7 +227,7 @@ public enum ModelActionPolicy {
             guard case .climate(let spec) = device.kind else { return nil }
             return .powerOnOrHotter(setpoint: spec.targetTemperature)
         case .appliance:
-            guard case .appliance(let spec) = device.kind else { return nil }
+            guard case .appliance(let spec) = device.kind, spec.heats else { return nil }
             return .powerOnOrHotter(setpoint: spec.targetTemperature ?? 0)
         default:
             return nil

@@ -380,6 +380,91 @@ struct SnapshotTests {
         )
     }
 
+    @Test("A bath heater and a hood render every control merged onto one card")
+    func aggregatedApplianceCardSnapshots() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+        let cases: [(device: SmartDevice, name: String, size: CGSize)] = [
+            (Self.bathHeater, "expanded-bath-heater-zh-light", CGSize(width: 376, height: 440)),
+            (Self.hood, "expanded-hood-zh-light", CGSize(width: 376, height: 360)),
+        ]
+        for item in cases {
+            fixture.store.expandedDeviceId = item.device.id
+            assertRendered(
+                snapshotReady(
+                    DeviceCardView(device: item.device, store: fixture.store, showRoomBadge: true)
+                        .padding(8)
+                        .frame(width: 360)
+                ),
+                size: item.size,
+                named: item.name
+            )
+        }
+    }
+
+    private static var bathHeater: SmartDevice {
+        SmartDevice(
+            id: "snapshot-bath-heater",
+            name: "浴室浴霸",
+            roomId: "bath",
+            roomName: "浴室",
+            model: "xiaomi.bhf_light.v1",
+            isOnline: true,
+            kind: .appliance(ApplianceSpec(
+                entityId: "miot:snapshot-bath-heater:3",
+                isOn: true,
+                powerPresent: true,
+                powerWritable: true,
+                currentMode: "Quick Heat",
+                availableModes: ["Idle", "Dry", "Defog", "Quick Defog", "Quick Heat", "Other"],
+                modeWritable: true,
+                targetTemperature: 40,
+                currentTemperature: 26,
+                minTemp: 25,
+                maxTemp: 45,
+                step: 1,
+                temperatureWritable: true,
+                statusText: L10n.tr("运行中", "Running"),
+                light: ApplianceLight(entityId: "miot:snapshot-bath-heater:2", isOn: true, writable: true),
+                fanLevel: ApplianceFanLevel(
+                    entityId: "miot:snapshot-bath-heater:5",
+                    current: "High",
+                    options: ["Low", "High"],
+                    writable: true
+                ),
+                currentHumidity: 58,
+                symbolName: "heater.vertical",
+                roomReading: true
+            ))
+        )
+    }
+
+    private static var hood: SmartDevice {
+        SmartDevice(
+            id: "snapshot-hood",
+            name: "厨房油烟机",
+            roomId: "kitchen",
+            roomName: "厨房",
+            model: "viomi.hood.c26",
+            isOnline: true,
+            kind: .appliance(ApplianceSpec(
+                entityId: "miot:snapshot-hood:2",
+                isOn: true,
+                powerPresent: true,
+                powerWritable: true,
+                statusText: L10n.tr("已开启", "On"),
+                light: ApplianceLight(entityId: "miot:snapshot-hood:6", isOn: true, writable: true),
+                fanLevel: ApplianceFanLevel(
+                    entityId: "miot:snapshot-hood:10",
+                    current: "High",
+                    options: ["Low", "High", "Stir Fry"],
+                    writable: true
+                ),
+                symbolName: "wind"
+            ))
+        )
+    }
+
     private static var waterHeater: SmartDevice {
         SmartDevice(
             id: "snapshot-water-heater",

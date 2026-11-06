@@ -1123,12 +1123,12 @@ extension HomeStore {
                 restore: [restore]
             )
         case (.power(let on), .appliance(var s)):
-            let restore = DeviceCommand.setSwitch(entityId: s.entityId, isOn: s.isOn)
+            let restore = DeviceCommand.setSwitch(entityId: s.powerEntityId, isOn: s.isOn)
             s.isOn = on
             updated.kind = .appliance(s)
             return AssistantEffect(
                 updated: updated,
-                command: .setSwitch(entityId: s.entityId, isOn: on),
+                command: .setSwitch(entityId: s.powerEntityId, isOn: on),
                 restore: [restore]
             )
 

@@ -140,7 +140,7 @@ extension HomeStore {
         case .appliance(var s):
             s.isOn.toggle()
             updated.kind = .appliance(s)
-            command = .setSwitch(entityId: s.entityId, isOn: s.isOn)
+            command = .setSwitch(entityId: s.powerEntityId, isOn: s.isOn)
 
         case .speaker, .fridge, .sensor:
             toggleExpanded(device.id)
@@ -376,12 +376,17 @@ extension HomeStore {
     public func setApplianceMode(_ deviceId: String, mode: String) {
         guard let previous = controllableDevice(deviceId), case .appliance(var s) = previous.kind,
               s.modeWritable, s.availableModes.contains(mode) else { return }
+        // Picking a heat mode from standby starts the heater, so it takes the same confirmation
+        // as the power button. Idle/off modes and appliances without heat stay direct (#4).
+        if s.heats, !s.isOn, ApplianceSpec.modeStartsHeating(mode) {
+            guard allowManualControl(.power(true), for: previous) else { return }
+        }
         var updated = previous
         s.currentMode = mode
         updated.kind = .appliance(s)
         commitManualWrite(
             from: previous, to: updated,
-            command: .setSelectOption(entityId: s.entityId, option: mode),
+            command: .setSelectOption(entityId: s.modeEntityId, option: mode),
             lock: .seconds(2.2)
         )
     }
@@ -405,8 +410,37 @@ extension HomeStore {
         updated.kind = .appliance(s)
         commitManualWrite(
             from: previous, to: updated,
-            command: .setClimateTemperature(entityId: s.entityId, temperature: nextTemp),
+            command: .setClimateTemperature(entityId: s.temperatureEntityId, temperature: nextTemp),
             lock: .seconds(2.5), debounceKey: "\(deviceId).appliance-temp"
+        )
+    }
+
+    public func setApplianceLightPower(_ deviceId: String, isOn: Bool) {
+        guard let previous = controllableDevice(deviceId), case .appliance(var s) = previous.kind,
+              var light = s.light, light.writable, light.isOn != isOn else { return }
+        light.isOn = isOn
+        s.light = light
+        var updated = previous
+        updated.kind = .appliance(s)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setSwitch(entityId: light.entityId, isOn: isOn),
+            lock: .seconds(2)
+        )
+    }
+
+    public func setApplianceFanLevel(_ deviceId: String, level: String) {
+        guard let previous = controllableDevice(deviceId), case .appliance(var s) = previous.kind,
+              let fan = s.fanLevel, fan.writable, fan.options.contains(level), fan.current != level else { return }
+        var updatedFan = fan
+        updatedFan.current = level
+        s.fanLevel = updatedFan
+        var updated = previous
+        updated.kind = .appliance(s)
+        commitManualWrite(
+            from: previous, to: updated,
+            command: .setClimateFanMode(entityId: fan.entityId, fanMode: level),
+            lock: .seconds(2.2)
         )
     }
 

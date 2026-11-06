@@ -80,8 +80,8 @@ extension SmartDevice {
         case .cover(let s):
             if s.subtype == .clothesAirer { return "hanger" }
             return (s.positionPercent ?? 0) > 0 ? "window.vertical.open" : "window.vertical.closed"
-        case .appliance:
-            return "water.waves"
+        case .appliance(let s):
+            return s.symbolName ?? "water.waves"
         }
     }
 
@@ -261,6 +261,9 @@ extension SmartDevice {
             if let mode = s.currentMode, !mode.isEmpty {
                 parts.append(Self.localizeApplianceMode(mode))
             }
+            if let level = s.fanLevel?.current, !level.isEmpty {
+                parts.append(Self.localizeApplianceFanLevel(level))
+            }
             if let status = s.statusText, !status.isEmpty {
                 parts.append(status)
             }
@@ -328,7 +331,37 @@ extension SmartDevice {
         case "auto", "automatic", "自动": return L10n.tr("自动", "Auto")
         case "manual", "手动": return L10n.tr("手动", "Manual")
         case "off", "关闭": return L10n.tr("关闭", "Off")
+        case "idle", "待机": return L10n.tr("待机", "Idle")
+        case "working", "工作中": return L10n.tr("工作中", "Working")
+        case "shower", "bath", "洗浴", "沐浴": return L10n.tr("洗浴", "Shower")
+        case "dry", "dryer", "干燥": return L10n.tr("干燥", "Dry")
+        case "defog", "除雾": return L10n.tr("除雾", "Defog")
+        case "quick defog", "快速除雾": return L10n.tr("快速除雾", "Quick Defog")
+        case "heat": return L10n.tr("弱暖", "Heat")
+        case "quick heat": return L10n.tr("强暖", "Quick Heat")
+        case "ventilate", "ventilation", "换气": return L10n.tr("换气", "Ventilate")
+        case "fan", "blow", "吹风": return L10n.tr("吹风", "Fan")
+        case "cool", "凉风": return L10n.tr("凉风", "Cool")
+        case "deodorize", "除味": return L10n.tr("除味", "Deodorize")
+        case "other", "其他": return L10n.tr("其他", "Other")
         default: return mode
+        }
+    }
+
+    /// A hood's `fan-level` list uses `Level1…Level10` or `Low`/`High`/`Stir Fry`.
+    public static func localizeApplianceFanLevel(_ level: String) -> String {
+        let trimmed = level.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch trimmed.lowercased() {
+        case "low", "低速": return L10n.tr("低速", "Low")
+        case "mid", "middle", "中速": return L10n.tr("中速", "Mid")
+        case "high", "高速": return L10n.tr("高速", "High")
+        case "stir fry", "stir-fry", "爆炒": return L10n.tr("爆炒", "Stir Fry")
+        default:
+            let lower = trimmed.lowercased()
+            guard lower.hasPrefix("level"), let value = Int(lower.dropFirst("level".count)) else {
+                return trimmed
+            }
+            return L10n.tr("\(value)档", "Level \(value)")
         }
     }
 
