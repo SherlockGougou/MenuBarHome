@@ -113,7 +113,7 @@ public final class HomeStore {
 
     public var hideOfflineDevices: Bool {
         didSet {
-            userDefaults.set(hideOfflineDevices, forKey: "hide_offline_devices")
+            HomePreferences.hideOfflineDevices.save(hideOfflineDevices, to: userDefaults)
             scheduleRaycastSnapshotExport()
         }
     }
@@ -121,47 +121,47 @@ public final class HomeStore {
     /// Hide lights that belong to a Mi light group while the group card itself is on screen (#189).
     public var hideGroupedLights: Bool {
         didSet {
-            userDefaults.set(hideGroupedLights, forKey: "hide_grouped_lights")
+            HomePreferences.hideGroupedLights.save(hideGroupedLights, to: userDefaults)
             scheduleRaycastSnapshotExport()
         }
     }
 
     public var enableGlobalHotkey: Bool {
         didSet {
-            userDefaults.set(enableGlobalHotkey, forKey: "enable_global_hotkey")
+            HomePreferences.enableGlobalHotkey.save(enableGlobalHotkey, to: userDefaults)
             onGlobalHotkeyPreferenceChanged?(enableGlobalHotkey)
         }
     }
 
     public var isCompactGridMode: Bool {
-        didSet { userDefaults.set(isCompactGridMode, forKey: "compact_grid_mode") }
+        didSet { HomePreferences.isCompactGridMode.save(isCompactGridMode, to: userDefaults) }
     }
 
     public var showQuickActionsBar: Bool {
-        didSet { userDefaults.set(showQuickActionsBar, forKey: "show_quick_actions_bar") }
+        didSet { HomePreferences.showQuickActionsBar.save(showQuickActionsBar, to: userDefaults) }
     }
 
     public var enableGrokBall: Bool {
-        didSet { userDefaults.set(enableGrokBall, forKey: "enable_grok_ball") }
+        didSet { HomePreferences.enableGrokBall.save(enableGrokBall, to: userDefaults) }
     }
 
     public var favoriteDeviceIds: Set<String> {
         didSet {
-            userDefaults.set(Array(favoriteDeviceIds), forKey: ViewPreferenceKeys.favoriteDeviceIds)
+            HomePreferences.favoriteDeviceIds.save(favoriteDeviceIds, to: userDefaults)
             scheduleRaycastSnapshotExport()
         }
     }
 
     public var favoriteOrder: [String] {
         didSet {
-            userDefaults.set(favoriteOrder, forKey: ViewPreferenceKeys.favoriteOrder)
+            HomePreferences.favoriteOrder.save(favoriteOrder, to: userDefaults)
             scheduleRaycastSnapshotExport()
         }
     }
 
     public var hiddenDeviceIds: Set<String> {
         didSet {
-            userDefaults.set(Array(hiddenDeviceIds), forKey: ViewPreferenceKeys.hiddenDeviceIds)
+            HomePreferences.hiddenDeviceIds.save(hiddenDeviceIds, to: userDefaults)
             scheduleRaycastSnapshotExport()
         }
     }
@@ -169,7 +169,7 @@ public final class HomeStore {
     /// Per-device choice for 全关; a missing entry means the default from `joinsAllOffByDefault` (#23).
     public var allOffOverrides: [String: Bool] {
         didSet {
-            userDefaults.set(allOffOverrides, forKey: ViewPreferenceKeys.allOffOverrides)
+            HomePreferences.allOffOverrides.save(allOffOverrides, to: userDefaults)
             scheduleRaycastSnapshotExport()
         }
     }
@@ -179,31 +179,31 @@ public final class HomeStore {
     }
 
     public var menuBarTargetId: String {
-        didSet { userDefaults.set(menuBarTargetId, forKey: ViewPreferenceKeys.menuBarTargetId) }
+        didSet { HomePreferences.menuBarTargetId.save(menuBarTargetId, to: userDefaults) }
     }
 
     public var enableSafetyAlerts: Bool {
-        didSet { userDefaults.set(enableSafetyAlerts, forKey: "enable_safety_alerts") }
+        didSet { HomePreferences.enableSafetyAlerts.save(enableSafetyAlerts, to: userDefaults) }
     }
 
     /// Weekly home health report notification (#182). Off by default: a new recurring notification.
     public var enableWeeklyHealthReport: Bool {
-        didSet { userDefaults.set(enableWeeklyHealthReport, forKey: Self.weeklyHealthReportEnabledKey) }
+        didSet { HomePreferences.enableWeeklyHealthReport.save(enableWeeklyHealthReport, to: userDefaults) }
     }
 
     /// Open the doorbell's live camera when it rings (#308). Off by default: privacy and interruption.
     public var doorbellAutoPopup: Bool {
-        didSet { userDefaults.set(doorbellAutoPopup, forKey: "doorbell_auto_popup") }
+        didSet { HomePreferences.doorbellAutoPopup.save(doorbellAutoPopup, to: userDefaults) }
     }
 
     /// Play a chime when a doorbell popup opens (#308). Off by default.
     public var doorbellChime: Bool {
-        didSet { userDefaults.set(doorbellChime, forKey: "doorbell_chime") }
+        didSet { HomePreferences.doorbellChime.save(doorbellChime, to: userDefaults) }
     }
 
     /// Seconds before a doorbell popup closes itself (#308).
     public var doorbellPopupSeconds: Int {
-        didSet { userDefaults.set(doorbellPopupSeconds, forKey: "doorbell_popup_seconds") }
+        didSet { HomePreferences.doorbellPopupSeconds.save(doorbellPopupSeconds, to: userDefaults) }
     }
 
     /// Recent doorbell presses, newest first, including ones that did not open a window (#308).
@@ -215,7 +215,7 @@ public final class HomeStore {
     /// the only paths that can still fire while locked are external ones (URL links, App Intents,
     /// assistant commands), and automation/scheduled rules stay exempt. Settings can turn it off.
     public var blockControlWhileLocked: Bool {
-        didSet { userDefaults.set(blockControlWhileLocked, forKey: "block_control_while_locked") }
+        didSet { HomePreferences.blockControlWhileLocked.save(blockControlWhileLocked, to: userDefaults) }
     }
 
     /// Set by `SystemActivityMonitor` from the distributed screen-lock notifications, not persisted.
@@ -230,7 +230,7 @@ public final class HomeStore {
     @ObservationIgnored var credentialVault: CredentialVault?
 
     public var sensorAlertsOnlyWhenAway: Bool {
-        didSet { userDefaults.set(sensorAlertsOnlyWhenAway, forKey: Self.sensorAlertsOnlyWhenAwayKey) }
+        didSet { HomePreferences.sensorAlertsOnlyWhenAway.save(sensorAlertsOnlyWhenAway, to: userDefaults) }
     }
 
     /// Explicit per-kind overrides. Reading this from `isSensorAlertEnabled` lets SwiftUI
@@ -238,7 +238,7 @@ public final class HomeStore {
     public internal(set) var sensorAlertPreferences: [SensorAlertKind: Bool] = [:]
 
     public var homeName: String {
-        didSet { userDefaults.set(homeName, forKey: "home_name") }
+        didSet { HomePreferences.homeName.save(homeName, to: userDefaults) }
     }
 
     public var appLanguagePreference: AppLanguagePreference = .system {
@@ -679,7 +679,7 @@ public final class HomeStore {
         }
         self.selectedMiHomeId = initialSelectedHomeId
         self.lgConfig = LGWebOSConfig.load(from: ud)
-        self.homeName = ud.string(forKey: "home_name") ?? KeychainHelper.localizedDefaultHomeName
+        self.homeName = HomePreferences.homeName.load(from: ud)
         self.isHabitLearningEnabled = boolOrDefaultTrue("assistant_habit_learning_enabled")
         let habitShareKey = "assistant_habit_share_enabled"
         let storedHabitShare: StoredHabitShare
@@ -709,26 +709,26 @@ public final class HomeStore {
                 .compactMap(OnboardingMilestone.init(rawValue:))
         )
         self.askWhenUnsureBeforeAIActions = boolOrDefaultTrue(Self.askWhenUnsureKey)
-        self.hideOfflineDevices = ud.bool(forKey: "hide_offline_devices")
-        self.hideGroupedLights = boolOrDefaultTrue("hide_grouped_lights")
-        self.enableGlobalHotkey = boolOrDefaultTrue("enable_global_hotkey")
-        self.enableSafetyAlerts = boolOrDefaultTrue("enable_safety_alerts")
-        self.doorbellAutoPopup = ud.bool(forKey: "doorbell_auto_popup")
-        self.enableWeeklyHealthReport = ud.bool(forKey: Self.weeklyHealthReportEnabledKey)
-        self.doorbellChime = ud.bool(forKey: "doorbell_chime")
-        self.doorbellPopupSeconds = (ud.object(forKey: "doorbell_popup_seconds") as? Int) ?? Self.defaultDoorbellPopupSeconds
-        self.blockControlWhileLocked = boolOrDefaultTrue("block_control_while_locked")
-        self.sensorAlertsOnlyWhenAway = ud.bool(forKey: Self.sensorAlertsOnlyWhenAwayKey)
+        self.hideOfflineDevices = HomePreferences.hideOfflineDevices.load(from: ud)
+        self.hideGroupedLights = HomePreferences.hideGroupedLights.load(from: ud)
+        self.enableGlobalHotkey = HomePreferences.enableGlobalHotkey.load(from: ud)
+        self.enableSafetyAlerts = HomePreferences.enableSafetyAlerts.load(from: ud)
+        self.doorbellAutoPopup = HomePreferences.doorbellAutoPopup.load(from: ud)
+        self.enableWeeklyHealthReport = HomePreferences.enableWeeklyHealthReport.load(from: ud)
+        self.doorbellChime = HomePreferences.doorbellChime.load(from: ud)
+        self.doorbellPopupSeconds = HomePreferences.doorbellPopupSeconds.load(from: ud)
+        self.blockControlWhileLocked = HomePreferences.blockControlWhileLocked.load(from: ud)
+        self.sensorAlertsOnlyWhenAway = HomePreferences.sensorAlertsOnlyWhenAway.load(from: ud)
         self.sensorAlertPreferences = SensorAlertKind.allCases.reduce(into: [SensorAlertKind: Bool]()) { preferences, kind in
             if ud.object(forKey: kind.defaultsKey) != nil {
                 preferences[kind] = ud.bool(forKey: kind.defaultsKey)
             }
         }
         self.awayGap = MacAwayGap(includesAway: ud.bool(forKey: MacAwayGap.storageKey))
-        self.isCompactGridMode = (ud.object(forKey: "compact_grid_mode") as? Bool) ?? true
-        self.showQuickActionsBar = boolOrDefaultTrue("show_quick_actions_bar")
-        self.enableGrokBall = ud.bool(forKey: "enable_grok_ball")
-        self.menuBarTargetId = ud.string(forKey: "menubar_target_id") ?? "auto:primary"
+        self.isCompactGridMode = HomePreferences.isCompactGridMode.load(from: ud)
+        self.showQuickActionsBar = HomePreferences.showQuickActionsBar.load(from: ud)
+        self.enableGrokBall = HomePreferences.enableGrokBall.load(from: ud)
+        self.menuBarTargetId = HomePreferences.menuBarTargetId.load(from: ud)
         self.lastManuallyUsedLightId = ud.string(forKey: Self.lastManualLightIdKey)
         self.safetyMonitor = SafetyMonitor(defaults: ud)
 
@@ -746,18 +746,10 @@ public final class HomeStore {
             self.menuBarDisplayMode = .sensorTemperature
         }
 
-        if let savedFavs = ud.stringArray(forKey: "favorite_device_ids") {
-            self.favoriteDeviceIds = Set(savedFavs)
-        } else {
-            self.favoriteDeviceIds = []
-        }
-        self.favoriteOrder = ud.stringArray(forKey: "favorite_order") ?? []
-        if let savedHidden = ud.stringArray(forKey: "hidden_device_ids") {
-            self.hiddenDeviceIds = Set(savedHidden)
-        } else {
-            self.hiddenDeviceIds = []
-        }
-        self.allOffOverrides = ud.dictionary(forKey: "all_off_overrides") as? [String: Bool] ?? [:]
+        self.favoriteDeviceIds = HomePreferences.favoriteDeviceIds.load(from: ud)
+        self.favoriteOrder = HomePreferences.favoriteOrder.load(from: ud)
+        self.hiddenDeviceIds = HomePreferences.hiddenDeviceIds.load(from: ud)
+        self.allOffOverrides = HomePreferences.allOffOverrides.load(from: ud)
 
         let initialProvider: any HomeProvider
         if let provider {
