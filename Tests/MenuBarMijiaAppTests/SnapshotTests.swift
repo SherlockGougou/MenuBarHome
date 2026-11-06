@@ -194,6 +194,45 @@ struct SnapshotTests {
         )
     }
 
+    @Test("Airer drawer reads as height with raise / stop / lower while lowering (#299)")
+    func airerDrawerLoweringSnapshot() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+
+        let spec = CoverSpec(
+            entityId: "miot:airer1:2",
+            subtype: .clothesAirer,
+            positionPercent: 35,
+            reportedPositionPercent: 70,
+            positionWritable: true,
+            openDescription: "Up",
+            closeDescription: "Down",
+            pauseDescription: "Pause",
+            motion: .closing
+        )
+        let device = SmartDevice(
+            id: "snapshot-airer", name: "阳台晾衣架", roomId: "balcony", roomName: "阳台",
+            model: "xiaomi.airer.maxb", isOnline: true,
+            kind: .cover(spec)
+        )
+
+        assertRendered(
+            snapshotReady(
+                CoverDetailDrawer(
+                    device: device,
+                    spec: spec,
+                    store: fixture.store,
+                    accent: DesignTokens.active,
+                    statusColor: DesignTokens.active
+                )
+                .padding(8)
+                .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 160),
+            named: "airer-drawer-lowering-zh-light"
+        )
+    }
+
     @Test("Appliance card shows the water heater controls the spec publishes")
     func applianceCardSnapshots() async throws {
         let fixture = try await SnapshotFixture()

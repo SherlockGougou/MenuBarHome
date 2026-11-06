@@ -251,8 +251,10 @@
       "deviceType" : "mosquito-dispeller"
     },
     "aupu.airer.d350m" : {
-      "category" : "droppedControllable",
-      "deviceType" : "airer"
+      "category" : "matched",
+      "deviceType" : "airer",
+      "service" : "airer",
+      "unexposedWritable" : 2
     },
     "babai.ven_fan.tycold" : {
       "category" : "droppedControllable",
@@ -771,8 +773,10 @@
       "deviceType" : "uwb"
     },
     "mrbond.airer.m1super" : {
-      "category" : "droppedControllable",
-      "deviceType" : "airer"
+      "category" : "matched",
+      "deviceType" : "airer",
+      "service" : "airer",
+      "unexposedWritable" : 4
     },
     "msj.f_washer.m1" : {
       "category" : "droppedReadOnly",
@@ -939,24 +943,32 @@
   },
   "summary" : {
     "categories" : {
-      "droppedControllable" : 103,
+      "droppedControllable" : 101,
       "droppedReadOnly" : 13,
-      "matched" : 58,
+      "matched" : 60,
       "misclaimed" : 0,
       "noUsableProperties" : 31
     },
     "deviceTypes" : 177,
     "specs" : 205,
-    "unexposedWritableTotal" : 422
+    "unexposedWritableTotal" : 428
   },
   "windowsDivergences" : {
     "aden.waterheater.ash200" : {
       "category" : "droppedControllable",
       "deviceType" : "water-heater"
     },
+    "aupu.airer.d350m" : {
+      "category" : "droppedControllable",
+      "deviceType" : "airer"
+    },
     "macro.boiler.combgl" : {
       "category" : "droppedControllable",
       "deviceType" : "boiler"
+    },
+    "mrbond.airer.m1super" : {
+      "category" : "droppedControllable",
+      "deviceType" : "airer"
     },
     "viomi.waterheater.u3" : {
       "category" : "droppedControllable",

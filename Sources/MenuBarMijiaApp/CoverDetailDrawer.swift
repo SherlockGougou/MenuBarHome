@@ -1,8 +1,9 @@
 import MijiaCore
 import SwiftUI
 
-/// Position, open/stop/close, battery and fault for a cover (window opener or curtain). Kept out
-/// of `DeviceCardView` so that file stays under the line-count gate (#184).
+/// Position, open/stop/close, battery and fault for a cover (window opener, curtain or airer). An
+/// airer reads as height with raise/stop/lower (#299). Kept out of `DeviceCardView` so that file
+/// stays under the line-count gate (#184).
 struct CoverDetailDrawer: View {
     let device: SmartDevice
     let spec: CoverSpec
@@ -13,7 +14,7 @@ struct CoverDetailDrawer: View {
     var body: some View {
         let position = Double(spec.positionPercent ?? 0)
         VStack(alignment: .leading, spacing: 8) {
-            if let motion = spec.motion.localizedLabel {
+            if let motion = spec.motion.localizedLabel(for: spec.subtype) {
                 Text(motion)
                     .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                     .foregroundStyle(statusColor)
@@ -31,7 +32,7 @@ struct CoverDetailDrawer: View {
                     ),
                     in: 0...100,
                     step: 1,
-                    iconName: "window.vertical.open",
+                    iconName: spec.subtype == .clothesAirer ? "hanger" : "window.vertical.open",
                     iconColor: statusColor,
                     trackFill: LinearGradient(
                         colors: [accent.opacity(0.55), accent.opacity(0.92)],
@@ -66,18 +67,21 @@ struct CoverDetailDrawer: View {
     }
 
     private func motorButton(_ description: String) -> some View {
-        Button(Self.actionTitle(description)) {
+        Button(Self.actionTitle(description, subtype: spec.subtype)) {
             store.setCoverMotor(device.id, description: description)
         }
         .buttonStyle(PillActionButtonStyle())
         .disabled(!device.isOnline)
     }
 
-    private static func actionTitle(_ description: String) -> String {
+    static func actionTitle(_ description: String, subtype: CoverSubtype) -> String {
+        let airer = subtype == .clothesAirer
         switch description.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "open", "打开": return L10n.tr("打开", "Open")
         case "close", "关闭": return L10n.tr("关闭", "Close")
-        case "pause", "stop", "暂停": return L10n.tr("暂停", "Pause")
+        case "up", "raise": return airer ? L10n.tr("升", "Raise") : L10n.tr("升起", "Up")
+        case "down", "lower": return airer ? L10n.tr("降", "Lower") : L10n.tr("降下", "Down")
+        case "pause", "stop", "暂停": return airer ? L10n.tr("停", "Stop") : L10n.tr("暂停", "Pause")
         default: return description
         }
     }

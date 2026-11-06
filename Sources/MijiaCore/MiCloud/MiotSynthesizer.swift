@@ -49,6 +49,7 @@ public enum MiotSynthesizer {
         ("vacuum", buildVacuum),
         ("curtain", buildCover),
         ("window-opener", buildCover),
+        ("airer", buildCover),
         ("fridge", buildFridge),
         ("camera-control", buildCamera),
         ("video-doorbell", buildCamera),
@@ -535,8 +536,10 @@ public enum MiotSynthesizer {
         let battery = r.first("battery-level", in: r.spec.services(named: "battery"))
         let motor = s.properties.first { $0.shortName == "motor-control" && $0.isWritable }
         let items = motor?.valueList ?? []
-        let currentPosition = coverPosition(current)
-        let targetPosition = coverPosition(target)
+        // An airer reports how far it has lowered (0 at the top); the card shows height (#299).
+        let inverted = CoverSubtype(miotServiceShortName: s.shortName).invertsMiotPosition
+        let currentPosition = coverPosition(current).map { inverted ? 100 - $0 : $0 }
+        let targetPosition = coverPosition(target).map { inverted ? 100 - $0 : $0 }
         let statusWord = CoverStatusWord(status?.valueDescription)
         let statusDefinesTravel = coverStatusDefinesTravel(status)
         let motion = coverMotion(
@@ -660,10 +663,11 @@ public enum MiotSynthesizer {
     enum CoverMotorWord { case open, close, pause }
 
     /// Exact value-list words only. A substring match could turn "Not Open" into an open command.
+    /// Airers and roller blinds say `Up` / `Down`: raising is opening, lowering is closing (#299).
     static func coverMotorDescription(in items: [MiotValueListItem], word: CoverMotorWord) -> String? {
         let aliases: Set<String> = switch word {
-        case .open: ["open", "打开"]
-        case .close: ["close", "关闭"]
+        case .open: ["open", "打开", "up", "raise"]
+        case .close: ["close", "关闭", "down", "lower"]
         case .pause: ["pause", "stop", "暂停"]
         }
         return items.first { item in
