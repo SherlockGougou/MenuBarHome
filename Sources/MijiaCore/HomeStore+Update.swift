@@ -171,7 +171,7 @@ extension HomeStore {
         updateState = .installing(staged.release)
         // Nothing is mirrored into `UserDefaults` any more, so there is no snapshot to take before the binary is
         // replaced; the plaintext migration is idempotent and gets one last chance to run (#16).
-        KeychainHelper.migratePlaintextCredentialsToKeychain(defaults: userDefaults)
+        KeychainHelper.migratePlaintextCredentialsToKeychain(defaults: userDefaults, vault: credentialVault ?? .shared)
         do {
             try updater.installStagedUpdateAndRelaunch(staged)
             onTerminateForUpdate?()

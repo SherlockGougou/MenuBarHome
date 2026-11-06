@@ -109,6 +109,14 @@ public final class HomeStore {
     /// the session, but it must not pull the panel back to a backend the user left.
     var miLoginStartBackend: HomeBackend?
 
+    public func loadHAToken() -> String {
+        KeychainHelper.loadToken(defaults: userDefaults, vault: credentialVault)
+    }
+
+    public func storedAssistantAPIKey(forBaseURL baseURL: String) -> String {
+        AssistantConfig.userStoredAPIKey(forBaseURL: baseURL, defaults: userDefaults, vault: credentialVault)
+    }
+
     public let userDefaults: UserDefaults
 
     public var hideOfflineDevices: Bool {
@@ -225,9 +233,9 @@ public final class HomeStore {
     /// alert; tests inject a closure so no window is needed.
     @ObservationIgnored public var manualControlConfirmationHandler: ((ManualControlConfirmation) -> Bool)?
 
-    /// Test seam for revocation failures: when set, deleting credentials targets this vault even for
-    /// a custom defaults suite. Production leaves it nil and uses the Keychain/suite store.
-    @ObservationIgnored var credentialVault: CredentialVault?
+    /// Credential storage shared by the store and its views. An explicit vault takes precedence
+    /// over suite storage; nil uses the Keychain for standard defaults and isolated suite storage otherwise.
+    @ObservationIgnored public internal(set) var credentialVault: CredentialVault?
 
     public var sensorAlertsOnlyWhenAway: Bool {
         didSet { HomePreferences.sensorAlertsOnlyWhenAway.save(sensorAlertsOnlyWhenAway, to: userDefaults) }
@@ -615,10 +623,12 @@ public final class HomeStore {
         provider: (any HomeProvider)? = nil,
         dualSource: (homeAssistant: any HomeProvider, xiaomiCloud: any HomeProvider)? = nil,
         defaultsSuiteName: String? = nil,
-        updater: AppUpdater? = nil
+        updater: AppUpdater? = nil,
+        credentialVault: CredentialVault? = nil
     ) {
         let ud = defaultsSuiteName.flatMap { UserDefaults(suiteName: $0) } ?? .standard
         self.userDefaults = ud
+        self.credentialVault = credentialVault
         self.pinnedDeviceSources = DeviceSourcePinStorage.load(defaults: ud)
         let isTestEnvironment = (provider != nil || dualSource != nil || defaultsSuiteName != nil)
         self.isTestEnvironment = isTestEnvironment
@@ -628,7 +638,7 @@ public final class HomeStore {
         self.sensorHistory = SensorHistory(defaults: ud)
         // ≤1.0.6 mirrored credentials into plain `UserDefaults`; move them into the Keychain before any read (#16).
         if !isTestEnvironment && ud === UserDefaults.standard {
-            KeychainHelper.migratePlaintextCredentialsToKeychain(defaults: ud)
+            KeychainHelper.migratePlaintextCredentialsToKeychain(defaults: ud, vault: credentialVault ?? .shared)
         }
         let boolOrDefaultTrue = { (key: String) -> Bool in
             ud.object(forKey: key) == nil ? true : ud.bool(forKey: key)
@@ -645,7 +655,7 @@ public final class HomeStore {
             L10n.currentLanguage = initialEffective
         }
 
-        let initialAccounts = MiSessionStore.loadAccounts(defaults: ud)
+        let initialAccounts = MiSessionStore.loadAccounts(defaults: ud, vault: credentialVault)
         self.miAccounts = initialAccounts
         let initialMiSession = initialAccounts.first?.session
         let savedRegion = ud.string(forKey: "mi_cloud_region").flatMap(MiCloudRegion.init(rawValue:))
@@ -659,7 +669,9 @@ public final class HomeStore {
         self.homeBackend = initialBackend
         // Demo mode and injected providers must not touch the Keychain until live mode needs it.
         let needsInitialHAToken = provider == nil && dualSource == nil && initialBackend != .demo
-        let initialHAToken = needsInitialHAToken ? KeychainHelper.loadToken(defaults: ud) : ""
+        let initialHAToken = needsInitialHAToken
+            ? KeychainHelper.loadToken(defaults: ud, vault: credentialVault)
+            : ""
         self.hasHASource = !initialHAToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         self.miSessionMaskedUserId = initialMiSession?.maskedUserId
         self.miSessionExpiresAt = initialAccounts.compactMap(\.session.expiresAt).min()
@@ -798,7 +810,7 @@ public final class HomeStore {
     /// Re-reads the stored accounts (a login, a removal or a sign-out changed them) and rebuilds the
     /// provider around the current list.
     func makeMiAccountsProvider() -> MiAccountsProvider {
-        miAccounts = MiSessionStore.loadAccounts(defaults: userDefaults)
+        miAccounts = MiSessionStore.loadAccounts(defaults: userDefaults, vault: credentialVault)
         return Self.makeMiAccountsProvider(accounts: miAccounts, defaults: userDefaults)
     }
 

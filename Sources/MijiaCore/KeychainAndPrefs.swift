@@ -36,7 +36,8 @@ public enum KeychainHelper {
     public static let defaultNASURL = "http://homeassistant.local:8123"
     public static let defaultSeededToken = ""
 
-    public static func loadToken(defaults: UserDefaults = .standard) -> String {
+    public static func loadToken(defaults: UserDefaults = .standard, vault: CredentialVault? = nil) -> String {
+        if let vault { return readKeychainSecret(account: account, vault: vault) ?? defaultSeededToken }
         guard defaults === UserDefaults.standard else {
             return loadSecret(account: account, defaults: defaults)
         }
@@ -118,19 +119,19 @@ public enum KeychainHelper {
     /// Moves every credential that ≤1.0.6 mirrored into plain `UserDefaults` into the Keychain, then deletes the
     /// plaintext copies. Idempotent: with no plaintext key left it does nothing. Call once at launch, before
     /// anything reads a credential.
-    public static func migratePlaintextCredentialsToKeychain(defaults: UserDefaults = .standard) {
+    public static func migratePlaintextCredentialsToKeychain(defaults: UserDefaults = .standard, vault: CredentialVault = .shared) {
         // Only the app's own domain ever held these keys; a test suite must never write production accounts.
         guard defaults === UserDefaults.standard else { return }
-        migratePlaintextSecret(defaults: defaults, plaintextKey: legacyPlaintextTokenKey, account: account)
+        migratePlaintextSecret(defaults: defaults, plaintextKey: legacyPlaintextTokenKey, account: account, vault: vault)
         for accountName in assistantSecretAccounts {
-            migratePlaintextSecret(defaults: defaults, plaintextKey: secretFallbackKey(for: accountName), account: accountName)
+            migratePlaintextSecret(defaults: defaults, plaintextKey: secretFallbackKey(for: accountName), account: accountName, vault: vault)
         }
         migratePlaintextSecret(
             defaults: defaults,
             plaintextKey: LGWebOSConfig.clientKeyDefaultsKey,
-            account: LGWebOSConfig.clientKeyAccount
+            account: LGWebOSConfig.clientKeyAccount, vault: vault
         )
-        migratePlaintextSession(defaults: defaults)
+        migratePlaintextSession(defaults: defaults, vault: vault)
     }
 
     /// Legacy plaintext must never replace a credential already protected by Keychain. Keep the plaintext

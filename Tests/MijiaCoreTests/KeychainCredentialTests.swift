@@ -11,6 +11,38 @@ struct KeychainCredentialTests {
         CredentialVault(storage: storage.storage)
     }
 
+    @Test("Removing the last account uses the injected vault and keeps unrelated credentials")
+    func lastAccountRemovalUsesInjectedVault() throws {
+        let suite = "test.injected-session.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let vault = memoryVault()
+        let session = MiSession(userId: "42", cUserId: "c", ssecurity: "fake", serviceToken: "fake")
+        #expect(KeychainHelper.saveToken("fake-ha", defaults: defaults, vault: vault))
+        #expect(MiSessionStore.upsert(session, defaults: defaults, vault: vault))
+        #expect(MiSessionStore.load(defaults: defaults, vault: vault) == session)
+        #expect(defaults.data(forKey: MiSessionStore.fallbackDefaultsKey) == nil)
+        #expect(MiSessionStore.remove(accountID: MiAccount(session: session).id, defaults: defaults, vault: vault))
+        #expect(MiSessionStore.loadAccounts(defaults: defaults, vault: vault).isEmpty)
+        #expect(KeychainHelper.loadToken(defaults: defaults, vault: vault) == "fake-ha")
+    }
+
+    @Test("Store credential drafts read only the injected vault")
+    @MainActor
+    func storeCredentialDraftsUseInjectedVault() throws {
+        let suite = "test.injected-drafts.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let vault = memoryVault()
+        #expect(KeychainHelper.saveToken("fake-ha", defaults: defaults, vault: vault))
+        let config = AssistantConfig(apiKey: "fake-ai")
+        config.save(to: defaults, vault: vault)
+        let store = HomeStore(provider: MockHomeProvider(snapshot: DemoHomeProvider.defaultHome()), defaultsSuiteName: suite, credentialVault: vault)
+        #expect(store.loadHAToken() == "fake-ha")
+        #expect(store.storedAssistantAPIKey(forBaseURL: config.baseURL) == "fake-ai")
+        #expect(store.assistantConfig.apiKey == "fake-ai")
+    }
+
     /// The session slot holds a v2 envelope; assert on the raw JSON instead of the store's private type.
     private func envelope(_ data: Data) throws -> (version: Int, accounts: [[String: Any]]) {
         let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -185,12 +217,9 @@ struct KeychainCredentialTests {
         defer { defaults.removePersistentDomain(forName: suite) }
 
         let account = "test.suite"
-        let untouched = MemoryVaultStorage()
-        let vault = memoryVault(untouched)
-        #expect(KeychainHelper.saveSecret("suite-value", account: account, defaults: defaults, vault: vault))
+        #expect(KeychainHelper.saveSecret("suite-value", account: account, defaults: defaults))
         #expect(defaults.string(forKey: KeychainHelper.secretFallbackKey(for: account)) == "suite-value")
-        #expect(KeychainHelper.loadSecret(account: account, defaults: defaults, vault: vault) == "suite-value")
-        #expect(untouched.reads == 0 && untouched.writes == 0, "a suite must never reach the vault")
+        #expect(KeychainHelper.loadSecret(account: account, defaults: defaults) == "suite-value")
         #expect(KeychainHelper.saveSecret("suite-ha-token", account: "ha_access_token", defaults: defaults))
         #expect(KeychainHelper.loadToken(defaults: defaults) == "suite-ha-token")
 

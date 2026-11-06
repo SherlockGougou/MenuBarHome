@@ -274,7 +274,7 @@ public struct AssistantConfig: Equatable, Sendable {
     }
 
     /// Ambient keys (CodexBar / environment variables) are never used implicitly; the user imports them explicitly (#20).
-    public static func load(from defaults: UserDefaults, includeAmbientKey: Bool = false) -> AssistantConfig {
+    public static func load(from defaults: UserDefaults, includeAmbientKey: Bool = false, vault: CredentialVault? = nil) -> AssistantConfig {
         let nonEmpty = { (key: String) -> String? in
             guard let v = defaults.string(forKey: key)?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !v.isEmpty else { return nil }
@@ -294,7 +294,7 @@ public struct AssistantConfig: Equatable, Sendable {
             resolvedModel = inferredPreset.defaultModel.isEmpty ? "gpt-4o-mini" : inferredPreset.defaultModel
         }
 
-        let explicitKey = userStoredAPIKey(forBaseURL: resolvedBase, defaults: defaults)
+        let explicitKey = userStoredAPIKey(forBaseURL: resolvedBase, defaults: defaults, vault: vault)
         let effectiveKey: String
         if !explicitKey.isEmpty {
             effectiveKey = explicitKey
@@ -311,18 +311,18 @@ public struct AssistantConfig: Equatable, Sendable {
         )
     }
 
-    public func save(to defaults: UserDefaults) {
+    public func save(to defaults: UserDefaults, vault: CredentialVault? = nil) {
         let trimmedBase = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let inferred = AssistantProviderPreset.infer(baseURL: trimmedBase)
         // A key typed by hand replaces an imported one, so the "imported from" label no longer applies.
-        if Self.userStoredAPIKey(forBaseURL: trimmedBase, defaults: defaults) != trimmedKey {
+        if Self.userStoredAPIKey(forBaseURL: trimmedBase, defaults: defaults, vault: vault) != trimmedKey {
             defaults.removeObject(forKey: Self.importedKeySourceKey(for: inferred))
         }
         defaults.set(trimmedBase, forKey: Self.baseURLKey)
         defaults.set(trimmedModel, forKey: Self.modelKey)
-        Self.saveSecret(trimmedKey, for: inferred, defaults: defaults)
+        Self.saveSecret(trimmedKey, for: inferred, defaults: defaults, vault: vault)
         if inferred == .custom {
             if trimmedKey.isEmpty {
                 defaults.removeObject(forKey: Self.customKeyEndpointKey)
@@ -334,39 +334,39 @@ public struct AssistantConfig: Equatable, Sendable {
 
     /// Writes (or, with an empty key, deletes) the saved key for `preset`. The bundled OpenRouter/Jev preset also
     /// keeps the legacy `assistant_api_key` slot in sync because pre-v1.0.4 builds read the key from there.
-    private static func saveSecret(_ key: String, for preset: AssistantProviderPreset, defaults: UserDefaults) {
+    private static func saveSecret(_ key: String, for preset: AssistantProviderPreset, defaults: UserDefaults, vault: CredentialVault? = nil) {
         KeychainHelper.saveSecret(
             key,
             account: KeychainHelper.assistantProviderAPIKeyAccount(for: preset),
-            defaults: defaults
+            defaults: defaults, vault: vault
         )
         if preset == .openRouterJev {
-            KeychainHelper.saveSecret(key, account: KeychainHelper.assistantAPIKeyAccount, defaults: defaults)
+            KeychainHelper.saveSecret(key, account: KeychainHelper.assistantAPIKeyAccount, defaults: defaults, vault: vault)
         }
     }
 
     @discardableResult
-    private static func clearSecret(for preset: AssistantProviderPreset, defaults: UserDefaults) -> Bool {
+    private static func clearSecret(for preset: AssistantProviderPreset, defaults: UserDefaults, vault: CredentialVault? = nil) -> Bool {
         var complete = KeychainHelper.saveSecret(
             "",
             account: KeychainHelper.assistantProviderAPIKeyAccount(for: preset),
-            defaults: defaults
+            defaults: defaults, vault: vault
         )
         if preset == .openRouterJev {
             complete = KeychainHelper.saveSecret(
                 "",
                 account: KeychainHelper.assistantAPIKeyAccount,
-                defaults: defaults
+                defaults: defaults, vault: vault
             ) && complete
         }
         return complete
     }
 
     /// Returns only the user's explicitly saved Keychain API key for the given endpoint (excluding ambient CodexBar/env keys).
-    public static func userStoredAPIKey(forBaseURL baseURL: String, defaults: UserDefaults = .standard) -> String {
+    public static func userStoredAPIKey(forBaseURL baseURL: String, defaults: UserDefaults = .standard, vault: CredentialVault? = nil) -> String {
         let preset = AssistantProviderPreset.infer(baseURL: baseURL)
         let providerAccount = KeychainHelper.assistantProviderAPIKeyAccount(for: preset)
-        let providerKey = KeychainHelper.loadSecret(account: providerAccount, defaults: defaults)
+        let providerKey = KeychainHelper.loadSecret(account: providerAccount, defaults: defaults, vault: vault)
         if !providerKey.isEmpty {
             if preset == .custom {
                 return customKeyBelongs(to: baseURL, defaults: defaults) ? providerKey : ""
@@ -375,7 +375,7 @@ public struct AssistantConfig: Equatable, Sendable {
         }
         // Pre-v1.0.4 versions stored the OpenRouter key in the generic `assistant_api_key` slot.
         if preset == .openRouterJev {
-            return KeychainHelper.loadSecret(account: KeychainHelper.assistantAPIKeyAccount, defaults: defaults)
+            return KeychainHelper.loadSecret(account: KeychainHelper.assistantAPIKeyAccount, defaults: defaults, vault: vault)
         }
         return ""
     }
@@ -406,7 +406,8 @@ public struct AssistantConfig: Equatable, Sendable {
     public static func importAmbientAPIKey(
         forBaseURL baseURL: String,
         defaults: UserDefaults = .standard,
-        configURL: URL? = nil
+        configURL: URL? = nil,
+        vault: CredentialVault? = nil
     ) -> String? {
         let preset = AssistantProviderPreset.infer(baseURL: baseURL)
         guard preset.supportsKeyImport,
@@ -415,22 +416,22 @@ public struct AssistantConfig: Equatable, Sendable {
               let key = loadAmbientAPIKey(forBaseURL: baseURL, configURL: configURL) else {
             return nil
         }
-        saveSecret(key, for: preset, defaults: defaults)
+        saveSecret(key, for: preset, defaults: defaults, vault: vault)
         defaults.set(label, forKey: importedKeySourceKey(for: preset))
         return label
     }
 
     /// Where the saved key for `baseURL` was imported from ("CodexBar", "OPENROUTER_API_KEY"), or nil if typed by hand.
-    public static func importedKeySource(forBaseURL baseURL: String, defaults: UserDefaults = .standard) -> String? {
+    public static func importedKeySource(forBaseURL baseURL: String, defaults: UserDefaults = .standard, vault: CredentialVault? = nil) -> String? {
         let preset = AssistantProviderPreset.infer(baseURL: baseURL)
-        guard !userStoredAPIKey(forBaseURL: baseURL, defaults: defaults).isEmpty else { return nil }
+        guard !userStoredAPIKey(forBaseURL: baseURL, defaults: defaults, vault: vault).isEmpty else { return nil }
         return defaults.string(forKey: importedKeySourceKey(for: preset))
     }
 
     /// Forgets the saved key for `baseURL`'s provider (the "撤销" button next to an imported key).
-    public static func removeStoredAPIKey(forBaseURL baseURL: String, defaults: UserDefaults = .standard) {
+    public static func removeStoredAPIKey(forBaseURL baseURL: String, defaults: UserDefaults = .standard, vault: CredentialVault? = nil) {
         let preset = AssistantProviderPreset.infer(baseURL: baseURL)
-        clearSecret(for: preset, defaults: defaults)
+        clearSecret(for: preset, defaults: defaults, vault: vault)
         if preset == .custom {
             defaults.removeObject(forKey: customKeyEndpointKey)
         }
@@ -560,20 +561,26 @@ extension KeychainHelper {
     }
 
     public static func loadSecret(
-        account: String, defaults: UserDefaults = .standard, vault: CredentialVault = .shared
+        account: String, defaults: UserDefaults = .standard, vault: CredentialVault? = nil
     ) -> String {
+        if let vault { return readKeychainSecret(account: account, vault: vault) ?? "" }
         guard defaults === UserDefaults.standard else {
             return defaults.string(forKey: secretFallbackKey(for: account))?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         }
-        return readKeychainSecret(account: account, vault: vault) ?? ""
+        return readKeychainSecret(account: account, vault: vault ?? .shared) ?? ""
     }
 
     /// Saving an empty value deletes the item.
     @discardableResult
     public static func saveSecret(
-        _ value: String, account: String, defaults: UserDefaults = .standard, vault: CredentialVault = .shared
+        _ value: String, account: String, defaults: UserDefaults = .standard, vault: CredentialVault? = nil
     ) -> Bool {
+        if let vault {
+            guard writeKeychainSecret(value, account: account, vault: vault) else { return false }
+            defaults.removeObject(forKey: secretFallbackKey(for: account))
+            return true
+        }
         guard defaults === UserDefaults.standard else {
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty {
@@ -585,7 +592,7 @@ extension KeychainHelper {
         }
         // Credentials live only in the Keychain (#16); drop any plain-text copy left behind by ≤1.0.6 once the
         // Keychain accepted the new value, so a failed write never loses the old secret.
-        guard writeKeychainSecret(value, account: account, vault: vault) else { return false }
+        guard writeKeychainSecret(value, account: account, vault: vault ?? .shared) else { return false }
         defaults.removeObject(forKey: secretFallbackKey(for: account))
         return true
     }

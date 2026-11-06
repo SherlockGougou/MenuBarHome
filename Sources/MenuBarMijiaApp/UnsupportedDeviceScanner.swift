@@ -67,7 +67,7 @@ final class UnsupportedDeviceScanner {
 
         if scanMi {
             do {
-                let scanned = try await Self.scanMiCloud()
+                let scanned = try await Self.scanMiCloud(session: store.miAccounts.first?.session)
                 results.append(contentsOf: scanned)
             } catch {
                 errors.append((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
@@ -75,7 +75,7 @@ final class UnsupportedDeviceScanner {
         }
         if scanHA {
             do {
-                let scanned = try await Self.scanHomeAssistant(baseURL: store.serverURLString)
+                let scanned = try await Self.scanHomeAssistant(baseURL: store.serverURLString, token: store.loadHAToken(), plaintextApproved: HAPlaintextConsent.allowsToken(to: store.serverURLString, defaults: store.userDefaults))
                 results.append(contentsOf: scanned)
             } catch {
                 errors.append((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
@@ -89,8 +89,8 @@ final class UnsupportedDeviceScanner {
 
     // MARK: Mi Cloud
 
-    private nonisolated static func scanMiCloud() async throws -> [UnsupportedDevice] {
-        guard let session = MiSessionStore.loadAccounts().first?.session else {
+    private nonisolated static func scanMiCloud(session: MiSession?) async throws -> [UnsupportedDevice] {
+        guard let session else {
             throw UnsupportedDeviceScanError.notSignedIn
         }
         let api = MiCloudClient(session: session)
@@ -115,12 +115,12 @@ final class UnsupportedDeviceScanner {
 
     // MARK: Home Assistant
 
-    private nonisolated static func scanHomeAssistant(baseURL: String) async throws -> [UnsupportedDevice] {
-        let token = KeychainHelper.loadToken().trimmingCharacters(in: .whitespacesAndNewlines)
+    private nonisolated static func scanHomeAssistant(baseURL: String, token: String, plaintextApproved: Bool) async throws -> [UnsupportedDevice] {
+        let token = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else {
             throw UnsupportedDeviceScanError.notSignedIn
         }
-        guard HAPlaintextConsent.allowsToken(to: baseURL, defaults: .standard) else {
+        guard plaintextApproved else {
             throw UnsupportedDeviceScanError.plaintextNotApproved
         }
         let registry = try await readHomeAssistantRegistry(baseURL: baseURL, token: token)

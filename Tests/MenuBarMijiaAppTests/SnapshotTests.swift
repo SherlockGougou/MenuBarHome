@@ -621,6 +621,9 @@ private struct SnapshotFixture {
         defaults.set(TemperatureUnitPreference.celsius.rawValue, forKey: TemperatureUnitPreference.storageKey)
         // The panel's `.task` checks for updates; keep the snapshot offline and deterministic.
         defaults.set(false, forKey: "automatically_checks_for_updates")
+        // Empty isolated credentials are part of the snapshot fixture, never the developer's vault.
+        #expect(KeychainHelper.loadToken(defaults: defaults).isEmpty)
+        #expect(AssistantConfig.userStoredAPIKey(forBaseURL: AssistantConfig.defaultBaseURL, defaults: defaults).isEmpty)
         if let miSession {
             defaults.set(HomeBackend.xiaomiCloud.rawValue, forKey: "home_backend")
             guard MiSessionStore.save(miSession, defaults: defaults) else { throw MissingDefaults() }

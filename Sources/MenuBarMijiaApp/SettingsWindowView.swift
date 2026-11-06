@@ -712,7 +712,7 @@ private struct ConnectionSettingsTab: View {
         }
         .onAppear {
             urlDraft = store.serverURLString
-            tokenDraft = KeychainHelper.loadToken()
+            tokenDraft = store.loadHAToken()
             if store.discoveredHAInstances.isEmpty {
                 Task {
                     let found = await store.discoverHomeAssistantOnLAN(autoApplyIfDefault: true)

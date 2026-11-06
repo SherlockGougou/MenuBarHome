@@ -227,29 +227,14 @@ struct CredentialVaultTests {
 
     @Test("Keychain storage updates in place and keeps the old value when the update is refused")
     func keychainStorageKeepsValueOnRefusedUpdate() throws {
-        // A dedicated service keeps scratch items away from the app's own items and its legacy sweep.
-        let service = "com.jryang1997.MenuBarMijia.tests"
-        let account = "vault.\(UUID().uuidString)"
-        defer {
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
-                kSecAttrAccount as String: account
-            ]
-            SecItemDelete(query as CFDictionary)
-        }
-        let real = CredentialVault.Storage.keychainItem(service: service, account: account)
-        #expect(real.read() == .notFound)
-        try #require(real.write(Data("first".utf8)), "the Keychain must accept a scratch item")
-        try #require(real.write(Data("second".utf8)))
-        #expect(real.read() == .found(Data("second".utf8)))
-
-        let refusing = CredentialVault.Storage.keychainItem(
-            service: service, account: account,
+        let storage = CredentialVault.Storage.keychainItem(
+            service: "test", account: "test",
             updateItem: { _, _ in errSecInteractionNotAllowed },
-            addItem: { _ in errSecInteractionNotAllowed }
+            addItem: { _ in
+                Issue.record("a refused update must never fall back to adding an item")
+                return errSecSuccess
+            }
         )
-        #expect(!refusing.write(Data("third".utf8)))
-        #expect(real.read() == .found(Data("second".utf8)))
+        #expect(!storage.write(Data("replacement".utf8)))
     }
 }

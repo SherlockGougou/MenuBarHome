@@ -136,7 +136,7 @@ struct MijiaCoreTests {
         guard ProcessInfo.processInfo.environment["HA_RUN_LIVE_TEST"] == "1" else {
             return
         }
-        let token = KeychainHelper.loadToken()
+        let token = ProcessInfo.processInfo.environment["HA_ACCESS_TOKEN"] ?? ""
         guard !token.isEmpty else {
             return
         }

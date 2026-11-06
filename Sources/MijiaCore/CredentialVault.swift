@@ -1,6 +1,24 @@
 import Foundation
 import Security
 
+enum SystemKeychainAccess {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var guardAccess: @Sendable () -> Void = {}
+
+    static func installGuard(_ guardAccess: @escaping @Sendable () -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        self.guardAccess = guardAccess
+    }
+
+    static func check() {
+        lock.lock()
+        let check = guardAccess
+        lock.unlock()
+        check()
+    }
+}
+
 /// Every credential lives in **one** Keychain item, read once per process (#16).
 ///
 /// Releases are signed with a free self-signed certificate. macOS stamps each Keychain item with the creating
@@ -238,11 +256,12 @@ extension CredentialVault.Storage {
     static func keychainItem(
         service: String = KeychainHelper.service,
         account: String,
-        updateItem: @escaping @Sendable (CFDictionary, CFDictionary) -> OSStatus = { SecItemUpdate($0, $1) },
-        addItem: @escaping @Sendable (CFDictionary) -> OSStatus = { SecItemAdd($0, nil) }
+        updateItem: @escaping @Sendable (CFDictionary, CFDictionary) -> OSStatus = { SystemKeychainAccess.check(); return SecItemUpdate($0, $1) },
+        addItem: @escaping @Sendable (CFDictionary) -> OSStatus = { SystemKeychainAccess.check(); return SecItemAdd($0, nil) }
     ) -> Self {
         return Self(
             read: {
+                SystemKeychainAccess.check()
                 var query = keychainQuery(service: service, account: account)
                 query[kSecReturnData as String] = true
                 query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -281,6 +300,7 @@ extension CredentialVault.LegacyItems {
         return Self(
             accounts: {
                 // Attributes only: listing items never needs their secret, so it never prompts.
+                SystemKeychainAccess.check()
                 var query = keychainQuery(service: service, account: nil)
                 query[kSecReturnAttributes as String] = true
                 query[kSecMatchLimit as String] = kSecMatchLimitAll
@@ -290,6 +310,7 @@ extension CredentialVault.LegacyItems {
                 return rows.compactMap { $0[kSecAttrAccount as String] as? String }.filter { $0 != vaultAccount }
             },
             read: { account in
+                SystemKeychainAccess.check()
                 var query = keychainQuery(service: service, account: account)
                 query[kSecReturnData as String] = true
                 query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -298,6 +319,7 @@ extension CredentialVault.LegacyItems {
                 return item as? Data
             },
             delete: { account in
+                SystemKeychainAccess.check()
                 let query = keychainQuery(service: service, account: account)
                 SecItemDelete(query as CFDictionary)
             }
@@ -321,6 +343,7 @@ extension CredentialVault {
 
     private static func itemExists(service: String, account: String?) -> Bool {
         #if os(macOS)
+        SystemKeychainAccess.check()
         var query = keychainQuery(service: service, account: account)
         query[kSecReturnAttributes as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
