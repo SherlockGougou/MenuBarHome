@@ -2108,6 +2108,108 @@ describe("Customizable global shortcut (#43)", () => {
 });
 
 describe("Smart camera support and live view (#97)", () => {
+  it("keeps one negotiation when a camera is opened repeatedly or reopened during its handshake", async () => {
+    let releaseBridge!: (value: string) => void;
+    const bridgeGate = new Promise<string>((resolve) => { releaseBridge = resolve; });
+    const bridges: string[] = [];
+    const invoke = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
+      if (name === "go2rtc_endpoint") return { origin: "http://127.0.0.1:43123" };
+      if (name === "bridge_hls_camera_stream") {
+        bridges.push(String(args.hlsUrl));
+        return bridgeGate;
+      }
+      if (name === "go2rtc_jpeg_frame") return "aGVsbG8";
+      return undefined;
+    };
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: { invoke }, configurable: true });
+    localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
+      connectionMode: "demo", hasCompletedOnboarding: true,
+      cameraStreamURLs: { "camera.living_cam": "https://example.com/live.m3u8" },
+    }));
+    const app = new MenuMijiaWindowsApp(element("#app"));
+    await click('[data-body-device="camera.living_cam"]');
+    await waitFor(() => bridges.length === 1);
+    await click('[data-body-device="camera.living_cam"]');
+    await click("#btn-close-camera-live");
+    await click('[data-body-device="camera.living_cam"]');
+    releaseBridge("cam_mjpeg_living");
+    await waitFor(() => document.querySelector("#cc-camera-live-img") !== null);
+    assert.equal(bridges.length, 1, "reopening must reveal the existing handshake without stopping the camera");
+    assert.equal(app.cameraLive.liveCameraHidden, false);
+    app.cameraLive.closeCameraLiveView();
+  });
+
+  it("keeps native video playback position and mute state through panel renders and hot reopen", async () => {
+    localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
+      connectionMode: "demo", hasCompletedOnboarding: true,
+      cameraStreamURLs: { "camera.living_cam": "https://example.com/live.m3u8" },
+    }));
+    const app = new MenuMijiaWindowsApp(element("#app"));
+    await click('[data-body-device="camera.living_cam"]');
+    const video = element("#cc-camera-video") as HTMLVideoElement;
+    video.currentTime = 42;
+    await click("#cc-camera-mute");
+    app.render();
+    assert.ok(element("#cc-camera-video") === video, "background renders must preserve the playing media element");
+    assert.equal(video.currentTime, 42);
+    assert.equal(video.muted, false);
+    await click("#btn-close-camera-live");
+    await click('[data-body-device="camera.living_cam"]');
+    assert.ok(element("#cc-camera-video") === video);
+    assert.equal(video.currentTime, 42);
+    assert.equal(video.muted, false);
+    app.cameraLive.closeCameraLiveView();
+  });
+
+  it("does not stop the new P2P session when an older cloud HLS bridge finishes late", async () => {
+    let releaseBridge!: (value: string) => void;
+    const bridgeGate = new Promise<string>((resolve) => { releaseBridge = resolve; });
+    let bridgeCount = 0;
+    const live = await openXiaomiCloudP2PCamera({
+      budgetMs: 5_000, retryMs: 0, frame: async () => "aGVsbG8",
+      hlsBridge: async () => {
+        bridgeCount += 1;
+        return bridgeCount === 1 ? bridgeGate : "";
+      },
+    });
+    await waitFor(() => bridgeCount === 1);
+    await click("#btn-reload-camera-live");
+    await waitFor(() => live.bridgeCalls.length === 1);
+    await waitFor(() => document.querySelector("#cc-camera-live-img") !== null);
+    const picture = element("#cc-camera-live-img");
+    const stopsBefore = live.p2pStops.count;
+    releaseBridge("");
+    await setImmediate();
+    await setImmediate();
+    assert.equal(live.p2pStops.count, stopsBefore, "the expired HLS fallback must not send stop-stream to the new session");
+    assert.equal(live.bridgeCalls.length, 1);
+    assert.ok(element("#cc-camera-live-img") === picture);
+  });
+
+  it("keeps a custom image through renders and retires old media when the source changes or reconnects", async () => {
+    localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
+      connectionMode: "demo", hasCompletedOnboarding: true,
+      cameraStreamURLs: { "camera.living_cam": "https://example.com/frame.jpeg" },
+    }));
+    const app = new MenuMijiaWindowsApp(element("#app"));
+    await click('[data-body-device="camera.living_cam"]');
+    const image = element("#cc-camera-live-img");
+    app.render();
+    assert.ok(element("#cc-camera-live-img") === image);
+    await click("#btn-toggle-camera-url");
+    (element("#camera-stream-url-input") as HTMLInputElement).value = "https://example.com/live.mp4";
+    await click("#btn-save-camera-url");
+    const video = element("#cc-camera-video") as HTMLVideoElement;
+    assert.equal(image.isConnected, false);
+    video.currentTime = 42;
+    await click("#btn-reload-camera-live");
+    assert.ok(element("#cc-camera-video") !== video, "explicit reconnect must start fresh media");
+    assert.equal(video.getAttribute("src"), null);
+    assert.equal(video.isConnected, false);
+    app.cameraLive.closeCameraLiveView();
+    assert.equal(document.querySelector("#cc-camera-video"), null);
+  });
+
   it("clicking a camera card opens the live stream window and supports night-shot, hot-hide reopen, timed teardown, motion detection, and undo", async () => {
     localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
       connectionMode: "demo",
@@ -2702,6 +2804,7 @@ describe("Smart camera support and live view (#97)", () => {
     budgetMs: number;
     retryMs: number;
     frame: (src: string) => Promise<string>;
+    hlsBridge?: () => Promise<string>;
   }): Promise<{
     bridgeCalls: Array<Record<string, unknown>>;
     frameSrcs: string[];
@@ -2730,12 +2833,17 @@ describe("Smart camera support and live view (#97)", () => {
         },
       ],
     };
+    if (options.hlsBridge) camSpec.services.push({
+      iid: 10, type: "urn:miot-spec-v2:service:camera-stream-for-google-home:00007889:1",
+      properties: [], actions: [{ iid: 1, type: "urn:miot-spec-v2:action:start-hls-stream:00002838:1", in: [], out: [] }],
+    });
     const security = "AQIDBAUGBwgJCgsMDQ4PEA==";
     const bridgeCalls: Array<Record<string, unknown>> = [];
     const frameSrcs: string[] = [];
     const p2pStarts = { count: 0 };
     const p2pStops = { count: 0 };
     const invoke = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
+      if (name === "bridge_hls_camera_stream" && options.hlsBridge) return options.hlsBridge();
       if (name === "start_xiaomi_camera_bridge") {
         bridgeCalls.push(args);
         return "cam_h264_cam1|cam_mjpeg_cam1";
@@ -2783,7 +2891,9 @@ describe("Smart camera support and live view (#97)", () => {
         const payload = JSON.parse(
           MiCloudCrypto.decryptResponse(encrypted, MiCloudCrypto.signedNonce(security, nonce)),
         ) as { params?: { siid: number; aiid: number } };
-        if (payload.params?.aiid === 1) {
+        if (payload.params?.siid === 10) {
+          result = { code: 0, out: ["https://example.com/live.m3u8"] };
+        } else if (payload.params?.aiid === 1) {
           p2pStarts.count += 1;
           result = { code: 0, out: [] };
         } else if (payload.params?.aiid === 2) {
