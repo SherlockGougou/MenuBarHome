@@ -597,6 +597,10 @@ const CATALOG: Readonly<Record<string, readonly [string, string]>> = {
   "重新连接": ["重新连接", "Reconnect"],
   "实时画面连接失败，请点右上角重新连接": ["实时画面连接失败，请点右上角重新连接", "Live view failed to connect; use Reconnect at the top right"],
   "go2rtc 未返回画面": ["go2rtc 未返回画面", "go2rtc returned no picture"],
+  "仅画面": ["仅画面", "Video only"],
+  "开启声音": ["开启声音", "Unmute audio"],
+  "关闭声音": ["关闭声音", "Mute audio"],
+  "当前视频流（米家 P2P / MJPEG / 抓拍）只传画面，不含音频": ["当前视频流（米家 P2P / MJPEG / 抓拍）只传画面，不含音频", "This stream (Xiaomi P2P / MJPEG / snapshot) carries video only, without audio"],
 
   // Air Purifier (#98)
   "最爱": ["最爱", "Favorite"],

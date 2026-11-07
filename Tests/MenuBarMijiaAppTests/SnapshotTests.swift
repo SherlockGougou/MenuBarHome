@@ -1063,6 +1063,34 @@ struct SnapshotTests {
         #expect(text.contains("已连接 Home Assistant"))
     }
 
+    // MARK: - Camera live HUD audio states (#29)
+
+    @Test("Camera HUD labels video-only streams and offers unmute for HLS")
+    func cameraAudioHUDStates() async throws {
+        let previousLanguage = L10n.currentLanguage
+        L10n.currentLanguage = .zhHans
+        defer { L10n.currentLanguage = previousLanguage }
+
+        let states: [(CameraLiveAudioStatus, String)] = [
+            (.videoOnly, "video-only"),
+            (.audio(isMuted: true), "muted"),
+            (.audio(isMuted: false), "unmuted"),
+        ]
+        for (status, name) in states {
+            assertRendered(
+                snapshotReady(
+                    CameraLiveAudioStatusView(status: status) {}
+                        .frame(width: 140, height: 44)
+                        .background(Color(red: 0.08, green: 0.10, blue: 0.15)),
+                    scheme: .dark
+                ),
+                size: CGSize(width: 140, height: 44),
+                named: "camera-audio-\(name)-dark",
+                scheme: .dark
+            )
+        }
+    }
+
     // MARK: - Rendering switches
 
     private func snapshotReady<V: View>(_ view: V, scheme: ColorScheme = .light) -> some View {

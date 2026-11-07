@@ -52,6 +52,9 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
     public var isPinnedOnTop = true {
         didSet { syncWindowLevel() }
     }
+    /// HLS streams can carry an audio track; every other source is video only. The player still
+    /// starts muted, so sound is an explicit opt-in (#29).
+    public var isMuted = true
     public var isExpandedSize = true
     public var isShowingURLConfig = false
     public var customURLInput = ""
@@ -158,6 +161,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         if let previousDeviceId, previousDeviceId != device.id {
             let oldId = previousDeviceId
             stopStreamTasks()
+            isMuted = true
             Task { await store.stopCameraStream(for: oldId) }
         }
 
@@ -213,6 +217,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         let deviceId = activeDeviceId
         let store = self.store
         stopStreamTasks()
+        isMuted = true
         panelWindow?.orderOut(nil)
 
         closeReleaseTask = Task { @MainActor [weak self] in
@@ -290,6 +295,10 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         pictureInPicture = nil
         isPictureInPicturePossible = false
         isPictureInPictureActive = false
+    }
+
+    public func toggleMute() {
+        isMuted.toggle()
     }
 
     public func toggleExpandedSize() {
@@ -498,6 +507,21 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
             isAwake = false
         }
         let hasCustomURL = !(store?.cameraCustomStreamURL(for: activeDeviceId ?? "") ?? "").isEmpty
+        let streamMode: String
+        switch streamSource {
+        case .hls?: streamMode = "hls"
+        case .liveMP4?: streamMode = "live-mp4"
+        case .mjpeg?: streamMode = "mjpeg"
+        case .snapshot?: streamMode = "snapshot"
+        case .demo?: streamMode = "demo"
+        case nil: streamMode = "none"
+        }
+        let audioSupport: String
+        if case .hls = streamSource {
+            audioSupport = isMuted ? "hls-muted" : "hls-unmuted"
+        } else {
+            audioSupport = "video-only"
+        }
         let rawError = errorMessage ?? "none"
         let redactedError = rawError
             .replacingOccurrences(of: #"\b\d{1,3}(?:\.\d{1,3}){3}\b"#, with: "<ip>", options: .regularExpression)
@@ -510,6 +534,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
             "camera_info: \(model)",
             "online: \(dev?.isOnline ?? false), awake: \(isAwake)",
             "stream_entity: \(hasStreamEntity), snapshot_path: \(hasSnapshotPath), custom_url: \(hasCustomURL)",
+            "stream_mode: \(streamMode), audio_support: \(audioSupport)",
             "error: \(redactedError)",
         ].joined(separator: "\n")
     }
@@ -733,6 +758,7 @@ private final class MJPEGStreamDelegate: NSObject, URLSessionDataDelegate, @unch
 
 struct CameraHLSPlayerView: NSViewRepresentable {
     let url: URL
+    let isMuted: Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -744,7 +770,7 @@ struct CameraHLSPlayerView: NSViewRepresentable {
         view.allowsPictureInPicturePlayback = true
         view.videoGravity = .resizeAspect
         let player = AVPlayer(url: url)
-        player.isMuted = true
+        player.isMuted = isMuted
         view.player = player
         context.coordinator.currentURL = url
         player.play()
@@ -752,10 +778,11 @@ struct CameraHLSPlayerView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: AVPlayerView, context: Context) {
+        nsView.player?.isMuted = isMuted
         guard context.coordinator.currentURL != url else { return }
         context.coordinator.currentURL = url
         let player = AVPlayer(url: url)
-        player.isMuted = nsView.player?.isMuted ?? true
+        player.isMuted = isMuted
         nsView.player?.pause()
         nsView.player = player
         player.play()
@@ -768,6 +795,88 @@ struct CameraHLSPlayerView: NSViewRepresentable {
 
     final class Coordinator {
         var currentURL: URL?
+    }
+}
+
+// MARK: - Live HUD Audio Status (#29)
+
+/// What the live HUD can say about sound for the stream on screen. Only an HLS stream can carry
+/// an audio track; P2P, MJPEG, snapshot and demo sources are video only.
+enum CameraLiveAudioStatus: Equatable {
+    case hidden
+    case videoOnly
+    case audio(isMuted: Bool)
+
+    init(streamSource: CameraStreamSource?, isMuted: Bool) {
+        switch streamSource {
+        case .hls?: self = .audio(isMuted: isMuted)
+        case nil: self = .hidden
+        default: self = .videoOnly
+        }
+    }
+}
+
+/// Mute toggle for an HLS stream, or the "video only" label for every frame-based source. Split
+/// from the panel so the two states can be snapshotted without an AVPlayerView (#29).
+struct CameraLiveAudioStatusView: View {
+    let status: CameraLiveAudioStatus
+    let onToggleMute: () -> Void
+
+    var body: some View {
+        switch status {
+        case .hidden:
+            EmptyView()
+        case .videoOnly:
+            videoOnlyBadge
+        case .audio(let isMuted):
+            CameraHUDIconButton(
+                symbol: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                isActive: !isMuted,
+                help: isMuted ? L10n.tr("开启声音", "Unmute audio") : L10n.tr("关闭声音", "Mute audio"),
+                action: onToggleMute
+            )
+        }
+    }
+
+    private var videoOnlyBadge: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "speaker.slash")
+                .font(.system(size: 9, weight: .semibold))
+            Text(L10n.tr("仅画面", "Video only"))
+                .font(.system(size: 9.5, weight: .semibold))
+        }
+        .foregroundStyle(.white.opacity(0.72))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(Color.white.opacity(0.10)))
+        .help(L10n.tr(
+            "当前视频流（米家 P2P / MJPEG / 快照）仅传输画面；配置包含音轨的自定义 HLS (.m3u8) 流可开启声音。",
+            "Current stream (Xiaomi P2P / MJPEG / Snapshot) carries video only; custom HLS (.m3u8) streams with an audio track support sound."
+        ))
+    }
+}
+
+/// Circular HUD button shared by the live-window controls.
+private struct CameraHUDIconButton: View {
+    let symbol: String
+    let isActive: Bool
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isActive ? Color.cyan : Color.white.opacity(0.82))
+                .frame(width: 24, height: 24)
+                .background(
+                    Circle()
+                        .fill(isActive ? Color.cyan.opacity(0.20) : Color.white.opacity(0.10))
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 }
 
@@ -856,7 +965,13 @@ struct CameraLivePanelView: View {
 
             Spacer(minLength: 4)
 
-            hudIconButton(
+            CameraLiveAudioStatusView(
+                status: CameraLiveAudioStatus(streamSource: controller.streamSource, isMuted: controller.isMuted)
+            ) {
+                controller.toggleMute()
+            }
+
+            CameraHUDIconButton(
                 symbol: controller.isPinnedOnTop ? "pin.fill" : "pin.slash",
                 isActive: controller.isPinnedOnTop,
                 help: controller.isPinnedOnTop
@@ -867,7 +982,7 @@ struct CameraLivePanelView: View {
             }
 
             if case .liveMP4 = controller.streamSource {
-                hudIconButton(
+                CameraHUDIconButton(
                     symbol: controller.isPictureInPictureActive ? "pip.exit" : "pip.enter",
                     isActive: controller.isPictureInPictureActive,
                     help: L10n.tr("系统画中画（可放在任意位置、跨全屏应用）", "Picture in Picture (system floating window)")
@@ -878,7 +993,7 @@ struct CameraLivePanelView: View {
                 .opacity(controller.hasLiveVideoFrame || controller.isPictureInPictureActive ? 1 : 0.4)
             }
 
-            hudIconButton(
+            CameraHUDIconButton(
                 symbol: controller.isExpandedSize
                     ? "arrow.down.right.and.arrow.up.left"
                     : "arrow.up.left.and.arrow.down.right",
@@ -890,7 +1005,7 @@ struct CameraLivePanelView: View {
                 controller.toggleExpandedSize()
             }
 
-            hudIconButton(
+            CameraHUDIconButton(
                 symbol: "link",
                 isActive: controller.isShowingURLConfig || !(store.cameraCustomStreamURL(for: device?.id ?? "") ?? "").isEmpty,
                 help: L10n.tr("配置自定义 HLS / go2rtc / 抓拍流地址", "Configure custom HLS / go2rtc / snapshot stream URL")
@@ -899,7 +1014,7 @@ struct CameraLivePanelView: View {
                 controller.setURLFieldActive(controller.isShowingURLConfig)
             }
 
-            hudIconButton(
+            CameraHUDIconButton(
                 symbol: "arrow.clockwise",
                 isActive: false,
                 help: L10n.tr("重新连接画面", "Reload stream")
@@ -907,7 +1022,7 @@ struct CameraLivePanelView: View {
                 controller.reloadStream()
             }
 
-            hudIconButton(
+            CameraHUDIconButton(
                 symbol: "xmark",
                 isActive: false,
                 help: L10n.tr("关闭摄像头小窗", "Close camera window")
@@ -992,7 +1107,7 @@ struct CameraLivePanelView: View {
         } else if let source = controller.streamSource {
             switch source {
             case .hls(let url):
-                CameraHLSPlayerView(url: url)
+                CameraHLSPlayerView(url: url, isMuted: controller.isMuted)
             case .liveMP4:
                 ZStack {
                     if let player = controller.videoPlayer {
@@ -1224,27 +1339,6 @@ struct CameraLivePanelView: View {
             .padding(.vertical, 7)
         }
         .background(Color.black.opacity(0.45))
-    }
-
-    private func hudIconButton(
-        symbol: String,
-        isActive: Bool,
-        help: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(isActive ? Color.cyan : Color.white.opacity(0.82))
-                .frame(width: 24, height: 24)
-                .background(
-                    Circle()
-                        .fill(isActive ? Color.cyan.opacity(0.20) : Color.white.opacity(0.10))
-                )
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
     }
 
     private var statusDotColor: Color {

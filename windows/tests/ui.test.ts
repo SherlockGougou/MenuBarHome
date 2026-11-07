@@ -2239,6 +2239,98 @@ describe("Smart camera support and live view (#97)", () => {
     );
   });
 
+  it("labels frame-only streams as video only and unmutes a raw video stream from the HUD (#29)", async () => {
+    localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
+      connectionMode: "demo",
+      hasCompletedOnboarding: true,
+    }));
+    const app = new MenuMijiaWindowsApp(element("#app"));
+    await click('[data-body-device="camera.living_cam"]');
+    assert.equal(textOf("#cc-camera-audio-badge"), "仅画面");
+    assert.equal(document.querySelector("#cc-camera-mute"), null);
+
+    await click("#btn-toggle-camera-url");
+    (element("#camera-stream-url-input") as HTMLInputElement).value = "https://example.com/live.m3u8";
+    await click("#btn-save-camera-url");
+    const video = element("#cc-camera-video") as HTMLVideoElement;
+    assert.equal(video.muted, true, "video streams start muted");
+    assert.equal(document.querySelector("#cc-camera-audio-badge"), null);
+    assert.equal(textOf("#cc-camera-mute"), "🔇");
+
+    await click("#cc-camera-mute");
+    assert.equal(video.muted, false);
+    assert.equal(textOf("#cc-camera-mute"), "🔊");
+    assert.equal(element("#cc-camera-mute").getAttribute("title"), "关闭声音");
+    assert.equal(element("#cc-camera-mute").getAttribute("aria-pressed"), "false");
+
+    await click("#cc-camera-mute");
+    assert.equal(video.muted, true);
+    assert.equal(element("#cc-camera-mute").getAttribute("title"), "开启声音");
+    assert.equal(element("#cc-camera-mute").getAttribute("aria-pressed"), "true");
+
+    // The native controls can unmute or zero the volume without going through the HUD button.
+    video.muted = false;
+    video.dispatchEvent(new Event("volumechange"));
+    assert.equal(app.cameraLive.liveCameraMuted, false);
+    assert.equal(textOf("#cc-camera-mute"), "🔊");
+    assert.equal(element("#cc-camera-mute").getAttribute("title"), "关闭声音");
+
+    video.volume = 0;
+    video.muted = false;
+    video.dispatchEvent(new Event("volumechange"));
+    assert.equal(app.cameraLive.liveCameraMuted, true);
+    assert.equal(textOf("#cc-camera-mute"), "🔇");
+
+    // Unmuting while a native control left the volume at 0 must restore an audible level.
+    await click("#cc-camera-mute");
+    assert.equal(video.muted, false);
+    assert.equal(video.volume, 1);
+    assert.equal(app.cameraLive.liveCameraMuted, false);
+    assert.equal(textOf("#cc-camera-mute"), "🔊");
+    assert.equal(element("#cc-camera-mute").getAttribute("title"), "关闭声音");
+  });
+
+  it("starts the next live window muted after a full close (#29)", async () => {
+    localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
+      connectionMode: "demo",
+      hasCompletedOnboarding: true,
+    }));
+    const app = new MenuMijiaWindowsApp(element("#app"));
+    await click('[data-body-device="camera.living_cam"]');
+    await click("#btn-toggle-camera-url");
+    (element("#camera-stream-url-input") as HTMLInputElement).value = "https://example.com/live.m3u8";
+    await click("#btn-save-camera-url");
+    await click("#cc-camera-mute");
+    assert.equal(app.cameraLive.liveCameraMuted, false);
+
+    app.cameraKeepAliveMs = 30;
+    await click("#btn-close-camera-live");
+    await waitFor(() => document.querySelector(".cc-camera-live-sheet") === null);
+    assert.equal(app.cameraLive.liveCameraMuted, true, "teardown returns the camera to its muted default");
+
+    await click('[data-body-device="camera.living_cam"]');
+    const video = element("#cc-camera-video") as HTMLVideoElement;
+    assert.equal(video.muted, true);
+    assert.equal(textOf("#cc-camera-mute"), "🔇");
+  });
+
+  it("labels a native MJPEG live view as video only without offering a mute toggle (#29)", async () => {
+    const live = await openXiaomiCloudP2PCamera({
+      budgetMs: 5_000,
+      retryMs: 0,
+      frame: async () => "aGVsbG8",
+    });
+    await waitFor(
+      () =>
+        (document.querySelector("#cc-camera-live-img") as HTMLImageElement | null)?.getAttribute("src") ===
+        "data:image/jpeg;base64,aGVsbG8",
+      800,
+    );
+    assert.equal(textOf("#cc-camera-audio-badge"), "仅画面");
+    assert.equal(document.querySelector("#cc-camera-mute"), null);
+    assert.equal(live.bridgeCalls.length, 1);
+  });
+
   it("bridges Home Assistant camera_proxy_stream URLs through native JPEG frames, not a browser fetch", async () => {
     const bridgedCalls: Array<{ did: string; hlsUrl: string }> = [];
     const frameCalls: string[] = [];

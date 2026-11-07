@@ -1860,6 +1860,47 @@ struct MenuBarPanelControllerTests {
         #expect(panel.level.rawValue > NSWindow.Level.statusBar.rawValue)
     }
 
+    @Test("Camera diagnostics name the stream mode and whether its audio can be enabled (#29)")
+    func cameraDiagnosticsReportStreamModeAndAudioSupport() async throws {
+        _ = NSApplication.shared
+        let suite = "MenuBarPanelTests-camera-diagnostics-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let store = HomeStore(provider: MockHomeProvider(snapshot: DemoHomeProvider.defaultHome()), defaultsSuiteName: suite)
+        try await store.waitForTestSnapshot()
+        let camera = try #require(store.devices.first(where: {
+            if case .camera = $0.kind { return true }
+            return false
+        }))
+
+        let cameraController = CameraLivePanelController.shared
+        cameraController.presentsActively = false
+        cameraController.isMuted = true
+        cameraController.install(with: store)
+        defer {
+            cameraController.closePanel()
+            cameraController.presentsActively = true
+        }
+
+        store.openCameraLiveView(camera.id)
+        var waited = 0
+        while cameraController.streamSource == nil, waited < 40 {
+            try await Task.sleep(for: .milliseconds(25))
+            waited += 1
+        }
+        let report = cameraController.desensitizedDiagnosticsReport()
+        #expect(report.contains("stream_mode: demo, audio_support: video-only"))
+
+        cameraController.toggleMute()
+        #expect(cameraController.isMuted == false)
+        #expect(
+            cameraController.desensitizedDiagnosticsReport().contains("audio_support: video-only"),
+            "only an HLS stream can carry audio, so unmuting must not relabel a demo stream"
+        )
+
+        cameraController.closePanel()
+        #expect(cameraController.isMuted, "closing the live window returns the next open to muted")
+    }
+
     @Test("Closing the camera mini-window hides it at once and releases the stream")
     func cameraLivePanelCloseReleasesStreamImmediately() async throws {
         _ = NSApplication.shared
