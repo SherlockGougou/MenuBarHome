@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Compare README capability tables with docs/capabilities.json, then check code anchors.
 
-Most rows only prove the two READMEs match the handwritten manifest. CODE_ANCHORS
-additionally fails when a claimed platform status contradicts a source file, and a row's
-`miotTypes` derives both platforms' status from the MIoT coverage baseline (#185).
+Every row is checked against code: CODE_ANCHORS fails when a claimed platform status
+contradicts a source file, and a row's `miotTypes` derives both platforms' status from the
+MIoT coverage baseline (#185, #26). A row without `miotTypes` must have an anchor, so the
+manifest cannot grow a documentation-only line again.
 """
 
 import json
@@ -52,9 +53,31 @@ def read_rows(path: str, header: str) -> list[tuple[str, str | None, str | None]
 SOURCE_SUFFIXES = {".swift", ".ts", ".tsx", ".js", ".mjs", ".rs", ".json"}
 SKIP_DIRS = {"node_modules", "target", "dist", ".git"}
 
-# These rows can be contradicted by a file. supported/partial needs `path`+`symbol`.
-# unsupported needs `roots`+`symbol`. Every other row stays documentation-only.
+# Every row without `miotTypes` needs an anchor. supported/partial needs `path`+`symbol`.
+# unsupported needs `roots`+`symbol` and fails when any source file contains the symbol.
 CODE_ANCHORS = (
+    {
+        "id": "mi-home-qr",
+        "macos": {
+            "path": "Sources/MenuBarMijiaApp/MiAccountSection.swift",
+            "symbol": "QRLoginTicket",
+        },
+        "windows": {
+            "path": "windows/src/core/miCloud/accountLogin.ts",
+            "symbol": "MiAccountLogin",
+        },
+    },
+    {
+        "id": "home-assistant",
+        "macos": {
+            "path": "Sources/MijiaCore/HADiscovery.swift",
+            "symbol": "HADiscovery",
+        },
+        "windows": {
+            "path": "windows/src/core/homeAssistant.ts",
+            "symbol": "HomeAssistantClient",
+        },
+    },
     {
         "id": "keyboard-search",
         "macos": {
@@ -67,14 +90,102 @@ CODE_ANCHORS = (
         },
     },
     {
-        "id": "url-scheme",
+        "id": "global-hotkey",
         "macos": {
-            "path": "Sources/MenuBarMijiaApp/MenuBarMijiaApp.swift",
-            "symbol": "onOpenURL",
+            "path": "Sources/MenuBarMijiaApp/HotkeyAndNotificationManager.swift",
+            "symbol": "HotkeyAndNotificationManager",
+        },
+        "windows": {
+            "path": "windows/src-tauri/src/main.rs",
+            "symbol": "parse_global_shortcut",
+        },
+    },
+    {
+        "id": "voice",
+        "macos": {
+            "path": "Sources/MenuBarMijiaApp/AssistantCommandBar.swift",
+            "symbol": "SpeechRuntimeBridge",
+        },
+        "windows": {
+            "path": "windows/src/ui/appTypes.ts",
+            "symbol": "SpeechRecognitionInstance",
+        },
+    },
+    {
+        "id": "local-command",
+        "macos": {
+            "path": "Sources/MijiaCore/LocalIntentParser.swift",
+            "symbol": "LocalIntentParser",
+        },
+        "windows": {
+            "path": "windows/src/ui/naturalCommand.ts",
+            "symbol": "handleNaturalCommand",
+        },
+    },
+    {
+        "id": "optional-ai",
+        "macos": {
+            "path": "Sources/MijiaCore/AssistantEndpoint.swift",
+            "symbol": "AssistantEndpoint",
+        },
+        "windows": {
+            "path": "windows/src/core/assistant/provider.ts",
+            "symbol": "parseAssistantEndpoint",
+        },
+    },
+    {
+        "id": "proactive-suggestions",
+        "macos": {
+            "path": "Sources/MijiaCore/HomeStore+Assistant.swift",
+            "symbol": "maybeRefreshProactiveSuggestionsInBackground",
+        },
+        "windows": {
+            "path": "windows/src/ui/proactive.ts",
+            "symbol": "currentProactiveSuggestions",
+        },
+    },
+    {
+        "id": "grokball",
+        "macos": {
+            "path": "Sources/MenuBarMijiaApp/GrokBallRenderer.swift",
+            "symbol": "GrokBallRenderer",
+        },
+        "windows": {
+            "path": "windows/src/ui/grokBall.ts",
+            "symbol": "GrokBallView",
+        },
+    },
+    {
+        "id": "quick-actions",
+        "macos": {
+            "path": "Sources/MijiaCore/Models.swift",
+            "symbol": "QuickAction",
+        },
+        "windows": {
+            "path": "windows/src/ui/demo.ts",
+            "symbol": "quickActions",
+        },
+    },
+    {
+        "id": "all-off-undo",
+        "macos": {
+            "path": "Sources/MijiaCore/HomeStore+Undo.swift",
+            "symbol": "undoTurnAllOff",
+        },
+        "windows": {
+            "path": "windows/src/core/commandEffects.ts",
+            "symbol": "inverseCommands",
+        },
+    },
+    {
+        "id": "mac-event-automation",
+        "macos": {
+            "path": "Sources/MijiaCore/MacContextAutomation.swift",
+            "symbol": "MacContextAutomation",
         },
         "windows": {
             "roots": ("windows/src", "windows/src-tauri/src"),
-            "symbol": "onOpenURL",
+            "symbol": "MacContextAutomation",
         },
     },
     {
@@ -89,14 +200,135 @@ CODE_ANCHORS = (
         },
     },
     {
-        "id": "mac-event-automation",
+        "id": "url-scheme",
         "macos": {
-            "path": "Sources/MijiaCore/MacContextAutomation.swift",
-            "symbol": "MacContextAutomation",
+            "path": "Sources/MenuBarMijiaApp/MenuBarMijiaApp.swift",
+            "symbol": "onOpenURL",
         },
         "windows": {
             "roots": ("windows/src", "windows/src-tauri/src"),
-            "symbol": "MacContextAutomation",
+            "symbol": "onOpenURL",
+        },
+    },
+    {
+        "id": "raycast-cli",
+        "macos": {
+            "path": "Sources/MijiaCore/RaycastSnapshot.swift",
+            "symbol": "RaycastSnapshot",
+        },
+        "windows": {
+            "roots": ("windows/src", "windows/src-tauri/src"),
+            "symbol": "RaycastSnapshot",
+        },
+    },
+    {
+        "id": "sensor-history",
+        "macos": {
+            "path": "Sources/MenuBarMijiaApp/SensorCardView.swift",
+            "symbol": "SensorHistoryPoint",
+        },
+        "windows": {
+            "path": "windows/src/ui/deviceViews.ts",
+            "symbol": "renderDeviceTile",
+        },
+    },
+    {
+        "id": "plug-energy",
+        "macos": {
+            "path": "Sources/MijiaCore/EnergyHistory.swift",
+            "symbol": "EnergyHistory",
+        },
+        "windows": {
+            "roots": ("windows/src", "windows/src-tauri/src"),
+            "symbol": "EnergyHistory",
+        },
+    },
+    {
+        "id": "ha-humidifiers-water-heaters-valves",
+        "macos": {
+            "path": "Sources/MijiaCore/DeviceSynthesizer.swift",
+            "symbol": "water_heater.",
+        },
+        "windows": {
+            "roots": ("windows/src", "windows/src-tauri/src"),
+            "symbol": "water_heater.",
+        },
+    },
+    {
+        "id": "generic-device-cards",
+        "macos": {
+            "path": "Sources/MijiaCore/MiCloud/MiotSynthesizer.swift",
+            "symbol": "genericCard",
+        },
+        "windows": {
+            "path": "windows/src/core/miCloud/synthesis.ts",
+            "symbol": "genericCard",
+        },
+    },
+    {
+        "id": "fish-tanks-pet-feeders",
+        "macos": {
+            "path": "Sources/MijiaCore/MiCloud/MiotFacets.swift",
+            "symbol": "FeedProfile",
+        },
+        "windows": {
+            "path": "windows/src/core/miCloud/facets.ts",
+            "symbol": "feeding",
+        },
+    },
+    {
+        "id": "camera-live",
+        "macos": {
+            "path": "Sources/MenuBarMijiaApp/CameraLivePanelController.swift",
+            "symbol": "CameraLivePanelController",
+        },
+        "windows": {
+            "path": "windows/src/ui/cameraLive.ts",
+            "symbol": "CameraLiveController",
+        },
+    },
+    {
+        "id": "layout-resize",
+        "macos": {
+            "path": "Sources/MenuBarMijiaApp/PanelLayoutStore.swift",
+            "symbol": "PanelLayoutStore",
+        },
+        "windows": {
+            "path": "windows/src/ui/layoutGestures.ts",
+            "symbol": "LayoutGestureHost",
+        },
+    },
+    {
+        "id": "visual-look",
+        "macos": {
+            "path": "Sources/MenuBarMijiaApp/DesignTokens.swift",
+            "symbol": "DesignTokens",
+        },
+        "windows": {
+            "path": "windows/src/ui/styles.css",
+            "symbol": "--glass-bg",
+        },
+    },
+    {
+        "id": "covers-curtains",
+        "macos": {
+            "path": "Sources/MenuBarMijiaApp/CoverDetailDrawer.swift",
+            "symbol": "CoverDetailDrawer",
+        },
+        "windows": {
+            "path": "windows/src/core/miCloud/synthesis.ts",
+            "symbol": "coverSubtype",
+        },
+    },
+    {
+        "id": "code-signing",
+        "macos": {
+            "path": "Sources/MijiaCore/UpdateManifest.swift",
+            "symbol": "UpdateManifest",
+        },
+        "windows": {
+            "path": "windows/src-tauri/src/update.rs",
+            "symbol": "verify_ed25519_signature",
         },
     },
 )
@@ -160,6 +392,15 @@ def code_anchor_errors(root: pathlib.Path, rows: list[dict]) -> list[str]:
                     )
             else:
                 errors.append(f"{anchor['id']} 的 {platform} 状态无法核对：{claimed!r}")
+
+    anchored = {anchor["id"] for anchor in CODE_ANCHORS}
+    for row in rows:
+        if row.get("miotTypes"):
+            continue
+        if row["id"] not in anchored:
+            errors.append(
+                f"{row['id']} 没有代码锚点：请补 CODE_ANCHORS，或给它加上 miotTypes 由基线推出"
+            )
     return errors
 
 
@@ -254,11 +495,9 @@ def main() -> int:
         print("带 miotTypes 的行，状态以覆盖率基线为准：改合成并重录基线，或照推出的状态改文档。")
         return 1
     derived = sum(1 for row in expected if row.get("miotTypes"))
-    unchecked = len(expected) - len(CODE_ANCHORS) - derived
     print(
-        f"✅ {len(expected)} 行能力状态与两份 README 一致。"
-        f"其中 {len(CODE_ANCHORS)} 行对照了代码锚点，{derived} 行由 MIoT 覆盖率基线推出，"
-        f"其余 {unchecked} 行只核对文档，不能证明实现没漂移。"
+        f"✅ {len(expected)} 行能力状态与两份 README 一致，全部对照了源码："
+        f"{len(CODE_ANCHORS)} 行用文件与符号锚点，{derived} 行由 MIoT 覆盖率基线推出。"
     )
     return 0
 

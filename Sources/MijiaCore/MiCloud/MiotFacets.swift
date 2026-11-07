@@ -54,6 +54,49 @@ public struct DeviceProfiles: Codable, Equatable, Sendable {
         public var lowRiskWrites: [String]
     }
 
+    /// The confirmation table behind `ManualControlPolicy` (#26). Patterns use the same glob
+    /// syntax as `facets`: `strictlyHighRisk` matches device types and services that ask even for
+    /// an off direction, `heatingService` names services whose power-on and hotter targets can
+    /// hurt, and `lowRiskServices`/`lowRiskTokens` never ask.
+    public struct ManualControlRules: Codable, Equatable, Sendable {
+        public var strictlyHighRisk: [String]
+        public var heatingService: [String]
+        public var lowRiskServices: [String]
+        public var lowRiskTokens: [String]
+
+        public init(
+            strictlyHighRisk: [String],
+            heatingService: [String],
+            lowRiskServices: [String],
+            lowRiskTokens: [String]
+        ) {
+            self.strictlyHighRisk = strictlyHighRisk
+            self.heatingService = heatingService
+            self.lowRiskServices = lowRiskServices
+            self.lowRiskTokens = lowRiskTokens
+        }
+
+        /// Mirrors the bundled document, so a document that predates the field keeps the #143
+        /// confirmation behaviour instead of silently letting every write through.
+        public static let defaults = ManualControlRules(
+            strictlyHighRisk: [
+                "lock", "*-lock", "germicidal-lamp", "alertor", "garbage-disposal",
+                "router", "gateway", "repeater", "lock-*", "*-valve", "*disposal*",
+                "*alarm*", "*steriliz*", "*router*", "*wifi*", "*wlan*", "*gateway*",
+                "*repeater*",
+            ],
+            heatingService: [
+                "heater", "ptc", "floor-heat", "heating", "water-heater",
+                "electric-water-heater", "gas-water-heater",
+            ],
+            lowRiskServices: [
+                "indicator-light", "night-light", "buzzer", "speaker",
+                "physical-controls-locked",
+            ],
+            lowRiskTokens: ["led", "indicator", "buzzer", "mute", "display", "screen"]
+        )
+    }
+
     /// Device type → the services one appliance card merges. `primary` is the one carrying the
     /// main function (heat for a bath heater, exhaust for a hood); `companions` fill the other
     /// controls and readings. Types absent here keep the water-heater card shape.
@@ -85,6 +128,9 @@ public struct DeviceProfiles: Codable, Equatable, Sendable {
     public var noise: Noise
     public var alerts: Alerts
     public var facets: Facets
+    /// The manual-control confirmation table (#26). Optional so documents without it still
+    /// decode and fall back to `ManualControlRules.defaults`.
+    public var manualControlPolicy: ManualControlRules?
     /// Device family → its own highlight, readout and feeding rules (#7).
     public var overrides: [Override]
     /// Device type → services that may claim it when the type names none of its own services
