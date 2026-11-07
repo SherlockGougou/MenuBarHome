@@ -1171,6 +1171,9 @@ private struct PrivacySettingsTab: View {
         let info = Bundle.main.infoDictionary
         let models = Dictionary(grouping: store.devices, by: { $0.model })
             .map { DiagnosticsReportBuilder.ModelCount(model: $0.key, count: $0.value.count) }
+        let crashTimestamps = DiagnosticsReportBuilder.crashTimestamps(
+            from: AppDiagnosticsLog.crashReportStamps()
+        )
         let input = DiagnosticsReportBuilder.Input(
             appVersion: info?["CFBundleShortVersionString"] as? String ?? "dev",
             buildNumber: info?["CFBundleVersion"] as? String ?? "-",
@@ -1184,6 +1187,7 @@ private struct PrivacySettingsTab: View {
             unsupported: scanner.devices,
             recentErrorCount: errorLog.errorTimestamps.count,
             lastErrorAt: errorLog.errorTimestamps.last,
+            recentCrashTimestamps: crashTimestamps,
             extraSettings: [
                 L10n.tr("快捷键", "Shortcut") + ": " + HotkeyPreferences.load().displayString,
                 L10n.tr("本机语音", "On-device speech") + ": " + (store.prefersOnDeviceSpeech ? "on" : "off"),
