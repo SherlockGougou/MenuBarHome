@@ -64,6 +64,7 @@ export class CameraLiveController {
   public liveCameraMuted = true;
   public liveCameraQualityApplies = true;
   public liveCameraImgEl: HTMLImageElement | null = null;
+  private liveCameraRawMediaEl: HTMLImageElement | HTMLVideoElement | null = null;
   public liveCameraAbort: AbortController | null = null;
   public ownedStreamOrigin: string | null = null;
   public liveCameraToken = 0;
@@ -72,17 +73,9 @@ export class CameraLiveController {
   public openCameraLiveView(deviceId: string): void {
     const dev = this.host.devices.find((d) => d.id === deviceId);
     if (!dev || dev.kind.kind !== "camera") return;
-    // Hot resume: the modal was only hidden, so the bridge, relay and P2P
-    // session are still alive — just reveal it again. While the frame pump is
-    // still waiting for its first JPEG there is no <img> to reuse yet, but the
-    // transport is running; renegotiating would stop the session it is using.
-    const frameTransportActive =
-      this.liveCameraAbort !== null && !this.liveCameraAbort.signal.aborted;
-    if (
-      this.activeLiveCameraId === deviceId &&
-      this.liveCameraHidden &&
-      (this.liveCameraImgEl !== null || frameTransportActive)
-    ) {
+    // Opening is idempotent even before the first frame or while cloud negotiation is
+    // pending. Only the explicit reconnect action may replace this camera's session.
+    if (this.activeLiveCameraId === deviceId) {
       this.liveCameraHidden = false;
       this.clearCameraKeepAlive();
       invokeTauriVoid("set_pin_popover", { pin: true });
@@ -220,6 +213,16 @@ export class CameraLiveController {
     this.liveCameraAbort = null;
     this.liveCameraImgEl?.remove();
     this.liveCameraImgEl = null;
+    if (this.liveCameraRawMediaEl?.tagName === "VIDEO") {
+      const video = this.liveCameraRawMediaEl as HTMLVideoElement;
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    } else {
+      this.liveCameraRawMediaEl?.removeAttribute("src");
+    }
+    this.liveCameraRawMediaEl?.remove();
+    this.liveCameraRawMediaEl = null;
     this.liveCameraMode = null;
   }
 
@@ -228,9 +231,24 @@ export class CameraLiveController {
     const stage = this.host.root.querySelector<HTMLElement>(".cc-camera-stage");
     if (!stage) return;
     const el = this.liveCameraImgEl;
-    if (!el) return;
-    if (el.parentElement !== stage) {
-      stage.replaceChildren(el);
+    if (el) {
+      if (el.parentElement !== stage) stage.replaceChildren(el);
+      return;
+    }
+    const rawMedia = stage.querySelector<HTMLImageElement | HTMLVideoElement>("#cc-camera-live-img, #cc-camera-video");
+    if (!rawMedia) return;
+    if (this.liveCameraRawMediaEl) {
+      rawMedia.replaceWith(this.liveCameraRawMediaEl);
+      return;
+    }
+    this.liveCameraRawMediaEl = rawMedia;
+    if (rawMedia.tagName === "VIDEO") {
+      rawMedia.addEventListener("volumechange", () => {
+        if (this.liveCameraRawMediaEl !== rawMedia) return;
+        const video = rawMedia as HTMLVideoElement;
+        this.liveCameraMuted = video.muted || video.volume === 0;
+        this.syncCameraMuteControl();
+      });
     }
   }
 
@@ -516,7 +534,9 @@ export class CameraLiveController {
               const playable = this.normalizeWindowsCameraStreamUrl(urlMatch[0]);
               if (this.needsHlsTranscodeBridge(playable)) {
                 this.liveCameraQualityApplies = false;
-                if (await this.bridgeHlsStreamToMjpeg(dev.id, playable)) {
+                const bridged = await this.bridgeHlsStreamToMjpeg(dev.id, playable);
+                if (stale()) return;
+                if (bridged) {
                   return;
                 }
                 this.liveCameraQualityApplies = true;
@@ -533,11 +553,13 @@ export class CameraLiveController {
               }
             }
           } catch {
+            if (stale()) return;
             // Cloud HLS rejected (bad inputs / 403 / offline): fall back to P2P.
           }
         }
       }
 
+      if (stale()) return;
       // 2. Release any previous P2P session, then wake a fresh one (siid=9 p2p-stream service)
       const p2pSvc = spec.services.find((s) =>
         s.actions.some((a) => a.type.includes("start-p2p-stream"))
@@ -670,8 +692,8 @@ export class CameraLiveController {
       this.liveCameraError = failureReason ?? t("米家云直连摄像头采用私有 P2P 加密流；可在下方填写本地 go2rtc / HLS 流地址观看实时画面");
     } catch (err) {
       releaseIfStarted();
-      this.liveCameraQualityApplies = false;
       if (!stale()) {
+        this.liveCameraQualityApplies = false;
         this.liveCameraError = err instanceof Error ? err.message : String(err);
       }
     }
@@ -729,7 +751,8 @@ export class CameraLiveController {
       viewportHtml = `<div class="cc-camera-stage" id="cc-camera-stage"></div>`;
     } else if (mediaKind === "image") {
       const safeURL = this.host.escapeHtml(this.liveCameraStreamURL ?? "");
-      viewportHtml = `<div class="cc-camera-stage"><img id="cc-camera-live-img" src="${safeURL}" alt="${this.host.escapeHtml(dev.name)}" style="max-width:100%;border-radius:10px;" /></div>`;
+      const source = this.liveCameraRawMediaEl ? "" : ` src="${safeURL}"`;
+      viewportHtml = `<div class="cc-camera-stage"><img id="cc-camera-live-img"${source} alt="${this.host.escapeHtml(dev.name)}" style="max-width:100%;border-radius:10px;" /></div>`;
     } else if (mediaKind === "loading") {
       viewportHtml = `
         <div class="cc-camera-stage" style="padding:28px 16px;text-align:center;">
@@ -738,7 +761,8 @@ export class CameraLiveController {
       `;
     } else if (mediaKind === "video") {
       const safeURL = this.host.escapeHtml(this.liveCameraStreamURL ?? "");
-      viewportHtml = `<div class="cc-camera-stage"><video id="cc-camera-video" src="${safeURL}" controls autoplay${this.liveCameraMuted ? " muted" : ""} playsinline preload="auto" style="width:100%;border-radius:10px;background:#090d16;"></video></div>`;
+      const source = this.liveCameraRawMediaEl ? "" : ` src="${safeURL}"`;
+      viewportHtml = `<div class="cc-camera-stage"><video id="cc-camera-video"${source} controls autoplay${this.liveCameraMuted ? " muted" : ""} playsinline preload="auto" style="width:100%;border-radius:10px;background:#090d16;"></video></div>`;
     } else if (mediaKind === "demo") {
       viewportHtml = `
         <div class="cc-camera-stage is-demo" style="padding:18px;border-radius:12px;background:${isNight ? "linear-gradient(135deg,#072219,#03110c)" : "linear-gradient(135deg,#10233d,#091224)"};color:#fff;text-align:center;">
@@ -900,13 +924,6 @@ export class CameraLiveController {
         if (!muted && video.volume === 0) video.volume = 1;
       }
       this.liveCameraMuted = muted;
-      this.syncCameraMuteControl();
-    });
-
-    // Native video controls can mute or zero the volume on their own; keep the HUD in step.
-    this.host.root.querySelector("#cc-camera-video")?.addEventListener("volumechange", (event) => {
-      const video = event.currentTarget as HTMLVideoElement;
-      this.liveCameraMuted = video.muted || video.volume === 0;
       this.syncCameraMuteControl();
     });
 
