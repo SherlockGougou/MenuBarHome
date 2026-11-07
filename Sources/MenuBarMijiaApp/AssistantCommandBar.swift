@@ -81,11 +81,12 @@ public final class SpeechInputController {
 
     public init() {}
 
-    public func setPreviewState(isListening: Bool, isHoldToTalk: Bool, draft: String) {
+    public func setPreviewState(isListening: Bool, isHoldToTalk: Bool, draft: String, errorMessage: String? = nil) {
         self.isListening = isListening
         self.isHoldToTalk = isHoldToTalk
         self.isHoldGestureActive = isHoldToTalk
         self.draft = draft
+        self.errorMessage = errorMessage
     }
 
     public var hasVoicePermissions: Bool {

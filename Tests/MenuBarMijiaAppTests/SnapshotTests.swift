@@ -1169,12 +1169,16 @@ struct SnapshotTests {
         let savedListening = speech.isListening
         let savedHoldToTalk = speech.isHoldToTalk
         let savedDraft = speech.draft
+        // The shared controller also keeps the last start error; a suite running in parallel that
+        // presses the mic (outside a packaged app) would otherwise put its banner into the capture.
+        let savedError = speech.errorMessage
         speech.setPreviewState(isListening: false, isHoldToTalk: false, draft: "")
         defer {
             speech.setPreviewState(
                 isListening: savedListening,
                 isHoldToTalk: savedHoldToTalk,
-                draft: savedDraft
+                draft: savedDraft,
+                errorMessage: savedError
             )
         }
 
