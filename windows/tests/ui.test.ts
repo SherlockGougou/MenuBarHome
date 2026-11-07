@@ -4583,6 +4583,71 @@ describe("Appliance and generic cards (#9)", () => {
     ...overrides,
   });
 
+  it("expands a climate card onto its 更多设置 rows (#30)", async () => {
+    const swing = facet({
+      id: "3.1",
+      kind: "select",
+      name: "vertical-swing",
+      title: "上下摆风",
+      serviceName: "air-conditioner",
+      value: 0,
+      options: [
+        { value: 0, label: "关" },
+        { value: 1, label: "开" },
+      ],
+      writesByDefault: true,
+      isHighValue: true,
+      target: { kind: "property", entityId: "miot:did_ac:3", piid: 1 },
+    });
+    const freshAir = facet({
+      id: "4.1",
+      kind: "toggle",
+      name: "on",
+      title: "新风",
+      serviceName: "fresh-air",
+      value: false,
+      writesByDefault: true,
+      isHighValue: true,
+      target: { kind: "property", entityId: "miot:did_ac:4", piid: 1 },
+    });
+    // The synthesized card itself has no writable mode, fan or temperature: the facets are the
+    // only reason this card can expand at all (#30).
+    const ac: SmartDevice = {
+      id: "did_ac",
+      name: "客厅新风空调",
+      roomId: "room_living",
+      roomName: "客厅",
+      model: "viomi.aircondition.v25",
+      isOnline: true,
+      kind: {
+        kind: "climate",
+        entityId: "miot:did_ac:2",
+        isOn: false,
+        hvacMode: "off",
+        availableModes: [],
+        targetTemperature: 26,
+        currentTemperature: null,
+        minTemp: 16,
+        maxTemp: 30,
+        step: 1,
+        fanMode: null,
+        availableFanModes: [],
+        powerWritable: true,
+        temperatureWritable: false,
+      },
+    };
+    mount([ac], { [ac.id]: [swing, freshAir] });
+
+    const card = () => document.querySelector('[data-tile-id="did_ac"]')?.outerHTML ?? "";
+    assert.equal(card().includes("更多设置"), false, "a collapsed card hides the rows");
+    await click('[data-expand-device="did_ac"]');
+    assert.match(card(), /更多设置/);
+    assert.match(card(), /上下摆风/);
+    assert.match(card(), /新风/);
+    assert.ok(element('[data-facet-select="did_ac|3.1|1"]'));
+    assert.ok(element('[data-facet-toggle="did_ac|4.1"]'));
+  });
+
   it("writes a 更多设置 option when its pill is tapped", async () => {
     const mode = facet({
       id: "2.2",

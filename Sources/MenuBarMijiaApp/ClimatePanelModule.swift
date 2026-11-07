@@ -35,11 +35,23 @@ struct ClimatePanelModule: View {
 
     private var isExpanded: Bool { forceExpanded || (!isEditingLayout && store.expandedDeviceId == device.id) }
 
+    /// Auxiliary MIoT controls (#30): the shared drawer's rows are this card's only surface for
+    /// fresh-air, louver, sleep and similar services, so the expanded state must show them.
+    private var facets: [FacetControl] { store.deviceFacets[device.id] ?? [] }
+
+    /// Anything worth drawing beneath the strip.
+    private var hasAuxiliaryControls: Bool {
+        spec.temperatureWritable || !modes.isEmpty || !spec.availableFanModes.isEmpty
+            || !spec.availableSwingModes.isEmpty || !facets.isEmpty
+    }
+
+    private var canExpand: Bool { spec.powerWritable || hasAuxiliaryControls }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             strip
             gauge
-            if isExpanded, (spec.temperatureWritable || !modes.isEmpty || !spec.availableFanModes.isEmpty || !spec.availableSwingModes.isEmpty) {
+            if isExpanded, hasAuxiliaryControls {
                 VStack(alignment: .leading, spacing: 8) {
                     if !modes.isEmpty { modeChips }
                     if !spec.availableFanModes.isEmpty {
@@ -51,6 +63,14 @@ struct ClimatePanelModule: View {
                         optionRow(icon: "arrow.up.and.down", options: spec.availableSwingModes, current: spec.swingMode) {
                             store.setClimateSwingMode(device.id, swingMode: $0)
                         }
+                    }
+                    if !facets.isEmpty {
+                        DeviceFacetSection(
+                            device: device,
+                            store: store,
+                            accent: accent,
+                            statusColor: muted
+                        )
                     }
                 }
                 .transition(AppleMotion.drawerTransition)
@@ -95,10 +115,7 @@ struct ClimatePanelModule: View {
             }
 
             Button {
-                guard !isEditingLayout, (
-                    spec.powerWritable || spec.temperatureWritable || !modes.isEmpty
-                        || !spec.availableFanModes.isEmpty || !spec.availableSwingModes.isEmpty
-                ) else { return }
+                guard !isEditingLayout, canExpand else { return }
                 withAnimation(AppleMotion.snappySpring) { store.toggleExpanded(device.id) }
             } label: {
                 VStack(alignment: .leading, spacing: 2) {
@@ -118,9 +135,8 @@ struct ClimatePanelModule: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .panelHelp(spec.powerWritable || spec.temperatureWritable || !modes.isEmpty
-                || !spec.availableFanModes.isEmpty || !spec.availableSwingModes.isEmpty
-                ? L10n.tr("展开模式与风速", "Show modes and fan speed")
+            .panelHelp(canExpand
+                ? L10n.tr("展开模式、风速与更多设置", "Show modes, fan speed and more settings")
                 : L10n.tr("只读状态", "Read only"))
 
             if spec.temperatureWritable {

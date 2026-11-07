@@ -54,6 +54,7 @@ import {
   type MiotDeviceSpec,
 } from "../src/core/miCloudClient.js";
 import type { FacetControl } from "../src/core/models.js";
+import { isFallbackSpec } from "../src/core/miCloud/spec.js";
 import {
   checkForUpdate,
   compareVersions,
@@ -889,6 +890,136 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
     assert.equal(home.devices[0]?.kind.targetTemperature, 24.5);
     assert.equal(home.devices[1]?.kind.kind, "plug");
     assert.equal(home.devices[1]?.kind.isOn, true);
+  });
+
+  it("retries a released spec after the first fetch fell back to the read-only table (#30)", async () => {
+    const urn = "urn:miot-spec-v2:device:air-conditioner:0000A004:viomi-v25:1";
+    const released = {
+      type: urn,
+      services: [
+        {
+          iid: 2,
+          type: "urn:miot-spec-v2:service:air-conditioner:0000780F:viomi-v25:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:viomi-v25:1", format: "bool", access: ["read", "write"] },
+            { iid: 2, type: "urn:miot-spec-v2:property:mode:00000008:viomi-v25:1", format: "uint8", access: ["read", "write"] },
+          ],
+          actions: [],
+        },
+      ],
+    };
+    let networkUp = false;
+    let fetches = 0;
+    const resolver = new MiotSpecResolver(async () => {
+      fetches += 1;
+      if (!networkUp) throw new Error("network down");
+      return { status: 200, headers: {}, body: JSON.stringify(released) };
+    });
+    const device = { did: "ac1", name: "客厅新风空调", model: "viomi.aircondition.v25", isOnline: true, specType: urn };
+
+    const guess = await resolver.resolve(device);
+    assert.ok(isFallbackSpec(guess), "a failed fetch keeps the guessed table");
+    assert.equal(guess.services[0]?.properties[0]?.access.includes("write"), false);
+
+    const stale = await resolver.resolve(device);
+    assert.equal(stale, guess, "an offline retry returns the same fallback instead of refetching nothing");
+    assert.equal(fetches, 2, "the second resolve tries the network again");
+
+    networkUp = true;
+    const real = await resolver.resolve(device);
+    assert.equal(real.type, urn);
+    assert.equal(real.services[0]?.properties[0]?.access.includes("write"), true);
+
+    const cached = await resolver.resolve(device);
+    assert.equal(cached, real, "a released spec is cached and never refetched");
+    assert.equal(fetches, 3);
+  });
+
+  it("retries a fallback spec restored from the cloud cache (#30)", async () => {
+    const urn = "urn:miot-spec-v2:device:air-conditioner:0000A004:restored:1";
+    const cachedFallback = inferFallbackSpec({ model: "viomi.aircondition.v25", name: "客厅新风空调" });
+    const resolver = new MiotSpecResolver(
+      async () => ({
+        status: 200,
+        headers: {},
+        body: JSON.stringify({
+          type: urn,
+          services: [
+            {
+              iid: 2,
+              type: "urn:miot-spec-v2:service:air-conditioner:0000780F:restored:1",
+              properties: [{ iid: 1, type: "urn:miot-spec-v2:property:on:00000006:restored:1", format: "bool", access: ["read", "write"] }],
+              actions: [],
+            },
+          ],
+        }),
+      }),
+      { "viomi.aircondition.v25": cachedFallback },
+    );
+
+    const spec = await resolver.resolve({
+      did: "ac1",
+      name: "客厅新风空调",
+      model: "viomi.aircondition.v25",
+      isOnline: true,
+      specType: urn,
+    });
+    assert.equal(spec.type, urn, "a persisted guess does not suppress the first real fetch");
+  });
+
+  it("retries the model index after a failed request, so a specType-less device still gets its spec (#30)", async () => {
+    const urn = "urn:miot-spec-v2:device:air-conditioner:0000A004:viomi-v25:1";
+    const released = {
+      type: urn,
+      services: [
+        {
+          iid: 2,
+          type: "urn:miot-spec-v2:service:air-conditioner:0000780F:viomi-v25:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:viomi-v25:1", format: "bool", access: ["read", "write"] },
+          ],
+          actions: [],
+        },
+      ],
+    };
+    let networkUp = false;
+    let indexFetches = 0;
+    const resolver = new MiotSpecResolver(async (req) => {
+      if (req.url.includes("/instances?status=released")) {
+        indexFetches += 1;
+        if (!networkUp) throw new Error("network down");
+        return {
+          status: 200,
+          headers: {},
+          body: JSON.stringify({ instances: [{ model: "viomi.aircondition.v25", version: 1, type: urn }] }),
+        };
+      }
+      if (req.url.includes("/instance?type=")) {
+        return { status: 200, headers: {}, body: JSON.stringify(released) };
+      }
+      return { status: 404, headers: {}, body: "" };
+    });
+
+    const guess = await resolver.resolve({
+      did: "ac1",
+      name: "客厅新风空调",
+      model: "viomi.aircondition.v25",
+      isOnline: true,
+      specType: null,
+    });
+    assert.ok(isFallbackSpec(guess), "a failed index lookup still shows the read-only fallback");
+
+    networkUp = true;
+    const real = await resolver.resolve({
+      did: "ac1",
+      name: "客厅新风空调",
+      model: "viomi.aircondition.v25",
+      isOnline: true,
+      specType: null,
+    });
+    assert.equal(real.type, urn);
+    assert.equal(real.services[0]?.properties[0]?.access.includes("write"), true);
+    assert.equal(indexFetches, 2, "the second resolve retries the index instead of reusing the failure");
   });
 
   it("maps MIoT plug power-consumption with explicit scale in unit or comment into energyKwh", () => {
