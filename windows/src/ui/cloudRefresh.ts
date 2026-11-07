@@ -1,3 +1,4 @@
+import { markTimerSnapshotReady } from "./scheduledCommands.js";
 import type { MenuMijiaWindowsApp } from "./app.js";
 import { t } from "../core/i18n.js";
 import { MiCloudClient, MiCloudError, MiotSynthesizer, maskedMiUserId, type MiDeviceRecord, type MiRoom, type MiSession, type MiotPropKey } from "../core/miCloudClient.js";
@@ -142,6 +143,7 @@ export async function refreshDevices(host: MenuMijiaWindowsApp, silent = false):
       presentationChanged =
         presentationChanged || cloudPresentationFingerprint(host) !== previousPresentation;
 
+      markTimerSnapshotReady(host);
       host.settings.cachedXiaomiDevices = host.devices;
       const knownModelTypes = host.specResolver.exportKnownModelTypes(
         rawDevices.map((d) => d.model),
@@ -214,6 +216,7 @@ export async function refreshHADevices(host: MenuMijiaWindowsApp, silent = false
       host.devices = applyOrder(host.devices.map((device) => device.id), home.devices);
       host.deviceFacets = home.deviceFacets ?? {};
       host.scenes = home.scenes;
+      markTimerSnapshotReady(host);
       const readingPriorityById = new Map(
         home.devices.map((device) => [device.id, environmentReadingPriority(device.kind)]),
       );

@@ -1,3 +1,4 @@
+import { cancelScheduledCommands, enqueueScheduledCommand } from "./scheduledCommands.js";
 import type { MenuMijiaWindowsApp } from "./app.js";
 import { t } from "../core/i18n.js";
 import {
@@ -35,7 +36,7 @@ function localParseOptions(host: MenuMijiaWindowsApp): LocalIntentParseOptions {
 }
 
 export async function handleNaturalCommand(host: MenuMijiaWindowsApp, rawInput: string, fromScheduled = false): Promise<void> {
-    const trimmed = rawInput.trim();
+    let trimmed = rawInput.trim();
     if (!trimmed) return;
     const sourceRevision = host.sourceRevision;
     // A new command replaces any question still waiting for cloud consent, and old suggestions.
@@ -48,9 +49,8 @@ export async function handleNaturalCommand(host: MenuMijiaWindowsApp, rawInput: 
     }
 
     if (DelayPhrase.isCancel(trimmed)) {
-      const count = host.scheduledCommands.length + host.missedScheduledCommands.length;
-      host.scheduledCommands = [];
-      host.missedScheduledCommands = [];
+      const count = cancelScheduledCommands(host);
+      if (count < 0) return;
       host.replyBanner = {
         text: count > 0 ? t("已取消 {count} 项定时指令", { count: count }) : t("当前没有待执行的定时指令"),
         source: t("0ms 本地直达"),
@@ -59,31 +59,15 @@ export async function handleNaturalCommand(host: MenuMijiaWindowsApp, rawInput: 
       return;
     }
 
+    const delaySpec = !fromScheduled ? DelayPhrase.extract(trimmed) : null;
     if (!fromScheduled) {
-      const delaySpec = DelayPhrase.extract(trimmed);
       if (delaySpec) {
-        const queue = (intents: readonly DeviceIntent[] | undefined): void => {
-          const scheduled: ScheduledCommand = {
-            id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            command: delaySpec.remainder,
-            delaySeconds: delaySpec.seconds,
-            fireTimestampMs: Date.now() + delaySpec.seconds * 1000,
-            reply: t("{delay}后：{command}", { delay: DelayPhrase.formatDelay(delaySpec.seconds), command: delaySpec.remainder }),
-            intents,
-          };
-          host.scheduledCommands.push(scheduled);
-          host.replyBanner = {
-            text: t("已设定 {delay}后执行「{command}」", { delay: DelayPhrase.formatDelay(delaySpec.seconds), command: delaySpec.remainder }),
-            source: t("定时任务"),
-          };
-          host.render();
-        };
         // A learned phrase wins over the generic parser, exactly as it does without a delay.
         const learned = host.settings.learnedShortcuts.find(
           (shortcut) => shortcut.phrase.replace(/\s+/g, "") === delaySpec.remainder.replace(/\s+/g, ""),
         );
         if (learned) {
-          queue(learned.intents);
+          queueScheduledCommand(host, delaySpec, learned.intents);
           return;
         }
         const aliasedDevices = withAliases(host.layout, host.devices);
@@ -116,8 +100,11 @@ export async function handleNaturalCommand(host: MenuMijiaWindowsApp, rawInput: 
           host.render();
           return;
         }
-        queue(resolved?.intents);
-        return;
+        if (resolved) {
+          queueScheduledCommand(host, delaySpec, resolved.intents);
+          return;
+        }
+        trimmed = delaySpec.remainder;
       }
     }
 
@@ -161,7 +148,7 @@ export async function handleNaturalCommand(host: MenuMijiaWindowsApp, rawInput: 
         }
         const endpoint = assistantEndpointIdentity(baseURL);
         if (!isLoopback && endpoint && !host.settings.cloudConsentEndpoints.includes(endpoint)) {
-          host.pendingCloudConsent = { utterance: trimmed, endpoint };
+          host.pendingCloudConsent = { utterance: rawInput.trim(), endpoint };
           host.replyBanner = {
             text: t("这句话本机没听懂，要交给云端 AI（{endpoint}）处理吗？会发送：这句话、设备名称/房间/状态。只问这一次，可在设置里撤销。", { endpoint: endpoint }),
             source: t("需要确认"),
@@ -206,6 +193,19 @@ export async function handleNaturalCommand(host: MenuMijiaWindowsApp, rawInput: 
       const hazardous = sanitized.filter((intent) =>
         ManualControlPolicy.requiresConfirmation(intent, aliasedDevices),
       );
+      if (delaySpec) {
+        host.pendingSuggestions = [];
+        if (hazardous.length > 0) {
+          host.replyBanner = { text: t("高风险设备需要先确认，未设定定时"), source: t("需要确认") };
+        } else if (sanitized.length === 0 || plan.suggestions.length > 0) {
+          host.replyBanner = { text: t("定时指令需要明确的设备和操作，未设定定时"), source: t("需要确认") };
+        } else {
+          queueScheduledCommand(host, delaySpec, sanitized);
+          return;
+        }
+        host.render();
+        return;
+      }
       if (hazardous.length > 0) {
         host.pendingSuggestions = ModelActionPolicy.chips(sanitized, null, "confirm:local", aliasedDevices, host.scenes, true);
         host.replyBanner = {
@@ -259,6 +259,39 @@ export async function handleNaturalCommand(host: MenuMijiaWindowsApp, rawInput: 
     }
   }
 
+function queueScheduledCommand(
+  host: MenuMijiaWindowsApp,
+  delaySpec: NonNullable<ReturnType<typeof DelayPhrase.extract>>,
+  intents: readonly DeviceIntent[],
+): void {
+  const devices = withAliases(host.layout, host.devices);
+  const sanitized = IntentValidator.sanitize(intents, devices, host.scenes);
+  if (sanitized.length === 0) {
+    host.replyBanner = { text: t("无法找到指令对应的设备"), source: t("定时任务"), isError: true };
+    host.render();
+    return;
+  }
+  if (sanitized.some((intent) => ManualControlPolicy.requiresConfirmation(intent, devices))) {
+    host.replyBanner = { text: t("高风险设备需要先确认，未设定定时"), source: t("需要确认") };
+    host.render();
+    return;
+  }
+  const scheduled: ScheduledCommand = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    command: delaySpec.remainder,
+    delaySeconds: delaySpec.seconds,
+    fireTimestampMs: Date.now() + delaySpec.seconds * 1000,
+    reply: t("{delay}后：{command}", { delay: DelayPhrase.formatDelay(delaySpec.seconds), command: delaySpec.remainder }),
+    intents: sanitized,
+  };
+  if (!enqueueScheduledCommand(host, scheduled)) return;
+  host.replyBanner = {
+    text: t("已设定 {delay}后执行「{command}」", { delay: DelayPhrase.formatDelay(delaySpec.seconds), command: delaySpec.remainder }),
+    source: t("定时任务"),
+  };
+  host.render();
+}
+
 export async function runScheduledCommand(host: MenuMijiaWindowsApp, item: ScheduledCommand): Promise<void> {
   if (item.intents && item.intents.length > 0) {
     const aliasedDevices = withAliases(host.layout, host.devices);
@@ -271,7 +304,9 @@ export async function runScheduledCommand(host: MenuMijiaWindowsApp, item: Sched
     );
     return;
   }
-  await handleNaturalCommand(host, item.command, true);
+  // An unresolved legacy timer must never be reinterpreted against a different home or AI response.
+  host.replyBanner = { text: t("无法找到指令对应的设备"), source: t("定时任务"), isError: true };
+  host.render();
 }
 
 export function learnShortcut(

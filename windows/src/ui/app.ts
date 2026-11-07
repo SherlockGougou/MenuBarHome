@@ -156,6 +156,9 @@ import { bindSettingsEvents } from "./settingsEvents.js";
 import { hasMatchingDomShape, inputKeepsDraft, morphMatchingDom, parseSingleElement, waitForCameraFrameGap } from "./dom.js";
 export { waitForCameraFrameGap } from "./dom.js";
 
+import { ScheduledCommandStore } from "../core/scheduledCommands.js";
+import { scheduledCommandIdentity } from "./scheduledCommands.js";
+
 export class MenuMijiaWindowsApp {
   public readonly loadedSettings: LoadedSettings = loadSettings();
   public settings: PersistedSettings = this.loadedSettings.settings;
@@ -266,9 +269,21 @@ export class MenuMijiaWindowsApp {
   public endpointSubmission: Promise<unknown> = Promise.resolve();
   public pointerIsDown = false;
   public isListeningVoice = false;
-  public scheduledCommands: ScheduledCommand[] = [];
-  /** Timers that came due while the PC slept; they only run when the user taps 立即执行 (#22). */
-  public missedScheduledCommands: ScheduledCommand[] = [];
+  public readonly scheduledCommandStore = new ScheduledCommandStore(localStorage);
+  public timerCredentialsReady = false;
+  public timerSnapshot: { identity: string; sourceRevision: number } | null = null;
+  public get scheduledCommands(): ScheduledCommand[] {
+    return this.scheduledCommandStore.queue(scheduledCommandIdentity(this.settings)).scheduledCommands;
+  }
+  public set scheduledCommands(items: ScheduledCommand[]) {
+    this.scheduledCommandStore.queue(scheduledCommandIdentity(this.settings)).scheduledCommands = items;
+  }
+  public get missedScheduledCommands(): ScheduledCommand[] {
+    return this.scheduledCommandStore.queue(scheduledCommandIdentity(this.settings)).missedScheduledCommands;
+  }
+  public set missedScheduledCommands(items: ScheduledCommand[]) {
+    this.scheduledCommandStore.queue(scheduledCommandIdentity(this.settings)).missedScheduledCommands = items;
+  }
   public lastUndoAction: UndoAction | null = null;
   public qrTicket: QRLoginTicket | null = null;
   public qrStatusText = t("点击下方按钮获取安全二维码，用手机「米家 App → 扫一扫」即可同步真实全屋设备。");

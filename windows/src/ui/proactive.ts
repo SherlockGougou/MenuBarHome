@@ -233,6 +233,7 @@ export function maybeRefreshProactiveInBackground(host: MenuMijiaWindowsApp): vo
 
 export function invalidateSourceControl(host: MenuMijiaWindowsApp): void {
     host.sourceRevision += 1;
+    host.timerSnapshot = null;
     host.syncGeneration += 1;
     host.isSyncingCloud = false;
     host.isResolvingIntent = false;
