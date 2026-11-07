@@ -155,4 +155,88 @@ struct WeeklyHealthReportTests {
         #expect(report.notificationSummary(language: .chinese) == "本周一切正常")
         #expect(report.markdown(language: .chinese).contains("本周一切正常"))
     }
+
+    @Test("Flags a vacuum whose battery is about to run out")
+    func vacuumBattery() {
+        let devices = [
+            device("v", "扫地机", kind: .vacuum(VacuumSpec(entityId: "vacuum.v", status: "docked", battery: 12))),
+            device("v0", "亏电扫地机", kind: .vacuum(VacuumSpec(entityId: "vacuum.v0", status: "docked", battery: 0))),
+            device("v2", "备用扫地机", kind: .vacuum(VacuumSpec(entityId: "vacuum.v2", status: "cleaning", battery: 75))),
+            device("v3", "离线扫地机", online: false, kind: .vacuum(VacuumSpec(entityId: "vacuum.v3", status: "docked", battery: 8))),
+        ]
+        let report = WeeklyHealthReport.build(devices: devices, dailyEnergy: [], energyByDevice: [], climate: [:], now: now)
+        #expect(report.maintenance.map(\.deviceName) == ["亏电扫地机", "扫地机"])
+        #expect(report.maintenance.map(\.item) == [.battery(0), .battery(12)])
+    }
+
+    @Test("Flags plugs that draw power while switched off, highest draw first, in both languages")
+    func standbyConsumers() {
+        let devices = [
+            device("p1", "电视插座", room: "客厅", kind: .plug(PlugSpec(switchEntityId: "switch.p1", isOn: false, powerWatts: 3.5))),
+            device("p2", "路由器插座", room: "书房", kind: .plug(PlugSpec(switchEntityId: "switch.p2", isOn: false, powerWatts: 6))),
+            device("p3", "台灯插座", room: "书房", kind: .plug(PlugSpec(switchEntityId: "switch.p3", isOn: false, powerWatts: 0.4))),
+            device("p4", "电脑插座", kind: .plug(PlugSpec(switchEntityId: "switch.p4", isOn: true, powerWatts: 60))),
+            device("p5", "离线插座", online: false, kind: .plug(PlugSpec(switchEntityId: "switch.p5", isOn: false, powerWatts: 2))),
+            device("p6", "车库插座", room: "", kind: .plug(PlugSpec(switchEntityId: "switch.p6", isOn: false, powerWatts: 2.5))),
+        ]
+        let report = WeeklyHealthReport.build(devices: devices, dailyEnergy: [], energyByDevice: [], climate: [:], now: now)
+        #expect(report.standbyConsumers.map(\.deviceName) == ["路由器插座", "电视插座", "车库插座"])
+        #expect(report.standbyConsumers.map(\.powerWatts) == [6, 3.5, 2.5])
+
+        let markdown = report.markdown(language: .chinese)
+        #expect(markdown.contains("## 用电"))
+        #expect(markdown.contains("- 待机耗电提醒：书房 · 路由器插座 (关闭状态仍消耗 6.0 W)"))
+        #expect(markdown.contains("- 待机耗电提醒：客厅 · 电视插座 (关闭状态仍消耗 3.5 W)"))
+        // A plug without a room keeps its name only, with no dangling separator.
+        #expect(markdown.contains("- 待机耗电提醒：车库插座 (关闭状态仍消耗 2.5 W)"))
+        #expect(!markdown.contains(" · 车库插座"))
+        #expect(!markdown.contains("本周一切正常"))
+
+        let english = report.markdown(language: .english)
+        #expect(english.contains("- Standby power alert: 客厅 · 电视插座 (drawing 3.5 W while off)"))
+        #expect(english.contains("- Standby power alert: 车库插座 (drawing 2.5 W while off)"))
+
+        // A standby alert must show up in the notification instead of being read as an all-clear.
+        #expect(report.notificationSummary(language: .chinese) == "1 台离线 · 待机耗电 3 台")
+        #expect(report.notificationSummary(language: .english) == "1 offline · 3 on standby")
+
+        let standbyOnly = WeeklyHealthReport.build(
+            devices: [device("p7", "微波炉插座", room: "厨房", kind: .plug(PlugSpec(switchEntityId: "switch.p7", isOn: false, powerWatts: 2)))],
+            dailyEnergy: [],
+            energyByDevice: [],
+            climate: [:],
+            now: now
+        )
+        #expect(standbyOnly.notificationSummary(language: .chinese) == "待机耗电 1 台")
+        #expect(standbyOnly.notificationSummary(language: .english) == "1 on standby")
+    }
+
+    @Test("Suggests checking Wi-Fi or the gateway for rooms with several unreliable devices")
+    func unreliableRooms() {
+        let devices = [
+            device("a1", "台灯", room: "客厅", kind: .sensor(SensorSpec())),
+            device("a2", "门磁", room: "客厅", kind: .sensor(SensorSpec())),
+            device("b1", "空调", room: "卧室", kind: .sensor(SensorSpec())),
+            device("c1", "摄像头", room: "书房", online: false, kind: .sensor(SensorSpec())),
+            device("c2", "路由器", room: "书房", online: false, kind: .sensor(SensorSpec())),
+            device("d1", "人体传感器", room: "卫生间", online: false, kind: .sensor(SensorSpec())),
+        ]
+        let report = WeeklyHealthReport.build(
+            devices: devices,
+            dailyEnergy: [],
+            energyByDevice: [],
+            climate: [:],
+            offlineDays: ["a1": 3, "a2": 4, "b1": 2],
+            now: now
+        )
+        // 客厅: two devices dropped out on 3+ days. 书房: two offline now. 卧室 and 卫生间: one each.
+        #expect(report.unreliableRooms == ["书房", "客厅"])
+
+        let markdown = report.markdown(language: .chinese)
+        #expect(markdown.contains("## 离线设备"))
+        #expect(markdown.contains("- 建议排查网络/网关信号的房间：书房、客厅"))
+
+        let english = report.markdown(language: .english)
+        #expect(english.contains("- Rooms recommended for Wi-Fi/gateway check: 书房, 客厅"))
+    }
 }

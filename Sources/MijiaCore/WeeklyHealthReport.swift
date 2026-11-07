@@ -75,10 +75,29 @@ public struct WeeklyHealthReport: Equatable, Sendable {
         }
     }
 
+    /// A plug still drawing noticeable power while switched off.
+    public struct StandbyConsumer: Equatable, Sendable {
+        public let deviceId: String
+        public let deviceName: String
+        public let roomName: String
+        public let powerWatts: Double
+
+        public init(deviceId: String, deviceName: String, roomName: String, powerWatts: Double) {
+            self.deviceId = deviceId
+            self.deviceName = deviceName
+            self.roomName = roomName
+            self.powerWatts = powerWatts
+        }
+    }
+
     public let energy: Energy?
     public let climate: [RoomClimate]
     public let maintenance: [Maintenance]
     public let offlineDevices: [OfflineDevice]
+    /// Plugs that keep drawing power while off, highest draw first.
+    public let standbyConsumers: [StandbyConsumer]
+    /// Rooms where several devices are offline or kept dropping out, so one bad link explains them all.
+    public let unreliableRooms: [String]
 
     /// Comfort band; a weekly extreme outside it becomes a warning.
     static let humidityBand = 30.0...70.0
@@ -89,6 +108,11 @@ public struct WeeklyHealthReport: Equatable, Sendable {
     static let topConsumerCount = 3
     /// A device back online still counts as unreliable after dropping out on this many days.
     static let frequentOfflineDays = 2
+    /// A plug drawing at least this many watts while switched off is a standby consumer.
+    static let standbyWattsThreshold = 1.0
+    /// This many devices offline or dropped out on this many days points at the room's Wi-Fi/gateway.
+    static let unreliableRoomDeviceCount = 2
+    static let unreliableRoomOfflineDays = 3
 
     /// - Parameters:
     ///   - dailyEnergy: 14 daily totals ending today, oldest first (`EnergyHistory.dailyTotals(dayCount: 14)`).
@@ -116,8 +140,30 @@ public struct WeeklyHealthReport: Equatable, Sendable {
                 let days = offlineDays[dev.id]
                 guard !dev.isOnline || (days ?? 0) >= frequentOfflineDays else { return nil }
                 return OfflineDevice(deviceName: dev.name, roomName: dev.roomName, daysOffline: days, isOfflineNow: !dev.isOnline)
-            }
+            },
+            standbyConsumers: devices.compactMap { dev in
+                guard dev.isOnline, case .plug(let plug) = dev.kind, !plug.isOn,
+                      let watts = plug.powerWatts, watts >= standbyWattsThreshold else { return nil }
+                return StandbyConsumer(deviceId: dev.id, deviceName: dev.name, roomName: dev.roomName, powerWatts: watts)
+            }.sorted {
+                $0.powerWatts != $1.powerWatts
+                    ? $0.powerWatts > $1.powerWatts
+                    : ($0.roomName, $0.deviceName) < ($1.roomName, $1.deviceName)
+            },
+            unreliableRooms: unreliableRooms(devices: devices, offlineDays: offlineDays)
         )
+    }
+
+    /// A room whose devices share one link: two or more of them offline or repeatedly dropping out
+    /// points at that room's Wi-Fi or gateway rather than at the devices themselves.
+    private static func unreliableRooms(devices: [SmartDevice], offlineDays: [String: Int]) -> [String] {
+        var counts: [String: Int] = [:]
+        for dev in devices {
+            guard !dev.roomName.isEmpty,
+                  !dev.isOnline || (offlineDays[dev.id] ?? 0) >= unreliableRoomOfflineDays else { continue }
+            counts[dev.roomName, default: 0] += 1
+        }
+        return counts.filter { $0.value >= unreliableRoomDeviceCount }.keys.sorted()
     }
 
     private static func energySection(dailyEnergy: [EnergyDayTotal], energyByDevice: [EnergyDeviceTotal]) -> Energy? {
@@ -151,6 +197,7 @@ public struct WeeklyHealthReport: Equatable, Sendable {
         case .fan(let s): s.filterLifePercent.flatMap { $0 <= filterThreshold ? .filter($0) : nil }
         case .sensor(let s): s.battery.flatMap { $0 > 0 && $0 <= batteryThreshold ? .battery($0) : nil }
         case .cover(let s): s.batteryPercent.flatMap { $0 > 0 && $0 <= batteryThreshold ? .battery($0) : nil }
+        case .vacuum(let s): s.battery.flatMap { (0...batteryThreshold).contains($0) ? .battery($0) : nil }
         default: nil
         }
         return item.map { [Maintenance(deviceName: dev.name, roomName: dev.roomName, item: $0)] } ?? []
@@ -173,6 +220,7 @@ extension WeeklyHealthReport {
         if warnings > 0 { parts.append(zh ? "\(warnings) 处温湿度异常" : "\(warnings) climate alerts") }
         if !maintenance.isEmpty { parts.append(zh ? "\(maintenance.count) 台待更换" : "\(maintenance.count) need replacing") }
         if !offlineDevices.isEmpty { parts.append(zh ? "\(offlineDevices.count) 台离线" : "\(offlineDevices.count) offline") }
+        if !standbyConsumers.isEmpty { parts.append(zh ? "待机耗电 \(standbyConsumers.count) 台" : "\(standbyConsumers.count) on standby") }
         if parts.isEmpty {
             return zh ? "本周一切正常" : "All clear this week"
         }
@@ -197,6 +245,15 @@ extension WeeklyHealthReport {
                 lines.append(zh ? "耗电最多：" : "Top consumers:")
                 lines += energy.topConsumers.map { "- \($0.name)\(colon)\(Self.kwh($0.kwh))" }
             }
+            if !standbyConsumers.isEmpty {
+                lines.append("")
+                lines += standbyLines(zh: zh)
+            }
+            lines.append("")
+        } else if !standbyConsumers.isEmpty {
+            // No metered week to total, but a plug drawing power while off still needs saying.
+            lines.append(zh ? "## 用电" : "## Energy")
+            lines += standbyLines(zh: zh)
             lines.append("")
         }
 
@@ -241,14 +298,32 @@ extension WeeklyHealthReport {
                 }
                 return "- \(device.roomName) · \(device.deviceName)\(note)"
             }
+            if !unreliableRooms.isEmpty {
+                let rooms = unreliableRooms.joined(separator: zh ? "、" : ", ")
+                lines.append(zh ? "- 建议排查网络/网关信号的房间：\(rooms)" : "- Rooms recommended for Wi-Fi/gateway check: \(rooms)")
+            }
             lines.append("")
         }
 
-        if energy == nil && climate.isEmpty && maintenance.isEmpty && offlineDevices.isEmpty {
+        if energy == nil && climate.isEmpty && maintenance.isEmpty && offlineDevices.isEmpty
+            && standbyConsumers.isEmpty && unreliableRooms.isEmpty {
             lines.append(zh ? "本周一切正常" : "All clear this week")
             lines.append("")
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// One line per plug that keeps drawing power while off.
+    private func standbyLines(zh: Bool) -> [String] {
+        standbyConsumers.map { consumer in
+            let location = consumer.roomName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? consumer.deviceName
+                : "\(consumer.roomName) · \(consumer.deviceName)"
+            let watts = String(format: "%.1f", consumer.powerWatts)
+            return zh
+                ? "- 待机耗电提醒：\(location) (关闭状态仍消耗 \(watts) W)"
+                : "- Standby power alert: \(location) (drawing \(watts) W while off)"
+        }
     }
 
     private static func describe(_ warning: ClimateWarning, zh: Bool) -> String {
