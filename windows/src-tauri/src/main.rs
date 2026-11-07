@@ -1147,21 +1147,39 @@ mod tests {
     }
 
     #[test]
-    fn bundled_component_copy_fills_a_missing_file_and_keeps_an_existing_one() {
+    fn bundled_component_copy_repairs_a_damaged_copy_and_stays_idempotent() {
         let root = std::env::temp_dir().join(format!("mbm-camera-bin-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let bin = root.join("bin");
         std::fs::create_dir_all(&root).expect("temp dir");
         let src = root.join("go2rtc.exe");
-        std::fs::write(&src, b"bundled").expect("write source");
+        std::fs::write(&src, b"bundled-component").expect("write source");
         let dest = bin.join("go2rtc.exe");
 
         copy_bundled_component(&src, &dest).expect("copy missing component");
-        assert_eq!(std::fs::read(&dest).expect("read copied file"), b"bundled");
+        assert_eq!(std::fs::read(&dest).expect("read copied file"), b"bundled-component");
 
-        std::fs::write(&dest, b"updated").expect("write destination");
-        copy_bundled_component(&src, &dest).expect("keep existing component");
-        assert_eq!(std::fs::read(&dest).expect("read existing file"), b"updated");
+        std::fs::write(&dest, b"").expect("truncate destination");
+        copy_bundled_component(&src, &dest).expect("repair empty component");
+        assert_eq!(std::fs::read(&dest).expect("read repaired file"), b"bundled-component");
+
+        std::fs::write(&dest, b"interrupted").expect("write stale destination");
+        copy_bundled_component(&src, &dest).expect("repair stale component");
+        assert_eq!(std::fs::read(&dest).expect("read repaired file"), b"bundled-component");
+
+        let installed = std::fs::metadata(&dest)
+            .expect("dest metadata")
+            .modified()
+            .expect("dest mtime");
+        copy_bundled_component(&src, &dest).expect("keep identical component");
+        assert_eq!(
+            std::fs::metadata(&dest)
+                .expect("dest metadata")
+                .modified()
+                .expect("dest mtime"),
+            installed,
+            "an identical component must not be rewritten"
+        );
 
         let leftovers = std::fs::read_dir(&bin)
             .expect("read bin dir")
@@ -1169,6 +1187,120 @@ mod tests {
             .filter(|entry| entry.file_name().to_string_lossy().contains(".staging-"))
             .count();
         assert_eq!(leftovers, 0, "staging files must not survive a copy");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn bundled_component_copy_reports_a_failed_install_without_leaving_staging_files() {
+        let root = std::env::temp_dir().join(format!("mbm-camera-bin-fail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).expect("bin dir");
+        let src = root.join("go2rtc.exe");
+        std::fs::write(&src, b"bundled-component").expect("write source");
+        let dest = bin.join("go2rtc.exe");
+        // A non-empty directory cannot be replaced by a file, so the install fails after the
+        // copy has already written the staging file.
+        std::fs::create_dir_all(dest.join("occupied")).expect("blocking directory");
+
+        assert!(
+            copy_bundled_component(&src, &dest).is_err(),
+            "installing over a directory must fail"
+        );
+        let leftovers = std::fs::read_dir(&bin)
+            .expect("read bin dir")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".staging-"))
+            .count();
+        assert_eq!(leftovers, 0, "a failed install must not leave staging files");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn component_usability_rejects_empty_and_foreign_copies() {
+        let root = std::env::temp_dir().join(format!("mbm-component-usable-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("temp dir");
+
+        let ffmpeg = root.join("ffmpeg-silent.exe");
+        assert!(!component_is_usable(&ffmpeg, None), "a missing component is not usable");
+        std::fs::write(&ffmpeg, b"").expect("write empty component");
+        assert!(!component_is_usable(&ffmpeg, None), "a zero-byte leftover must not count");
+        std::fs::write(&ffmpeg, b"helper").expect("write component");
+        assert!(component_is_usable(&ffmpeg, None));
+
+        let go2rtc = root.join("go2rtc.exe");
+        std::fs::write(&go2rtc, b"v1.1.6-leftover").expect("write foreign build");
+        assert!(!component_is_usable(&go2rtc, Some(GO2RTC_EXE_SHA256)));
+        let pinned = compute_sha256_hex(b"pinned-build");
+        std::fs::write(&go2rtc, b"pinned-build").expect("write pinned build");
+        assert!(component_is_usable(&go2rtc, Some(pinned.as_str())));
+        assert_eq!(expected_component_sha256("go2rtc.exe"), Some(GO2RTC_EXE_SHA256));
+        assert_eq!(expected_component_sha256("ffmpeg-silent.exe"), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn install_component_repairs_a_damaged_destination_from_the_bundled_copy() {
+        let root = std::env::temp_dir().join(format!("mbm-install-component-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).expect("bin dir");
+        let src = root.join("go2rtc.exe");
+        std::fs::write(&src, b"bundled-component").expect("write bundled component");
+        let dest = bin.join("go2rtc.exe");
+        let expected = Some(compute_sha256_hex(b"bundled-component"));
+
+        std::fs::write(&dest, b"").expect("write empty destination");
+        assert_eq!(
+            install_component(Some(src.as_path()), &dest, expected.as_deref()),
+            Ok(true),
+            "an empty file left by an interrupted download must be repaired"
+        );
+        assert_eq!(std::fs::read(&dest).expect("read repaired file"), b"bundled-component");
+
+        std::fs::write(&dest, b"truncated").expect("write damaged destination");
+        assert_eq!(install_component(Some(src.as_path()), &dest, None), Ok(true));
+        assert_eq!(std::fs::read(&dest).expect("read repaired file"), b"bundled-component");
+
+        std::fs::write(&src, b"").expect("corrupt the bundled copy");
+        std::fs::write(&dest, b"downloaded-build").expect("write working destination");
+        assert_eq!(
+            install_component(Some(src.as_path()), &dest, None),
+            Ok(true),
+            "a truncated bundled copy must not replace a working destination"
+        );
+        assert_eq!(std::fs::read(&dest).expect("read kept file"), b"downloaded-build");
+
+        let unbundled = bin.join("go2rtc.exe");
+        let _ = std::fs::remove_file(&unbundled);
+        assert_eq!(
+            install_component(None, &unbundled, Some(GO2RTC_EXE_SHA256)),
+            Ok(false),
+            "a missing pinned component must fall back to downloading"
+        );
+        std::fs::write(&unbundled, b"v1.1.6-leftover").expect("write foreign build");
+        assert_eq!(
+            install_component(None, &unbundled, Some(GO2RTC_EXE_SHA256)),
+            Ok(false),
+            "an unverified go2rtc.exe must not short-circuit the download"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn file_sha256_hex_matches_the_in_memory_digest_across_chunk_boundaries() {
+        let root = std::env::temp_dir().join(format!("mbm-file-sha-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("temp dir");
+        // 200 KB spans three 64 KB reads, so a chunk dropped at a boundary would change the sum.
+        let content: Vec<u8> = (0..200_000u32).map(|index| (index % 251) as u8).collect();
+        let path = root.join("component.bin");
+        std::fs::write(&path, &content).expect("write component");
+        assert_eq!(
+            file_sha256_hex(&path).expect("hash component"),
+            compute_sha256_hex(&content)
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

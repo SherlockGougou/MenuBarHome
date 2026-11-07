@@ -369,6 +369,11 @@ const GO2RTC_DOWNLOAD_URL: &str =
     "https://github.com/AlexxIT/go2rtc/releases/download/v1.9.15/go2rtc_win64.zip";
 const GO2RTC_DOWNLOAD_SHA256: &str =
     "5b448fc90f15c925406d8da0984301985e385050222c1c2bbdf0a76fe4b1e9cb";
+/// SHA-256 of the `go2rtc.exe` inside that archive. It is a different value from the archive
+/// hash above, and it is what lets a truncated or stale copy left in LOCALAPPDATA be
+/// detected instead of trusted (#14).
+pub(crate) const GO2RTC_EXE_SHA256: &str =
+    "994aa42768d2d6e1bbcf561c85bf9c46cafa705a90a13537cd38be2faee287de";
 /// Tauri resource directory subfolder populated by `bundle.resources` (see tauri.conf.json).
 pub(crate) const CAMERA_COMPONENT_DIR: &str = "camera-bin";
 const CAMERA_MANUAL_BIN_HINT: &str =
@@ -394,11 +399,109 @@ pub(crate) fn bundled_component_source(
     path.is_file().then_some(path)
 }
 
+/// Components whose exact bytes are pinned. A mismatch means a truncated leftover or a
+/// different build, and go2rtc's config and auth options change between releases, so neither
+/// may be used as-is.
+pub(crate) fn expected_component_sha256(name: &str) -> Option<&'static str> {
+    (name == "go2rtc.exe").then_some(GO2RTC_EXE_SHA256)
+}
+
+pub(crate) fn file_sha256_hex(path: &std::path::Path) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => context.update(&buffer[..read]),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let sum = context.finish();
+    let mut hex = String::with_capacity(64);
+    for byte in sum.as_ref() {
+        use std::fmt::Write;
+        let _ = write!(&mut hex, "{byte:02x}");
+    }
+    Ok(hex)
+}
+
+/// A component counts as installed only when it is a non-empty file and, for a pinned
+/// component, an exact match. Probing `is_file()` alone accepted the zero-byte or truncated
+/// leftovers of an interrupted download forever (#14).
+pub(crate) fn component_is_usable(
+    path: &std::path::Path,
+    expected_sha256: Option<&str>,
+) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.len() == 0 {
+        return false;
+    }
+    let Some(expected) = expected_sha256 else {
+        return true;
+    };
+    matches!(file_sha256_hex(path), Ok(actual) if actual == expected)
+}
+
+fn read_chunk(file: &mut std::fs::File, buffer: &mut [u8]) -> std::io::Result<usize> {
+    use std::io::Read;
+    let mut filled = 0;
+    while filled < buffer.len() {
+        match file.read(&mut buffer[filled..]) {
+            Ok(0) => break,
+            Ok(read) => filled += read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(filled)
+}
+
+fn same_file_contents(left: &std::path::Path, right: &std::path::Path) -> bool {
+    let (Ok(left_meta), Ok(right_meta)) = (std::fs::metadata(left), std::fs::metadata(right)) else {
+        return false;
+    };
+    if !left_meta.is_file() || !right_meta.is_file() || left_meta.len() != right_meta.len() {
+        return false;
+    }
+    if left_meta.len() == 0 {
+        return false;
+    }
+    let (Ok(mut left_file), Ok(mut right_file)) =
+        (std::fs::File::open(left), std::fs::File::open(right))
+    else {
+        return false;
+    };
+    let mut left_buffer = vec![0u8; 64 * 1024];
+    let mut right_buffer = vec![0u8; 64 * 1024];
+    loop {
+        let (Ok(left_read), Ok(right_read)) = (
+            read_chunk(&mut left_file, &mut left_buffer),
+            read_chunk(&mut right_file, &mut right_buffer),
+        ) else {
+            return false;
+        };
+        if left_read != right_read || left_buffer[..left_read] != right_buffer[..right_read] {
+            return false;
+        }
+        if left_read == 0 {
+            return true;
+        }
+    }
+}
+
 /// Copies a bundled helper into the writable component directory. MSI installs may keep
 /// the install directory read-only, while go2rtc also writes its config and owner record
 /// next to the executable, so both binaries and state live under LOCALAPPDATA.
+///
+/// The destination is compared with the source rather than only probed for existence, so a
+/// damaged copy is repaired instead of shadowing the good bundled one (#14).
 pub(crate) fn copy_bundled_component(src: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
-    if dest.is_file() {
+    if same_file_contents(src, dest) {
         return Ok(());
     }
     let parent = dest.parent().ok_or_else(|| "组件目录不可用".to_string())?;
@@ -407,39 +510,70 @@ pub(crate) fn copy_bundled_component(src: &std::path::Path, dest: &std::path::Pa
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("component");
-    let staging = dest.with_file_name(format!("{name}.staging-{}", std::process::id()));
+    // A per-call serial keeps two concurrent installs of the same component from writing
+    // the same staging file and racing a mixed copy into place.
+    let serial = COMPONENT_STAGING_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let staging = dest.with_file_name(format!("{name}.staging-{}-{serial}", std::process::id()));
     let _ = std::fs::remove_file(&staging);
-    std::fs::copy(src, &staging)
-        .map_err(|e| format!("复制内置组件 {} 失败：{e}", src.display()))?;
-    std::fs::rename(&staging, dest)
-        .map_err(|e| format!("安装内置组件 {} 失败：{e}", dest.display()))?;
+    std::fs::copy(src, &staging).map_err(|e| {
+        let _ = std::fs::remove_file(&staging);
+        format!("复制内置组件 {} 失败：{e}", src.display())
+    })?;
+    let source_len = std::fs::metadata(src).map(|meta| meta.len()).unwrap_or(0);
+    if std::fs::metadata(&staging).map(|meta| meta.len()).unwrap_or(0) != source_len {
+        let _ = std::fs::remove_file(&staging);
+        return Err(format!("复制内置组件 {} 不完整", src.display()));
+    }
+    // std::fs::rename cannot replace an existing file on Windows, so the stale copy goes
+    // first. A crash inside that window leaves no component at all, which the next start
+    // repairs by re-running this copy; a half-written file is never installed.
+    let _ = std::fs::remove_file(dest);
+    if let Err(error) = std::fs::rename(&staging, dest) {
+        let _ = std::fs::remove_file(&staging);
+        return Err(format!("安装内置组件 {} 失败：{error}", dest.display()));
+    }
     Ok(())
 }
 
+static COMPONENT_STAGING_SERIAL: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Decides whether `dest` counts as installed and repairs it from a bundled copy when one is
+/// available. A valid bundled copy wins over whatever the destination holds, so a damaged or
+/// stale file left by an older version is replaced instead of trusted (#14).
+pub(crate) fn install_component(
+    bundled: Option<&std::path::Path>,
+    dest: &std::path::Path,
+    expected_sha256: Option<&str>,
+) -> Result<bool, String> {
+    if let Some(src) = bundled.filter(|src| component_is_usable(src, expected_sha256)) {
+        copy_bundled_component(src, dest)?;
+        return Ok(true);
+    }
+    Ok(component_is_usable(dest, expected_sha256))
+}
+
+/// Ensures `bin_dir/name` holds a usable copy. A bundled resource is the source of truth;
+/// without one, only a validated destination counts so the caller falls back to downloading
+/// it.
 pub(crate) fn ensure_component(
     app: &AppHandle,
     bin_dir: &std::path::Path,
     name: &str,
 ) -> Result<bool, String> {
-    if bin_dir.join(name).is_file() {
-        return Ok(true);
-    }
-    let Ok(resource_dir) = app.path().resource_dir() else {
-        return Ok(false);
-    };
-    let Some(src) = bundled_component_source(&resource_dir, name) else {
-        return Ok(false);
-    };
-    copy_bundled_component(&src, &bin_dir.join(name))?;
-    Ok(true)
+    let bundled = app
+        .path()
+        .resource_dir()
+        .ok()
+        .and_then(|dir| bundled_component_source(&dir, name));
+    install_component(
+        bundled.as_deref(),
+        &bin_dir.join(name),
+        expected_component_sha256(name),
+    )
 }
 
 pub(crate) fn resolve_ffmpeg_bin(app: &AppHandle, bin_dir: &std::path::Path) -> Result<String, String> {
-    for candidate in ["ffmpeg-silent.exe", "ffmpeg.exe"] {
-        if bin_dir.join(candidate).is_file() {
-            return Ok(bin_dir.join(candidate).to_string_lossy().replace('\\', "/"));
-        }
-    }
     for candidate in ["ffmpeg-silent.exe", "ffmpeg.exe"] {
         if ensure_component(app, bin_dir, candidate)? {
             return Ok(bin_dir.join(candidate).to_string_lossy().replace('\\', "/"));
@@ -501,10 +635,28 @@ pub(crate) async fn download_go2rtc_once(
 
     let staging_dir = bin_dir.join(format!("staging-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&staging_dir);
-    std::fs::create_dir_all(&staging_dir).map_err(|e| format!("创建解压目录失败：{e}"))?;
-    let zip_path = staging_dir.join("go2rtc_win64.zip");
-    std::fs::write(&zip_path, &bytes).map_err(|e| format!("写入临时压缩包失败：{e}"))?;
+    let installed = match stage_go2rtc_exe(&staging_dir, &bytes) {
+        Ok(extracted) => {
+            let _ = std::fs::remove_file(exe_path);
+            std::fs::rename(&extracted, exe_path).map_err(|e| format!("安装 go2rtc.exe 失败：{e}"))
+        }
+        Err(error) => Err(error),
+    };
+    // One owner for the staging directory, so no failure path leaves the archive or the
+    // extracted executable behind.
+    let _ = std::fs::remove_dir_all(&staging_dir);
+    installed
+}
 
+/// Writes the verified archive into `staging_dir`, extracts it and returns the executable
+/// after checking it against the pinned hash. The caller removes the directory on every path.
+fn stage_go2rtc_exe(
+    staging_dir: &std::path::Path,
+    archive: &[u8],
+) -> Result<std::path::PathBuf, String> {
+    std::fs::create_dir_all(staging_dir).map_err(|e| format!("创建解压目录失败：{e}"))?;
+    let zip_path = staging_dir.join("go2rtc_win64.zip");
+    std::fs::write(&zip_path, archive).map_err(|e| format!("写入临时压缩包失败：{e}"))?;
     let status = std::process::Command::new("tar.exe")
         .args([
             "-xf",
@@ -515,15 +667,14 @@ pub(crate) async fn download_go2rtc_once(
         .creation_flags(CREATE_NO_WINDOW)
         .status()
         .map_err(|e| format!("解压 go2rtc.exe 失败：{e}"))?;
-    let extracted = staging_dir.join("go2rtc.exe");
-    if !status.success() || !extracted.exists() {
-        let _ = std::fs::remove_dir_all(&staging_dir);
+    if !status.success() {
         return Err("解压流媒体组件 go2rtc.exe 失败".to_string());
     }
-    let _ = std::fs::remove_file(exe_path);
-    std::fs::rename(&extracted, exe_path).map_err(|e| format!("安装 go2rtc.exe 失败：{e}"))?;
-    let _ = std::fs::remove_dir_all(&staging_dir);
-    Ok(())
+    let extracted = staging_dir.join("go2rtc.exe");
+    if !component_is_usable(&extracted, Some(GO2RTC_EXE_SHA256)) {
+        return Err("解压出的 go2rtc.exe 缺失或校验未通过，已拒绝安装".to_string());
+    }
+    Ok(extracted)
 }
 
 pub(crate) fn running_child_pid() -> Option<u32> {
