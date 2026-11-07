@@ -33,7 +33,8 @@ check:
 
 # Nothing on the `macos` runner can compile windows/src-tauri: the Swift gate only runs the
 # TypeScript tests, and macOS has no MSVC toolchain. This job is the only place `cargo test`
-# runs, so Rust compile errors and the native URL/credential tests fail before merge.
+# runs, so Rust compile errors and the native URL/credential tests fail before merge. Only
+# `windows/src-tauri/` triggers it: `windows/src` is TypeScript, covered by `check`.
 windows:
   stage: test
   timeout: 45m
@@ -41,9 +42,9 @@ windows:
   tags: [saas-windows-medium-amd64]
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes: [windows/**/*, .gitlab-ci.yml]
+      changes: [windows/src-tauri/**/*, .gitlab-ci.yml]
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      changes: [windows/**/*, .gitlab-ci.yml]
+      changes: [windows/src-tauri/**/*, .gitlab-ci.yml]
   before_script:
     # The image preinstalls Node, Python, CMake and VS Build Tools but not Rust. Restore the
     # machine/user PATH first so the macOS entry point cannot leak in.
