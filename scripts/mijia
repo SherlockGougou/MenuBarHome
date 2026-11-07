@@ -127,22 +127,42 @@ def _unique(candidates: list, what: str, query: str, label) -> dict:
     return candidates[0]
 
 
+def _device_keys(device: dict) -> tuple[set[str], tuple[str, ...]]:
+    name = _fold(device.get("name"))
+    room = _fold(device.get("roomName"))
+    short = name[len(room) :].strip() if room and name.startswith(room) else name
+    initials = _fold(device.get("pinyinInitials"))
+    room_initials = _fold(device.get("roomPinyinInitials"))
+    full_pinyin = _fold(device.get("pinyinFull"))
+    exact = {
+        key
+        for key in (
+            name,
+            f"{room}{name}",
+            f"{room} {name}",
+            f"{room}{short}",
+            f"{room} {short}",
+            initials,
+            f"{room_initials}{initials}",
+            full_pinyin,
+        )
+        if key.strip()
+    }
+    haystacks = tuple(
+        key for key in (name, f"{room}{name}", f"{room} {name}", f"{room} {short}", full_pinyin) if key.strip()
+    )
+    return exact, haystacks
+
+
 def match_device(snapshot: dict, query: str) -> dict:
     devices = [device for device in snapshot.get("devices") or [] if isinstance(device, dict)]
-    needle = _fold(query)
+    needle = " ".join(_fold(query).split())
     if not needle:
         raise CliError("设备名不能为空")
     for device in devices:
         if str(device.get("id") or "") == str(query).strip():
             return device
-    exact = [
-        device
-        for device in devices
-        if _fold(device.get("name")) == needle
-        or f"{_fold(device.get('roomName'))}{_fold(device.get('name'))}" == needle
-        or _fold(device.get("pinyinInitials")) == needle
-        or f"{_fold(device.get('roomPinyinInitials'))}{_fold(device.get('pinyinInitials'))}" == needle
-    ]
+    exact = [device for device in devices if needle in _device_keys(device)[0]]
     if len(exact) == 1:
         return exact[0]
     if len(exact) > 1:
@@ -150,8 +170,7 @@ def match_device(snapshot: dict, query: str) -> dict:
     substring = [
         device
         for device in devices
-        if needle in _fold(device.get("name"))
-        or needle in f"{_fold(device.get('roomName'))}{_fold(device.get('name'))}"
+        if any(needle in haystack for haystack in _device_keys(device)[1])
     ]
     return _unique(substring, "设备", query, _device_label)
 
@@ -160,15 +179,38 @@ def _scene_label(item: dict) -> str:
     return f"{item.get('name', '?')} · {item.get('id', '?')}"
 
 
+BUILTIN_QUICK_ALIASES: dict[str, str] = {
+    "lightsoff": "lightsOff",
+    "lights_off": "lightsOff",
+    "全屋关灯": "lightsOff",
+    "softnightlight": "softNightLight",
+    "soft_night_light": "softNightLight",
+    "柔和夜灯": "softNightLight",
+    "climatesleepoff": "climateSleepOff",
+    "climate_sleep_off": "climateSleepOff",
+    "关温控风扇": "climateSleepOff",
+    "睡眠关空调": "climateSleepOff",
+    "alloff": "allOff",
+    "all_off": "allOff",
+    "一键全关": "allOff",
+    "全关": "allOff",
+    "undo": "undo",
+    "撤销上一步": "undo",
+    "撤销": "undo",
+}
+
+
 def _match_in_pool(pool: list, needle: str, *, allow_contains: bool) -> tuple[dict | None, list]:
     """返回唯一命中，或命中列表（需要用户写得更具体）。"""
     for item in pool:
-        if _fold(item.get("id")) == needle:
+        if _fold(item.get("id")) == needle or _fold(item.get("entityId")) == needle:
             return item, []
     hits = [
         item
         for item in pool
-        if _fold(item.get("name")) == needle or _fold(item.get("pinyinInitials")) == needle
+        if _fold(item.get("name")) == needle
+        or _fold(item.get("pinyinInitials")) == needle
+        or _fold(item.get("pinyinFull")) == needle
     ]
     if len(hits) == 1:
         return hits[0], []
@@ -179,7 +221,9 @@ def _match_in_pool(pool: list, needle: str, *, allow_contains: bool) -> tuple[di
     hits = [
         item
         for item in pool
-        if needle in _fold(item.get("name")) or needle in _fold(item.get("pinyinInitials"))
+        if needle in _fold(item.get("name"))
+        or needle in _fold(item.get("pinyinInitials"))
+        or needle in _fold(item.get("pinyinFull"))
     ]
     if len(hits) == 1:
         return hits[0], []
@@ -196,10 +240,23 @@ def match_scene(snapshot: dict, query: str) -> tuple[str, dict]:
 
     if needle.startswith("quick:"):
         builtin = needle[len("quick:") :].strip()
+        canonical_id = BUILTIN_QUICK_ALIASES.get(builtin)
+        target_id = _fold(canonical_id or builtin)
         for item in quick_actions:
-            if _fold(item.get("id")) == builtin:
+            if _fold(item.get("id")) == target_id or _fold(item.get("name")) == builtin:
                 return "quick", item
+        if canonical_id:
+            return "quick", {"id": canonical_id, "name": builtin}
         raise CliError(f"没有 ID 是「{builtin}」的快捷动作")
+
+    canonical_alias = BUILTIN_QUICK_ALIASES.get(needle)
+    if canonical_alias:
+        alias_id = _fold(canonical_alias)
+        for item in quick_actions:
+            if _fold(item.get("id")) == alias_id:
+                return "quick", item
+        if not any(_fold(scene.get("name")) == needle for scene in scenes):
+            return "quick", {"id": canonical_alias, "name": query.strip()}
 
     # 名字完全一致优先于「包含」，且两个池子平级比较：快捷动作叫「全屋关灯」时，
     # 不会因为某个场景名里恰好也含这四个字而被场景抢走。
@@ -242,8 +299,18 @@ def open_url(url: str) -> None:
         raise CliError(f"系统没能打开 menumijia:// 链接（{reason}），请确认 MenuBarMijia 已安装。")
 
 
+def validate_timeout(timeout: object) -> float:
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise CliError("等待超时秒数必须是大于 0 的数字")
+    value = float(timeout)
+    if not math.isfinite(value) or value <= 0.0 or value > 300.0:
+        raise CliError("等待超时秒数必须在 0–300 之间")
+    return value
+
+
 def wait_for_feedback(path: Path, request_id: str, timeout: float, now, sleep) -> dict:
-    deadline = now() + max(0.0, timeout)
+    valid_timeout = validate_timeout(timeout)
+    deadline = now() + valid_timeout
     while True:
         # Writes are atomic, so a read either has the whole file or the previous one. A missing or
         # unreadable file here is a real problem (integration turned off) and surfaces immediately.
@@ -253,7 +320,7 @@ def wait_for_feedback(path: Path, request_id: str, timeout: float, now, sleep) -
             return feedback
         if now() >= deadline:
             raise FeedbackTimeout(
-                f"等了 {timeout:g} 秒没收到执行结果。请确认 MenuBarMijia 正在运行、"
+                f"等了 {valid_timeout:g} 秒没收到执行结果。请确认 MenuBarMijia 正在运行、"
                 "「Raycast 集成」仍处于打开状态。"
             )
         sleep(POLL_INTERVAL)
@@ -388,28 +455,43 @@ def _room_key(device: dict) -> tuple[int, str]:
     return rank, str(device.get("roomName") or "")
 
 
+def _dedup_rooms(candidates: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    seen: set[str] = set()
+    unique: list[tuple[str, str]] = []
+    for room_id, room_name in candidates:
+        key = _fold(room_name or room_id)
+        if key not in seen:
+            seen.add(key)
+            unique.append((room_id, room_name))
+    return unique
+
+
 def resolve_room(snapshot: dict, query: str) -> tuple[str, str]:
     devices = [device for device in snapshot.get("devices") or [] if isinstance(device, dict)]
     needle = _fold(query)
-    rooms: dict[str, str] = {}
+    rooms: list[tuple[str, str]] = []
     for device in devices:
         room_id = str(device.get("roomId") or "")
         room_name = str(device.get("roomName") or "")
-        if room_id or room_name:
-            rooms.setdefault(room_id or room_name, room_name)
-    exact = [
-        (room_id, room_name)
-        for room_id, room_name in rooms.items()
-        if _fold(room_id) == needle or _fold(room_name) == needle
-    ]
-    if not exact:
-        exact = [
+        if (room_id or room_name) and (room_id, room_name) not in rooms:
+            rooms.append((room_id, room_name))
+    exact = _dedup_rooms(
+        [
             (room_id, room_name)
-            for room_id, room_name in rooms.items()
-            if needle in _fold(room_id) or needle in _fold(room_name)
+            for room_id, room_name in rooms
+            if _fold(room_id) == needle or _fold(room_name) == needle
         ]
+    )
     if not exact:
-        known = "、".join(sorted({name for name in rooms.values() if name})) or "（空）"
+        exact = _dedup_rooms(
+            [
+                (room_id, room_name)
+                for room_id, room_name in rooms
+                if needle in _fold(room_id) or needle in _fold(room_name)
+            ]
+        )
+    if not exact:
+        known = "、".join(sorted({name for _, name in rooms if name})) or "（空）"
         raise CliError(f"没有名叫「{query}」的房间；现有房间：{known}")
     if len(exact) > 1:
         listing = "\n".join(f"  - {name or room_id}" for room_id, name in exact)
@@ -430,8 +512,8 @@ def filter_devices(
         devices = [
             device
             for device in devices
-            if str(device.get("roomId") or "") == room_id
-            or (not device.get("roomId") and str(device.get("roomName") or "") == room_name)
+            if (room_id and str(device.get("roomId") or "") == room_id)
+            or (room_name and str(device.get("roomName") or "") == room_name)
         ]
     if category:
         wanted = _fold(category)
@@ -619,6 +701,45 @@ def validate_temperature(device: dict, raw_celsius: object) -> float:
     return celsius
 
 
+_FAN_SPOKEN_LEVELS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
+    ("auto", ("auto", "自动"), ("auto", "自动")),
+    ("sleep", ("sleep", "睡眠", "silent", "静音"), ("sleep", "睡眠", "silent", "静音")),
+    ("favorite", ("favorite", "favourite", "最爱", "manual", "手动"), ("favorite", "favourite", "最爱", "manual", "手动")),
+    ("natural", ("natural", "nature", "自然", "自然风"), ("natural", "nature", "自然")),
+    ("direct", ("direct", "straight", "直吹", "直吹风"), ("direct", "straight", "直吹")),
+    ("high", ("high", "高", "大", "强", "max", "最大", "strong"), ("high", "strong", "高", "强")),
+    ("medium", ("medium", "middle", "mid", "中"), ("medium", "middle", "mid", "中")),
+    ("low", ("low", "低", "小", "弱", "min", "最小", "微"), ("low", "低", "弱")),
+)
+_FAN_NON_LEVEL_HINTS = (
+    "auto", "自动", "sleep", "睡眠", "silent", "静音", "natural", "nature", "自然", "smart", "智能", "favorite", "favourite", "最爱"
+)
+
+
+def _match_fan_preset(wanted: str, modes: list[str]) -> str | None:
+    folded = _fold(wanted)
+    if not folded or not modes:
+        return None
+    for mode in modes:
+        if _fold(mode) == folded:
+            return mode
+    for level, triggers, hints in _FAN_SPOKEN_LEVELS:
+        if any(folded == word or folded.startswith(word) for word in triggers):
+            for mode in modes:
+                if any(hint in _fold(mode) for hint in hints):
+                    return mode
+            if level in ("low", "medium", "high"):
+                plain = [m for m in modes if not any(h in _fold(m) for h in _FAN_NON_LEVEL_HINTS)]
+                if plain:
+                    if level == "low":
+                        return plain[0]
+                    if level == "high":
+                        return plain[-1]
+                    return plain[len(plain) // 2]
+            break
+    return next((mode for mode in modes if folded in _fold(mode)), None)
+
+
 def validate_fan(
     device: dict,
     raw_percent: object | None,
@@ -627,25 +748,26 @@ def validate_fan(
     caps = device.get("capabilities") or {}
     if not caps.get("fanSpeedWritable"):
         raise CliError(f"{_device_label(device)} 不支持调节风速或档位")
+    if raw_preset is not None and not isinstance(raw_preset, str):
+        raise CliError("预设档位（preset）必须是字符串")
     has_percent = raw_percent is not None
-    preset_text = str(raw_preset).strip() if raw_preset is not None else ""
+    preset_text = raw_preset.strip() if isinstance(raw_preset, str) else ""
     has_preset = bool(preset_text)
     if has_percent == has_preset:
         raise CliError("风速百分比（percent）与档位（preset）必须且只能指定其中一项")
     if has_percent:
         percent = _require_int(raw_percent, "风速百分比", 1, 100)
         return [("device", str(device["id"])), ("percent", str(percent))]
+    if len(preset_text) > 200:
+        raise CliError("预设档位名称长度不能超过 200 个字符")
     modes = [str(mode) for mode in (caps.get("availablePresetModes") or []) if str(mode).strip()]
-    if modes:
-        folded = _fold(preset_text)
-        matched = next((mode for mode in modes if _fold(mode) == folded), None)
-        if matched is None:
-            matched = next((mode for mode in modes if folded in _fold(mode)), None)
-        if matched is None:
-            options = "、".join(modes[:8])
-            raise CliError(f"{_device_label(device)} 没有「{preset_text}」档位，可选：{options}")
-        preset_text = matched
-    return [("device", str(device["id"])), ("preset", preset_text)]
+    if not modes:
+        raise CliError(f"{_device_label(device)} 不支持预设档位，请改用风速百分比（percent）")
+    matched = _match_fan_preset(preset_text, modes)
+    if matched is None:
+        options = "、".join(modes[:8])
+        raise CliError(f"{_device_label(device)} 没有「{preset_text}」档位，可选：{options}")
+    return [("device", str(device["id"])), ("preset", matched)]
 
 
 # MARK: - Model Context Protocol (MCP) Server (#19, GH#177, ADR-0013)
@@ -776,7 +898,9 @@ def _mcp_list_devices(ctx: McpContext, arguments: dict) -> dict:
     category = arguments.get("category")
     if category is not None and not isinstance(category, str):
         raise CliError("category 必须是字符串")
-    online_only = arguments.get("online_only", False)
+    online_only = arguments.get("online_only")
+    if online_only is None:
+        online_only = False
     if not isinstance(online_only, bool):
         raise CliError("online_only 必须是布尔值")
     devices = filter_devices(
@@ -1103,6 +1227,17 @@ def _jsonrpc_error(req_id: object, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
 
 
+MAX_MCP_FRAME_BYTES = 4 * 1024 * 1024
+
+
+def _validate_tool_arguments(spec: McpToolSpec, arguments: dict) -> None:
+    allowed = set((spec.input_schema.get("properties") or {}).keys())
+    unknown = sorted(set(arguments.keys()) - allowed)
+    if unknown:
+        allowed_list = "、".join(sorted(allowed)) or "（无参数）"
+        raise CliError(f"工具 {spec.name} 不认识参数 {', '.join(unknown)}；可用参数：{allowed_list}")
+
+
 def handle_mcp_message(ctx: McpContext, message: object) -> dict | None:
     """处理单条 JSON-RPC 2.0 消息；通知（无 id）返回 None。"""
     if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
@@ -1144,8 +1279,11 @@ def handle_mcp_message(ctx: McpContext, message: object) -> dict | None:
             },
         )
 
-    if method == "ping":
+    if method in ("ping", "logging/setLevel"):
         return _jsonrpc_result(req_id, {})
+
+    if method == "completion/complete":
+        return _jsonrpc_result(req_id, {"completion": {"values": [], "total": 0, "hasMore": False}})
 
     if method == "prompts/list":
         return _jsonrpc_result(req_id, {"prompts": []})
@@ -1219,12 +1357,20 @@ def handle_mcp_message(ctx: McpContext, message: object) -> dict | None:
             return _jsonrpc_error(req_id, -32602, "Invalid params: tool arguments must be an object")
         spec = MCP_TOOLS_BY_NAME[name]
         try:
+            _validate_tool_arguments(spec, arguments)
             result = spec.handler(ctx, arguments)
         except CliError as error:
             result = _tool_result(str(error), is_error=True)
         return _jsonrpc_result(req_id, result)
 
     return _jsonrpc_error(req_id, -32601, f"Method not found: {method}")
+
+
+def _is_header_start(stripped: bytes) -> bool:
+    if stripped.startswith((b"{", b"[")) or b":" not in stripped:
+        return False
+    name = stripped.split(b":", 1)[0].strip().lower()
+    return name in (b"content-length", b"content-type")
 
 
 def _read_mcp_frame(stream) -> tuple[str | None, bool]:
@@ -1236,17 +1382,31 @@ def _read_mcp_frame(stream) -> tuple[str | None, bool]:
         stripped = first_line.strip()
         if not stripped:
             continue
-        if stripped.lower().startswith(b"content-length:"):
-            length_text = stripped.split(b":", 1)[1].strip()
-            try:
-                content_length = int(length_text)
-            except ValueError as error:
-                raise ValueError(f"Invalid Content-Length header: {length_text!r}") from error
+        if _is_header_start(stripped):
+            headers: dict[bytes, bytes] = {}
+            line = stripped
             while True:
-                header_line = stream.readline()
-                if not header_line or header_line in (b"\r\n", b"\n"):
+                if b":" in line:
+                    k, v = line.split(b":", 1)
+                    headers[k.strip().lower()] = v.strip()
+                next_line = stream.readline()
+                if not next_line or next_line in (b"\r\n", b"\n"):
                     break
+                line = next_line.strip()
+            raw_len = headers.get(b"content-length")
+            if raw_len is None:
+                raise ValueError("Missing Content-Length header")
+            try:
+                content_length = int(raw_len)
+            except ValueError as error:
+                raise ValueError(f"Invalid Content-Length header: {raw_len!r}") from error
+            if content_length <= 0 or content_length > MAX_MCP_FRAME_BYTES:
+                raise ValueError(f"Out-of-bounds Content-Length: {content_length}")
             body = stream.read(content_length)
+            if len(body) < content_length:
+                raise ValueError(
+                    f"Incomplete Content-Length frame: expected {content_length} bytes, got {len(body)}"
+                )
             return body.decode("utf-8", errors="replace"), True
         return stripped.decode("utf-8", errors="replace"), False
 
@@ -1328,14 +1488,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     common(subparsers.add_parser("status", help="概览连接、场景与环境读数"))
 
-    toggle = common(subparsers.add_parser("toggle", help="翻转设备主开关"))
-    toggle.add_argument("device", help="设备名、ID 或拼音首字母")
-
-    power_on = common(subparsers.add_parser("on", help="打开设备"))
-    power_on.add_argument("device", help="设备名、ID 或拼音首字母")
-
-    power_off = common(subparsers.add_parser("off", help="关闭设备"))
-    power_off.add_argument("device", help="设备名、ID 或拼音首字母")
+    for cmd_name, help_text in (
+        ("toggle", "翻转设备主开关"),
+        ("on", "打开设备"),
+        ("off", "关闭设备"),
+        ("focus", "在面板中定位并展开该设备的详情抽屉"),
+    ):
+        sub = common(subparsers.add_parser(cmd_name, help=help_text))
+        sub.add_argument("device", help="设备名、ID 或拼音首字母")
 
     brightness = common(subparsers.add_parser("brightness", help="设置灯具亮度百分比（0–100）"))
     brightness.add_argument("device", help="灯具名称、ID 或拼音首字母")
@@ -1354,17 +1514,12 @@ def build_parser() -> argparse.ArgumentParser:
     fan.add_argument("--percent", help="风速百分比（1–100）")
     fan.add_argument("--preset", help="预设档位名称")
 
-    focus = common(subparsers.add_parser("focus", help="在面板中定位并展开该设备的详情抽屉"))
-    focus.add_argument("device", help="设备名、ID 或拼音首字母")
-
     scene = common(subparsers.add_parser("scene", help="执行场景或内置快捷动作"))
     scene.add_argument("name", help="场景名、快捷动作名或它们对应的 ID")
 
-    ask = common(subparsers.add_parser("ask", help="执行一句话指令"))
-    ask.add_argument("text", help="自然语言指令，例如「把客厅灯调到 40%%」")
-
-    command = common(subparsers.add_parser("command", help="同 ask"))
-    command.add_argument("text", help="自然语言指令")
+    for cmd_name, help_text in (("ask", "执行一句话指令"), ("command", "同 ask")):
+        sub = common(subparsers.add_parser(cmd_name, help=help_text))
+        sub.add_argument("text", help="自然语言指令")
 
     mcp = subparsers.add_parser("mcp", help="启动基于 stdio 的本地 MCP 服务（供 Claude / Cursor 调用）")
     mcp.add_argument("--snapshot", help="快照文件路径（默认读应用写出的那份）")
@@ -1387,8 +1542,9 @@ def main(
     args = build_parser().parse_args(argv)
     try:
         path = snapshot_path(args.snapshot, env)
+        timeout = validate_timeout(args.timeout)
         if args.command == "mcp":
-            ctx = McpContext(path=path, opener=opener, now=now, sleep=sleep, timeout=args.timeout)
+            ctx = McpContext(path=path, opener=opener, now=now, sleep=sleep, timeout=timeout)
             return serve_mcp_stdio(ctx, stdin=stdin, stdout=stdout)
 
         snapshot = load_snapshot(path)
@@ -1396,152 +1552,59 @@ def main(
             return command_list(snapshot, args.room, args.json)
         if args.command == "status":
             return command_status(snapshot, args.json)
-        if args.command == "toggle":
-            device = match_device(snapshot, args.device)
-            _require_toggleable(device)
+
+        def dispatch(route: str, params: list[tuple[str, str]]) -> int:
             return send(
                 snapshot,
                 path,
-                "toggle",
-                [("device", device["id"])],
-                opener=opener,
-                now=now,
-                sleep=sleep,
-                timeout=args.timeout,
-                dry_run=args.dry_run,
-                wait=not args.no_wait,
-                as_json=args.json,
-            )
-        if args.command in ("on", "off"):
-            device = match_device(snapshot, args.device)
-            _require_toggleable(device)
-            return send(
-                snapshot,
-                path,
-                "power",
-                [("device", device["id"]), ("on", "true" if args.command == "on" else "false")],
-                opener=opener,
-                now=now,
-                sleep=sleep,
-                timeout=args.timeout,
-                dry_run=args.dry_run,
-                wait=not args.no_wait,
-                as_json=args.json,
-            )
-        if args.command == "brightness":
-            device = match_device(snapshot, args.device)
-            percent = validate_brightness(device, args.percent)
-            return send(
-                snapshot,
-                path,
-                "brightness",
-                [("device", device["id"]), ("percent", str(percent))],
-                opener=opener,
-                now=now,
-                sleep=sleep,
-                timeout=args.timeout,
-                dry_run=args.dry_run,
-                wait=not args.no_wait,
-                as_json=args.json,
-            )
-        if args.command == "color-temp":
-            device = match_device(snapshot, args.device)
-            kelvin = validate_color_temp(device, args.kelvin)
-            return send(
-                snapshot,
-                path,
-                "color-temp",
-                [("device", device["id"]), ("kelvin", str(kelvin))],
-                opener=opener,
-                now=now,
-                sleep=sleep,
-                timeout=args.timeout,
-                dry_run=args.dry_run,
-                wait=not args.no_wait,
-                as_json=args.json,
-            )
-        if args.command == "temperature":
-            device = match_device(snapshot, args.device)
-            celsius = validate_temperature(device, args.celsius)
-            return send(
-                snapshot,
-                path,
-                "temperature",
-                [("device", device["id"]), ("celsius", _number(celsius))],
-                opener=opener,
-                now=now,
-                sleep=sleep,
-                timeout=args.timeout,
-                dry_run=args.dry_run,
-                wait=not args.no_wait,
-                as_json=args.json,
-            )
-        if args.command == "fan":
-            device = match_device(snapshot, args.device)
-            params = validate_fan(device, args.percent, args.preset)
-            return send(
-                snapshot,
-                path,
-                "fan",
+                route,
                 params,
                 opener=opener,
                 now=now,
                 sleep=sleep,
-                timeout=args.timeout,
+                timeout=timeout,
                 dry_run=args.dry_run,
                 wait=not args.no_wait,
                 as_json=args.json,
             )
+
+        if args.command == "toggle":
+            device = match_device(snapshot, args.device)
+            _require_toggleable(device)
+            return dispatch("toggle", [("device", device["id"])])
+        if args.command in ("on", "off"):
+            device = match_device(snapshot, args.device)
+            _require_toggleable(device)
+            return dispatch("power", [("device", device["id"]), ("on", "true" if args.command == "on" else "false")])
+        if args.command == "brightness":
+            device = match_device(snapshot, args.device)
+            percent = validate_brightness(device, args.percent)
+            return dispatch("brightness", [("device", device["id"]), ("percent", str(percent))])
+        if args.command == "color-temp":
+            device = match_device(snapshot, args.device)
+            kelvin = validate_color_temp(device, args.kelvin)
+            return dispatch("color-temp", [("device", device["id"]), ("kelvin", str(kelvin))])
+        if args.command == "temperature":
+            device = match_device(snapshot, args.device)
+            celsius = validate_temperature(device, args.celsius)
+            return dispatch("temperature", [("device", device["id"]), ("celsius", _number(celsius))])
+        if args.command == "fan":
+            device = match_device(snapshot, args.device)
+            return dispatch("fan", validate_fan(device, args.percent, args.preset))
         if args.command == "focus":
             device = match_device(snapshot, args.device)
-            return send(
-                snapshot,
-                path,
-                "focus",
-                [("device", device["id"])],
-                opener=opener,
-                now=now,
-                sleep=sleep,
-                timeout=args.timeout,
-                dry_run=args.dry_run,
-                wait=not args.no_wait,
-                as_json=args.json,
-            )
+            return dispatch("focus", [("device", device["id"])])
         if args.command == "scene":
             kind, item = match_scene(snapshot, args.name)
             name = f"quick:{item['id']}" if kind == "quick" else str(item["id"])
-            return send(
-                snapshot,
-                path,
-                "scene",
-                [("name", name)],
-                opener=opener,
-                now=now,
-                sleep=sleep,
-                timeout=args.timeout,
-                dry_run=args.dry_run,
-                wait=not args.no_wait,
-                as_json=args.json,
-            )
+            return dispatch("scene", [("name", name)])
         if args.command in ("ask", "command"):
             text = args.text.strip()
             if not text:
                 raise CliError("指令不能为空")
             if len(text) > MAX_ASK_LENGTH:
                 raise CliError(f"指令长度不能超过 {MAX_ASK_LENGTH} 个字符")
-            return send(
-                snapshot,
-                path,
-                "ask",
-                [("text", text)],
-                opener=opener,
-                now=now,
-                sleep=sleep,
-                timeout=args.timeout,
-                dry_run=args.dry_run,
-                wait=not args.no_wait,
-                as_json=args.json,
-            )
+            return dispatch("ask", [("text", text)])
         raise CliError(f"不认识的命令：{args.command}")
     except CliError as error:
         print(f"mijia: {error}", file=sys.stderr)
