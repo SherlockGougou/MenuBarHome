@@ -59,10 +59,12 @@ APP_DIR="$ROOT/MenuBarMijia.app"
 rm -rf "$ROOT/米家控制中心.app" "$ROOT/MenuMijia.app"  # 清理旧名字产物
 
 WAS_RUNNING=0
-if pgrep -x MenuBarMijiaApp >/dev/null 2>&1; then
-    WAS_RUNNING=1
-    killall MenuBarMijiaApp 2>/dev/null || true
-    sleep 0.5
+if [ "${SKIP_RESTART:-0}" != "1" ]; then
+    if pgrep -x MenuBarMijiaApp >/dev/null 2>&1; then
+        WAS_RUNNING=1
+        killall MenuBarMijiaApp 2>/dev/null || true
+        sleep 0.5
+    fi
 fi
 
 rm -rf "$APP_DIR"
@@ -79,7 +81,40 @@ if [ ! -d "$RESOURCE_BUNDLE" ]; then
 fi
 cp -R "$RESOURCE_BUNDLE" "$APP_DIR/Contents/Resources/MenuBarMijia_MijiaCore.bundle"
 
-GO2RTC_CACHED="$HOME/Library/Application Support/MenuBarMijia/bin/go2rtc"
+if [ "${PTZ_BRIDGE:-0}" = "1" ]; then
+    PATCHED_GO2RTC="$ROOT/scripts/go2rtc-ptz/out/go2rtc-universal"
+    PATCH_SHA="$(shasum -a 256 "$ROOT/scripts/go2rtc-ptz/patches/0001-xiaomi-ptz.patch" | awk '{print $1}')"
+    MANIFEST="$ROOT/scripts/go2rtc-ptz/out/go2rtc-ptz.manifest"
+    MANIFEST_SHA="$(sed -n 's/^patch_sha256=//p' "$MANIFEST" 2>/dev/null || true)"
+    if [ ! -x "$PATCHED_GO2RTC" ] || [ "$MANIFEST_SHA" != "$PATCH_SHA" ]; then
+        echo "▶ PTZ_BRIDGE=1：构建或更新带云台补丁的 go2rtc（patch $PATCH_SHA）"
+        rm -f "$PATCHED_GO2RTC"
+        bash "$ROOT/scripts/go2rtc-ptz/build.sh" || {
+            echo "❌ PTZ_BRIDGE=1 但补丁桥构建失败，拒绝打出没有云台能力的包" >&2
+            exit 1
+        }
+        MANIFEST_SHA="$(sed -n 's/^patch_sha256=//p' "$MANIFEST" 2>/dev/null || true)"
+        if [ "$MANIFEST_SHA" != "$PATCH_SHA" ]; then
+            echo "❌ 补丁桥 manifest 与当前 patch 不一致" >&2
+            exit 1
+        fi
+    fi
+    PATCHED_ARCHS="$(lipo -archs "$PATCHED_GO2RTC" 2>/dev/null || true)"
+    if ! printf '%s' "$PATCHED_ARCHS" | grep -qw "arm64" || ! printf '%s' "$PATCHED_ARCHS" | grep -qw "x86_64"; then
+        echo "❌ PTZ_BRIDGE=1 但产物不是 arm64+x86_64 通用二进制：$PATCHED_ARCHS" >&2
+        exit 1
+    fi
+    if ! strings "$PATCHED_GO2RTC" | grep -F "api/xiaomi/ptz" >/dev/null 2>&1 \
+        || ! strings "$PATCHED_GO2RTC" | grep -F "X-MenuBarMijia-PTZ" >/dev/null 2>&1; then
+        echo "❌ PTZ_BRIDGE=1 但产物缺少 /api/xiaomi/ptz 路由或版本头" >&2
+        exit 1
+    fi
+    echo "▶ 使用带云台补丁的 go2rtc ($PATCHED_ARCHS)"
+    GO2RTC_CACHED="$PATCHED_GO2RTC"
+else
+    echo "ℹ️ 未设置 PTZ_BRIDGE=1：打进官方 go2rtc，不包含云台补丁"
+    GO2RTC_CACHED="$HOME/Library/Application Support/MenuBarMijia/bin/go2rtc"
+fi
 GO2RTC_ARCHS="$(lipo -archs "$GO2RTC_CACHED" 2>/dev/null || true)"
 if ! (printf '%s' "$GO2RTC_ARCHS" | grep -qw "arm64" && printf '%s' "$GO2RTC_ARCHS" | grep -qw "x86_64"); then
     echo "▶ 正在准备通用架构 go2rtc (arm64 + x86_64, v1.9.15)..."
@@ -421,7 +456,10 @@ else
 fi
 echo "✅ 已打包完成：$APP_DIR"
 
-if [ "$WAS_RUNNING" = "1" ]; then
+if [ "$WAS_RUNNING" = "1" ] && [ "${SKIP_RESTART:-0}" != "1" ]; then
     open "$APP_DIR"
     echo "🔄 已自动重启 MenuBarMijia.app"
+fi
+if [ "${SKIP_RESTART:-0}" = "1" ]; then
+    echo "⏸️  SKIP_RESTART=1：未终止、未启动任何 MenuBarMijia 进程"
 fi

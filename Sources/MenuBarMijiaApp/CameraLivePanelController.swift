@@ -37,14 +37,14 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
     public static let expandedSize = NSSize(width: 640, height: 420)
     private static let frameStorageKey = "camera_live_panel_frame_v1"
 
-    public private(set) var activeDeviceId: String?
-    public private(set) var streamSource: CameraStreamSource?
+    public internal(set) var activeDeviceId: String?
+    public internal(set) var streamSource: CameraStreamSource?
     public private(set) var isLoadingStream = false
     public private(set) var errorMessage: String?
     public private(set) var snapshotImage: NSImage?
     /// Native H.264/H.265 player for `.liveMP4` streams; nil for every other source.
     private(set) var videoPlayer: CameraLiveVideoPlayer?
-    public private(set) var hasLiveVideoFrame = false
+    public internal(set) var hasLiveVideoFrame = false
     /// Native Picture-in-Picture for the live video layer.
     @ObservationIgnored private var pictureInPicture: CameraPictureInPicture?
     public private(set) var isPictureInPicturePossible = false
@@ -59,10 +59,33 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
     public var isShowingURLConfig = false
     public var customURLInput = ""
 
+    /// Set only when a camera has an evidence-backed motor and the running bridge exposes the
+    /// motor endpoint. Nil keeps the plain viewer and the window-drag gesture.
+    public internal(set) var ptzBinding: CameraPTZBinding?
+    public internal(set) var ptzClientReady = false
+    /// Transient failure text; nil when the local bridge accepted every command.
+    public internal(set) var ptzNotice: String?
+
+    var ptzClient: (any CameraPTZControlling)?
+    var ptzPlanner = CameraPTZDragPlanner()
+    var ptzDragID: UUID?
+    var ptzToken: CameraPTZSessionToken?
+    var ptzDeviceId: String?
+    var ptzSeq: UInt64 = 0
+    var ptzBeginTask: Task<Void, Never>?
+    var ptzHeartbeatTask: Task<Void, Never>?
+    var ptzQueue = CameraPTZCommandQueue()
+    var ptzPendingDirection: CameraPTZDirection?
+    var ptzNoticeTask: Task<Void, Never>?
+    var ptzStopTask: Task<Void, Never>?
+    var ptzLifecycleID = UUID()
+    /// Fixed clock for deterministic previews; nil in production.
+    var demoTimestampOverride: Date?
+
     /// Disabled in unit tests so opening the camera panel does not steal focus from the terminal.
     public var presentsActively = true
 
-    private weak var store: HomeStore?
+    weak var store: HomeStore?
     private(set) var panelWindow: CameraFloatingPanel?
     private var resolveTask: Task<Void, Never>?
     private var snapshotLoopTask: Task<Void, Never>?
@@ -142,6 +165,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
 
     public func present(device: SmartDevice) {
         guard let store else { return }
+        finishPTZMove()
         closeReleaseTask?.cancel()
         closeReleaseTask = nil
         doorbellDismissTask?.cancel()
@@ -228,6 +252,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
     }
 
     private func stopStreamTasks() {
+        clearPTZ()
         resolveTask?.cancel()
         resolveTask = nil
         snapshotLoopTask?.cancel()
@@ -253,6 +278,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         if isPictureInPictureActive {
             pictureInPicture.stop()
         } else {
+            finishPTZMove()
             pictureInPicture.start()
         }
     }
@@ -367,8 +393,8 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
                 switch resolved {
                 case .snapshot(let url):
                     self.startSnapshotLoop(url: url)
-                case .liveMP4(let url, let fallback):
-                    self.startLiveVideo(url: url, mjpegFallback: fallback)
+                case .liveMP4(let url, let fallback, let ptz):
+                    self.startLiveVideo(url: url, mjpegFallback: fallback, ptz: ptz)
                 case .mjpeg(let url):
                     self.startMJPEGStream(url: url)
                 case .hls, .demo:
@@ -398,7 +424,23 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
     /// Plays the camera's own bitstream through VideoToolbox, reconnecting when go2rtc drops the
     /// connection. If no frame ever decodes (unsupported codec, broken parameter sets, no data
     /// for 15 s) it switches to the transcoded MJPEG fallback so the window still shows video.
-    private func startLiveVideo(url: URL, mjpegFallback: URL?) {
+    private func startLiveVideo(url: URL, mjpegFallback: URL?, ptz: CameraPTZBinding?) {
+        clearPTZ()
+        ptzBinding = ptz
+        let lifecycle = ptzLifecycleID
+        if let ptz {
+            Task { @MainActor [weak self] in
+                guard let client = await XiaomiCameraBridge.shared.makePTZClient(streamName: ptz.streamName) else {
+                    return
+                }
+                guard let self,
+                      self.ptzLifecycleID == lifecycle,
+                      self.ptzBinding == ptz,
+                      self.streamSource != nil else { return }
+                self.ptzClient = client
+                self.ptzClientReady = true
+            }
+        }
         snapshotLoopTask?.cancel()
         videoPlayer?.stop()
         let player = CameraLiveVideoPlayer()
@@ -428,6 +470,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
                 }
                 failedAttempts += 1
                 if failedAttempts >= 2, !self.hasLiveVideoFrame, let mjpegFallback {
+                    self.clearPTZ()
                     self.videoPlayer?.stop()
                     self.videoPlayer = nil
                     self.hasLiveVideoFrame = false
@@ -437,6 +480,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
                     return
                 }
                 if failedAttempts >= 4 {
+                    self.clearPTZ()
                     self.errorMessage = L10n.tr(
                         "实时画面中断：\(outcome.failure ?? "无数据")",
                         "Live video stopped: \(outcome.failure ?? "no data")"
@@ -920,6 +964,19 @@ struct CameraLivePanelView: View {
                 // still frames ignore hits and let drags fall through to it.
                 WindowDragArea(onDoubleClick: { controller.toggleExpandedSize() })
                 viewportContent
+                if controller.isPTZEnabled {
+                    CameraPTZDragSurface(
+                        onBegan: { controller.ptzDragBegan(at: $0) },
+                        onMoved: { controller.ptzDragMoved(to: $0) },
+                        onEnded: { controller.ptzDragEnded() },
+                        onDoubleClick: { controller.toggleExpandedSize() }
+                    )
+                }
+                if let notice = controller.ptzNotice {
+                    CameraPTZNoticeBanner(text: notice)
+                        .padding(.bottom, 10)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
@@ -1233,7 +1290,7 @@ struct CameraLivePanelView: View {
 
                     Spacer()
 
-                    Text(Self.timestampString(tick: demoTick))
+                    Text(Self.timestampString(controller: controller, tick: demoTick))
                         .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.85))
                         .padding(.horizontal, 8)
@@ -1282,6 +1339,11 @@ struct CameraLivePanelView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             AdaptiveGlassContainer(spacing: 6) {
                 HStack(spacing: 6) {
+                    if controller.ptzClientReady,
+                       controller.ptzBinding?.capability.confidence == .pendingRealDevice {
+                        CameraPTZPendingBadge()
+                    }
+
                     if spec.powerWritable {
                         Button {
                             if let dev = device {
@@ -1357,10 +1419,10 @@ struct CameraLivePanelView: View {
         }
     }
 
-    private static func timestampString(tick: Int) -> String {
+    private static func timestampString(controller: CameraLivePanelController, tick: Int) -> String {
         let _ = tick
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return formatter.string(from: Date())
+        return formatter.string(from: controller.demoTimestampOverride ?? Date())
     }
 }

@@ -52,3 +52,6 @@ docs/assets/AppIcon_*.png
 # 本地诊断脚本与临时实验（摄像机 #97 排错脚本等，保留在本地磁盘）
 .scratch/
 
+
+# 本地构建的带云台补丁 go2rtc（scripts/go2rtc-ptz/build.sh）
+scripts/go2rtc-ptz/out/

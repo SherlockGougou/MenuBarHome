@@ -149,6 +149,7 @@ if command -v python3 >/dev/null 2>&1; then
     python3 scripts/test_check_capability_matrix.py
     python3 scripts/test_mijia_cli.py
     python3 scripts/check_capability_matrix.py
+    python3 scripts/go2rtc-ptz/check_model_tables.py
     # Swift 与 Windows 测试都断言合成结果等于这份基线，所以这里直接读基线出报告（#295）。
     python3 scripts/miot_coverage_report.py
     python3 - <<'PY'

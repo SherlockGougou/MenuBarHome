@@ -1137,6 +1137,78 @@ struct SnapshotTests {
         }
     }
 
+    // MARK: - Camera PTZ conditional UI (#97)
+
+    @Test("The compact live panel shows the longest PTZ stop-failure banner and the pending badge")
+    func cameraPTZPanelNoticeSnapshot() async throws {
+        let fixture = try await SnapshotFixture(includeCamera: true)
+        defer { fixture.restore() }
+        let camera = try #require(fixture.store.devices.first { device in
+            if case .camera = device.kind { return true } else { return false }
+        })
+        let controller = CameraLivePanelController.shared
+        controller.isExpandedSize = false
+        controller.configurePTZPreview(
+            store: fixture.store,
+            deviceId: camera.id,
+            binding: CameraPTZBinding(
+                capability: CameraPTZCapability(
+                    model: "chuangmi.camera.061a01",
+                    vendor: "cs2",
+                    mode: .unknown,
+                    confidence: .pendingRealDevice
+                ),
+                streamName: "cam_raw_test"
+            ),
+            stream: .demo(deviceId: camera.id),
+            notice: "停止指令写入失败，云台可能仍在转动",
+            ready: true
+        )
+        defer { controller.configurePTZPreview(deviceId: nil, binding: nil, stream: nil, notice: nil, ready: false) }
+
+        assertRendered(
+            snapshotReady(CameraLivePanelView(controller: controller, store: fixture.store), scheme: .dark),
+            size: CGSize(width: CameraLivePanelController.compactSize.width, height: CameraLivePanelController.compactSize.height),
+            named: "camera-ptz-panel-notice-dark",
+            scheme: .dark
+        )
+    }
+
+    @Test("The compact live panel shows the pending badge beside the normal control bar")
+    func cameraPTZPanelPendingSnapshot() async throws {
+        let fixture = try await SnapshotFixture(includeCamera: true)
+        defer { fixture.restore() }
+        let camera = try #require(fixture.store.devices.first { device in
+            if case .camera = device.kind { return true } else { return false }
+        })
+        let controller = CameraLivePanelController.shared
+        controller.isExpandedSize = false
+        controller.configurePTZPreview(
+            store: fixture.store,
+            deviceId: camera.id,
+            binding: CameraPTZBinding(
+                capability: CameraPTZCapability(
+                    model: "chuangmi.camera.061a01",
+                    vendor: "cs2",
+                    mode: .unknown,
+                    confidence: .pendingRealDevice
+                ),
+                streamName: "cam_raw_test"
+            ),
+            stream: .demo(deviceId: camera.id),
+            notice: nil,
+            ready: true
+        )
+        defer { controller.configurePTZPreview(deviceId: nil, binding: nil, stream: nil, notice: nil, ready: false) }
+
+        assertRendered(
+            snapshotReady(CameraLivePanelView(controller: controller, store: fixture.store), scheme: .dark),
+            size: CGSize(width: CameraLivePanelController.compactSize.width, height: CameraLivePanelController.compactSize.height),
+            named: "camera-ptz-panel-pending-dark",
+            scheme: .dark
+        )
+    }
+
     // MARK: - Rendering switches
 
     private func snapshotReady<V: View>(_ view: V, scheme: ColorScheme = .light) -> some View {
@@ -1250,7 +1322,12 @@ private struct SnapshotFixture {
     ///   - roomCount: builds a home with that many rooms instead of the demo's three, so the
     ///     room-order list can be rendered at the scale it was designed for (#146).
     ///   - editMode: opens the panel in that mode, e.g. `.roomOrder` for the order list baseline.
-    init(miSession: MiSession? = nil, roomCount: Int? = nil, editMode: PanelEditMode = .none) async throws {
+    init(
+        miSession: MiSession? = nil,
+        roomCount: Int? = nil,
+        editMode: PanelEditMode = .none,
+        includeCamera: Bool = false
+    ) async throws {
         previousLanguage = L10n.currentLanguage
         L10n.currentLanguage = .zhHans
         previousAppearance = UserDefaults.standard.string(forKey: AppAppearance.storageKey)
@@ -1285,7 +1362,7 @@ private struct SnapshotFixture {
         }
 
         store = HomeStore(
-            provider: MockHomeProvider(snapshot: Self.home(roomCount: roomCount)),
+            provider: MockHomeProvider(snapshot: Self.home(roomCount: roomCount, includeCamera: includeCamera)),
             defaultsSuiteName: suiteName
         )
 
@@ -1307,8 +1384,8 @@ private struct SnapshotFixture {
 
     /// The demo home with its three rooms replaced by `roomCount` rooms; devices are spread over
     /// them so the list shows more than "0 台" on every row.
-    private static func home(roomCount: Int?) -> SynthesizedHome {
-        var home = DemoHomeProvider.defaultHome(includeCamera: false)
+    private static func home(roomCount: Int?, includeCamera: Bool = false) -> SynthesizedHome {
+        var home = DemoHomeProvider.defaultHome(includeCamera: includeCamera)
         guard let roomCount, roomCount > 0 else { return home }
         let names = [
             "客厅", "主卧", "书房", "儿童房", "厨房", "餐厅", "阳台", "玄关",

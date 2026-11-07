@@ -1130,7 +1130,7 @@ extension HomeStore {
            (scheme == "http" || scheme == "https") {
             let lower = custom.lowercased()
             if lower.contains("stream.mp4") {
-                return .liveMP4(url, mjpegFallback: nil)
+                return .liveMP4(url, mjpegFallback: nil, ptz: nil)
             }
             if lower.contains("mjpeg") || lower.contains("mpjpeg") {
                 return .mjpeg(url)
