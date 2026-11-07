@@ -20,7 +20,7 @@
       "en": "Keyboard Search & Control",
       "zh": "键盘搜索与设备控制",
       "macos": "supported",
-      "windows": "unsupported"
+      "windows": "supported"
     },
     {
       "id": "global-hotkey",

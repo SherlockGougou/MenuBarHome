@@ -205,6 +205,7 @@ function withReadPower(command: DeviceCommand, isOn: boolean): DeviceCommand {
 }
 
 import type { MenuMijiaWindowsApp } from "./app.js";
+import { bindPanelInput } from "./panelKeyboard.js";
 
   export function bindEvents(host: MenuMijiaWindowsApp): void {
     host.root.querySelectorAll<HTMLElement>("[data-grok-toggle]").forEach((button) => {
@@ -212,30 +213,8 @@ import type { MenuMijiaWindowsApp } from "./app.js";
         host.setGrokBallStageExpanded(!host.isGrokBallStageExpanded);
       });
     });
-    const inputEl = host.root.querySelector<HTMLInputElement>("#command-input");
-    const sendBtn = host.root.querySelector<HTMLButtonElement>("#btn-send");
+    bindPanelInput(host);
     const micBtn = host.root.querySelector<HTMLButtonElement>("#btn-mic");
-    const submitCommandInput = () => {
-      if (!inputEl) return;
-      const value = inputEl.value;
-      const restoreFocus = document.activeElement === inputEl;
-      inputEl.value = "";
-      void host.handleNaturalCommand(value).finally(() => {
-        if (!restoreFocus) return;
-        const active = document.activeElement;
-        if (active !== null && active !== inputEl && active !== document.body) return;
-        host.root.querySelector<HTMLInputElement>("#command-input")?.focus({ preventScroll: true });
-      });
-    };
-
-    inputEl?.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        submitCommandInput();
-      }
-    });
-    sendBtn?.addEventListener("click", () => {
-      submitCommandInput();
-    });
     micBtn?.addEventListener("click", () => {
       host.toggleVoiceInput();
     });

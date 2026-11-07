@@ -85,8 +85,8 @@ CODE_ANCHORS = (
             "symbol": "isSearchFieldFocused",
         },
         "windows": {
-            "roots": ("windows/src", "windows/src-tauri/src"),
-            "symbol": "isSearchFieldFocused",
+            "path": "windows/src/core/panelSearch.ts",
+            "symbol": "searchMatches",
         },
     },
     {
