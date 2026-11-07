@@ -153,7 +153,7 @@ import { quickActions } from "./demo.js";
                       .map(
                         (item) => `
                       <div class="cc-timer-row">
-                        <span>${t("已错过定时：{command}（电脑睡眠时到点，没有自动执行）", { command: host.escapeHtml(item.command) })}</span>
+                        <span>${t("已错过定时：{command}（没有自动执行，请确认后运行）", { command: host.escapeHtml(item.command) })}</span>
                         <button class="cc-inline-pill" data-run-missed="${item.id}">立即执行</button>
                         <button class="cc-inline-pill" data-dismiss-missed="${item.id}">忽略</button>
                       </div>

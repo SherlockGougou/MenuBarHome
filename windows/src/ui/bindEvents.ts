@@ -1,3 +1,4 @@
+import { cancelScheduledCommands, confirmMissedScheduledCommand } from "./scheduledCommands.js";
 import { HomeAssistantClient, homeAssistantIdentity, homeAssistantCommand, parseCachedHAHome } from "../core/homeAssistant.js";
 import type { SynthesizedHome } from "../core/models.js";
 import { GrokBallView } from "./grokBall.js";
@@ -625,14 +626,13 @@ import type { MenuMijiaWindowsApp } from "./app.js";
       btn.addEventListener("click", () => {
         const item = host.missedScheduledCommands.find((c) => c.id === btn.dataset.runMissed);
         if (!item) return;
-        host.missedScheduledCommands = host.missedScheduledCommands.filter((c) => c.id !== item.id);
-        void host.runScheduledCommand(item);
+        confirmMissedScheduledCommand(host, item.id);
       });
     });
 
     host.root.querySelectorAll<HTMLElement>("[data-dismiss-missed]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        host.missedScheduledCommands = host.missedScheduledCommands.filter((c) => c.id !== btn.dataset.dismissMissed);
+        cancelScheduledCommands(host, btn.dataset.dismissMissed);
         host.render();
       });
     });
@@ -640,7 +640,7 @@ import type { MenuMijiaWindowsApp } from "./app.js";
     host.root.querySelectorAll<HTMLElement>("[data-cancel-timer]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const id = btn.dataset.cancelTimer;
-        host.scheduledCommands = host.scheduledCommands.filter((c) => c.id !== id);
+        cancelScheduledCommands(host, id);
         host.render();
       });
     });

@@ -68,7 +68,7 @@ export function bindSettingsEvents(host: SettingsEventsHost): void {
         host.settings.cloudConsentEndpoints.push(pending.endpoint);
         host.saveSettings(true);
       }
-      void host.handleNaturalCommand(pending.utterance, true);
+      void host.handleNaturalCommand(pending.utterance);
     });
 
     host.root.querySelector("#btn-cloud-decline")?.addEventListener("click", () => {

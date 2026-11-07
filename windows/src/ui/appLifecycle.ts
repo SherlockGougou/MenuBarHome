@@ -1,3 +1,4 @@
+import { processScheduledCommands } from "./scheduledCommands.js";
 import type { MenuMijiaWindowsApp } from "./app.js";
 import { t } from "../core/i18n.js";
 import {
@@ -15,7 +16,7 @@ import { normalizeMiCloudRegion } from "../core/miCloudClient.js";
 import { assistantEndpointIdentity, isLocalNetworkURL } from "../core/assistant.js";
 import { setLanguage, resolveLanguage } from "../core/i18n.js";
 import { applyTemperatureUnit } from "../core/temperature.js";
-import { partitionDueTimers, cloudRefreshDue } from "../core/models.js";
+import { cloudRefreshDue } from "../core/models.js";
 import { normalizeGlobalShortcut, recordShortcutFromKeyEvent } from "./panelPrefs.js";
 import { APP_VERSION } from "./appConstants.js";
 import { invokeTauriVoid } from "./transport.js";
@@ -33,6 +34,7 @@ export function initializeCredentials(host: MenuMijiaWindowsApp): void {
       writeSettingsForStorage(host.settings);
       stripCredentialFieldsFromStoredCopies();
       void persistCredentials(host);
+      host.timerCredentialsReady = true;
       return;
     }
     // A stale pre-1.0 copy can still hold secrets even when the v2 copy is clean (#28).
@@ -76,6 +78,8 @@ export async function hydrateCredentials(host: MenuMijiaWindowsApp): Promise<voi
         host.haConnectionError = "Home Assistant credentials could not be loaded. Check Windows Credential Manager.";
         host.render();
       }
+    } finally {
+      host.timerCredentialsReady = true;
     }
   }
 
@@ -351,18 +355,7 @@ export function startTimerLoop(host: MenuMijiaWindowsApp): void {
         changed = true;
       }
 
-      // After sleep the interval resumes late; a timer more than a minute overdue is not run silently (#22).
-      const { run, missed, remaining } = partitionDueTimers(host.scheduledCommands, now);
-      if (run.length > 0 || missed.length > 0) {
-        host.scheduledCommands = remaining;
-        host.missedScheduledCommands.push(...missed);
-        changed = true;
-        for (const item of run) {
-          void host.runScheduledCommand(item);
-        }
-      } else if (host.scheduledCommands.length > 0) {
-        changed = true;
-      }
+      changed = processScheduledCommands(host, now) || changed;
 
       if (changed) {
         host.render();
