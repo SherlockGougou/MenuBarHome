@@ -32,7 +32,7 @@ The GitHub PR history was not migrated, so `pending-work.sh` shows `no PR` for e
 
 - **Open**: push the branch to `origin`, then run `python3 scripts/forge.py pr create --title "..." --body-file -`. The source branch defaults to the current branch and the target to `main`. The MR squashes and deletes its branch on merge.
 - **Read**: `python3 scripts/forge.py pr view <n>`. For the diff, use `git diff origin/main...origin/<branch>`.
-- **Checks**: `python3 scripts/forge.py pr checks <n>` prints the MR's latest pipeline and its jobs. `.gitlab-ci.yml` runs `bash scripts/check.sh` (snapshots and Windows TypeScript tests included) on the maintainer's Mac through a project runner (shell executor, tag `macos`). It does not run Rust tests. GitLab does not run the `.github/workflows` files. Failed job logs: `bash scripts/ci_errors.sh <pipeline-id>`.
+- **Checks**: `python3 scripts/forge.py pr checks <n>` prints the MR's latest pipeline and its jobs. `.gitlab-ci.yml` runs `bash scripts/check.sh` (snapshots and Windows TypeScript tests included) on the maintainer's Mac through a project runner (shell executor, tag `macos`). Rust is covered separately by the `windows` job on a GitLab.com hosted Windows runner (tag `saas-windows-medium-amd64`): `npm run build` plus `cargo test` for `windows/src-tauri`, triggered by `windows/` or `.gitlab-ci.yml` changes. GitLab does not run the `.github/workflows` files. Failed job logs: `bash scripts/ci_errors.sh <pipeline-id>`.
 - **Merge**: `python3 scripts/forge.py pr merge <n> --method squash --delete-branch`.
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external MRs as feature requests; `/triage` reads this flag.)_
