@@ -579,6 +579,7 @@ struct GoldenCorpusTests {
         let isOn: Bool
         let isReadOnly: Bool
         let readouts: [String]
+        let alerts: [String]?
         let symbolName: String?
         let powerFacet: MiotFacetSummary?
         let facets: [MiotFacetSummary]
@@ -997,6 +998,7 @@ struct GoldenCorpusTests {
             #expect(generic.isOn == item.expected.isOn, "\(item.model) power")
             #expect(generic.isReadOnly == item.expected.isReadOnly, "\(item.model) read-only")
             #expect(generic.readouts.map(\.value) == item.expected.readouts, "\(item.model) readouts")
+            #expect(generic.alerts == (item.expected.alerts ?? []), "\(item.model) alerts")
             #expect(generic.symbolName == item.expected.symbolName, "\(item.model) symbol")
             #expect(generic.powerControl.map(MiotFacetSummary.init) == item.expected.powerFacet, "\(item.model) power facet")
             #expect(

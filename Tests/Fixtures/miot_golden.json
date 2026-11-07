@@ -1,5 +1,139 @@
 {
   "specs": {
+    "fixture.generic.tank.alerts": {
+      "type": "urn:miot-spec-v2:device:fish-tank:00000000:fixture:1",
+      "services": [
+        {
+          "iid": 2,
+          "type": "urn:miot-spec-v2:service:fish-tank:00000000:fixture:1",
+          "properties": [
+            {
+              "iid": 1,
+              "type": "urn:miot-spec-v2:property:battery-level:00000000:fixture:1",
+              "format": "uint8",
+              "access": [
+                "read",
+                "notify"
+              ],
+              "unit": "percentage"
+            },
+            {
+              "iid": 2,
+              "type": "urn:miot-spec-v2:property:pump-alarm:00000000:fixture:1",
+              "format": "uint8",
+              "access": [
+                "read",
+                "notify"
+              ],
+              "value-list": [
+                { "value": 0, "description": "No Faults" },
+                { "value": 1, "description": "Low" },
+                { "value": 2, "description": "Bockage" }
+              ]
+            },
+            {
+              "iid": 3,
+              "type": "urn:miot-spec-v2:property:temperature:00000000:fixture:1",
+              "format": "float",
+              "access": [
+                "read",
+                "notify"
+              ],
+              "unit": "celsius"
+            },
+            {
+              "iid": 4,
+              "type": "urn:miot-spec-v2:property:filter-alarm:00000000:fixture:1",
+              "format": "uint8",
+              "access": [
+                "read",
+                "notify"
+              ],
+              "value-list": [
+                { "value": 0, "description": "Normal" },
+                { "value": 1, "description": "Change" }
+              ]
+            },
+            {
+              "iid": 5,
+              "type": "urn:miot-spec-v2:property:flow-speed-level:00000000:fixture:1",
+              "format": "uint8",
+              "access": [
+                "read",
+                "notify"
+              ],
+              "value-list": [
+                { "value": 0, "description": "Flow" }
+              ]
+            },
+            {
+              "iid": 6,
+              "type": "urn:miot-spec-v2:property:pump-alarm:00000000:fixture:1",
+              "format": "uint8",
+              "access": [
+                "read",
+                "notify"
+              ],
+              "value-list": [
+                { "value": 0, "description": "No Faults" },
+                { "value": 1, "description": "Low" },
+                { "value": 2, "description": "Bockage" }
+              ]
+            }
+          ],
+          "actions": []
+        }
+      ]
+    },
+    "fixture.generic.feeder.alerts": {
+      "type": "urn:miot-spec-v2:device:pet-feeder:00000000:fixture:1",
+      "services": [
+        {
+          "iid": 2,
+          "type": "urn:miot-spec-v2:service:pet-feeder:00000000:fixture:1",
+          "properties": [
+            {
+              "iid": 1,
+              "type": "urn:miot-spec-v2:property:battery-level:00000000:fixture:1",
+              "format": "uint8",
+              "access": [
+                "read",
+                "notify"
+              ],
+              "unit": "percentage"
+            },
+            {
+              "iid": 2,
+              "type": "urn:miot-spec-v2:property:fault:00000000:fixture:1",
+              "format": "uint8",
+              "access": [
+                "read",
+                "notify"
+              ],
+              "value-list": [
+                { "value": 0, "description": "No Faults" },
+                { "value": 1, "description": "Fault" }
+              ]
+            },
+            {
+              "iid": 3,
+              "type": "urn:miot-spec-v2:property:pet-food-left-level:00000000:fixture:1",
+              "format": "uint8",
+              "access": [
+                "read",
+                "notify"
+              ],
+              "value-list": [
+                { "value": 0, "description": "Normal" },
+                { "value": 1, "description": "Low" },
+                { "value": 2, "description": "Empty" }
+              ]
+            }
+          ],
+          "actions": []
+        }
+      ]
+    },
     "fixture.fan.levels": {
       "type": "urn:miot-spec-v2:device:fan:0000A005:fixture-levels:1",
       "services": [
@@ -4748,6 +4882,217 @@
     }
   ],
   "genericCases": [
+    {
+      "did": "tank_alerts",
+      "model": "fixture.generic.tank.alerts",
+      "values": [
+        { "siid": 2, "piid": 1, "value": 88 },
+        { "siid": 2, "piid": 2, "value": 1 },
+        { "siid": 2, "piid": 3, "value": 24.5 },
+        { "siid": 2, "piid": 4, "value": 1 },
+        { "siid": 2, "piid": 5, "value": 0 },
+        { "siid": 2, "piid": 6, "value": 1 }
+      ],
+      "expected": {
+        "deviceType": "fish-tank",
+        "typeTitle": "鱼缸",
+        "isOn": false,
+        "isReadOnly": true,
+        "readouts": [
+          "24.5°C"
+        ],
+        "alerts": [
+          "水泵告警：低水位",
+          "滤芯告警：需更换"
+        ],
+        "symbolName": "fish.fill",
+        "powerFacet": null,
+        "facets": [
+          { "id": "2.1", "kind": "reading", "name": "battery-level", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.2", "kind": "reading", "name": "pump-alarm", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.3", "kind": "reading", "name": "temperature", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.4", "kind": "reading", "name": "filter-alarm", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": true },
+          { "id": "2.5", "kind": "reading", "name": "flow-speed-level", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.6", "kind": "reading", "name": "pump-alarm", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false }
+        ]
+      }
+    },
+    {
+      "did": "tank_healthy",
+      "model": "fixture.generic.tank.alerts",
+      "values": [
+        { "siid": 2, "piid": 1, "value": 88 },
+        { "siid": 2, "piid": 2, "value": 0 },
+        { "siid": 2, "piid": 3, "value": 24.5 },
+        { "siid": 2, "piid": 4, "value": 0 },
+        { "siid": 2, "piid": 5, "value": 0 },
+        { "siid": 2, "piid": 6, "value": 0 }
+      ],
+      "expected": {
+        "deviceType": "fish-tank",
+        "typeTitle": "鱼缸",
+        "isOn": false,
+        "isReadOnly": true,
+        "readouts": [
+          "24.5°C"
+        ],
+        "alerts": [],
+        "symbolName": "fish.fill",
+        "powerFacet": null,
+        "facets": [
+          { "id": "2.1", "kind": "reading", "name": "battery-level", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.2", "kind": "reading", "name": "pump-alarm", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.3", "kind": "reading", "name": "temperature", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.4", "kind": "reading", "name": "filter-alarm", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": true },
+          { "id": "2.5", "kind": "reading", "name": "flow-speed-level", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.6", "kind": "reading", "name": "pump-alarm", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false }
+        ]
+      }
+    },
+    {
+      "did": "tank_missing_temperature",
+      "model": "fixture.generic.tank.alerts",
+      "values": [
+        { "siid": 2, "piid": 1, "value": 88 }
+      ],
+      "expected": {
+        "deviceType": "fish-tank",
+        "typeTitle": "鱼缸",
+        "isOn": false,
+        "isReadOnly": true,
+        "readouts": [
+          "88%"
+        ],
+        "alerts": [],
+        "symbolName": "fish.fill",
+        "powerFacet": null,
+        "facets": [
+          { "id": "2.1", "kind": "reading", "name": "battery-level", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.2", "kind": "reading", "name": "pump-alarm", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.3", "kind": "reading", "name": "temperature", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.4", "kind": "reading", "name": "filter-alarm", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": true },
+          { "id": "2.5", "kind": "reading", "name": "flow-speed-level", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.6", "kind": "reading", "name": "pump-alarm", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false }
+        ]
+      }
+    },
+    {
+      "did": "tank_blocked",
+      "model": "fixture.generic.tank.alerts",
+      "values": [
+        { "siid": 2, "piid": 2, "value": 2 },
+        { "siid": 2, "piid": 3, "value": 24.5 }
+      ],
+      "expected": {
+        "deviceType": "fish-tank",
+        "typeTitle": "鱼缸",
+        "isOn": false,
+        "isReadOnly": true,
+        "readouts": [
+          "24.5°C"
+        ],
+        "alerts": [
+          "水泵告警：堵塞"
+        ],
+        "symbolName": "fish.fill",
+        "powerFacet": null,
+        "facets": [
+          { "id": "2.1", "kind": "reading", "name": "battery-level", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.2", "kind": "reading", "name": "pump-alarm", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.3", "kind": "reading", "name": "temperature", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.4", "kind": "reading", "name": "filter-alarm", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": true },
+          { "id": "2.5", "kind": "reading", "name": "flow-speed-level", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.6", "kind": "reading", "name": "pump-alarm", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false }
+        ]
+      }
+    },
+    {
+      "did": "tank_numeric_string",
+      "model": "fixture.generic.tank.alerts",
+      "values": [
+        { "siid": 2, "piid": 2, "value": "1.6" },
+        { "siid": 2, "piid": 3, "value": 24.5 }
+      ],
+      "expected": {
+        "deviceType": "fish-tank",
+        "typeTitle": "鱼缸",
+        "isOn": false,
+        "isReadOnly": true,
+        "readouts": [
+          "24.5°C"
+        ],
+        "alerts": [
+          "水泵告警：堵塞"
+        ],
+        "symbolName": "fish.fill",
+        "powerFacet": null,
+        "facets": [
+          { "id": "2.1", "kind": "reading", "name": "battery-level", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.2", "kind": "reading", "name": "pump-alarm", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.3", "kind": "reading", "name": "temperature", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.4", "kind": "reading", "name": "filter-alarm", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": true },
+          { "id": "2.5", "kind": "reading", "name": "flow-speed-level", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.6", "kind": "reading", "name": "pump-alarm", "serviceName": "fish-tank", "isWritable": false, "writesByDefault": false, "isHighValue": false }
+        ]
+      }
+    },
+    {
+      "did": "feeder_alerts",
+      "model": "fixture.generic.feeder.alerts",
+      "values": [
+        { "siid": 2, "piid": 1, "value": 95 },
+        { "siid": 2, "piid": 2, "value": 1 },
+        { "siid": 2, "piid": 3, "value": 1 }
+      ],
+      "expected": {
+        "deviceType": "pet-feeder",
+        "typeTitle": "宠物喂食器",
+        "isOn": false,
+        "isReadOnly": true,
+        "readouts": [
+          "Low"
+        ],
+        "alerts": [
+          "故障：故障",
+          "余粮：余粮不足"
+        ],
+        "symbolName": "pawprint.fill",
+        "powerFacet": null,
+        "facets": [
+          { "id": "2.1", "kind": "reading", "name": "battery-level", "serviceName": "pet-feeder", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.2", "kind": "reading", "name": "fault", "serviceName": "pet-feeder", "isWritable": false, "writesByDefault": false, "isHighValue": true },
+          { "id": "2.3", "kind": "reading", "name": "pet-food-left-level", "serviceName": "pet-feeder", "isWritable": false, "writesByDefault": false, "isHighValue": true }
+        ]
+      }
+    },
+    {
+      "did": "feeder_empty",
+      "model": "fixture.generic.feeder.alerts",
+      "values": [
+        { "siid": 2, "piid": 1, "value": 95 },
+        { "siid": 2, "piid": 2, "value": 0 },
+        { "siid": 2, "piid": 3, "value": 2 }
+      ],
+      "expected": {
+        "deviceType": "pet-feeder",
+        "typeTitle": "宠物喂食器",
+        "isOn": false,
+        "isReadOnly": true,
+        "readouts": [
+          "Empty"
+        ],
+        "alerts": [
+          "余粮：已空"
+        ],
+        "symbolName": "pawprint.fill",
+        "powerFacet": null,
+        "facets": [
+          { "id": "2.1", "kind": "reading", "name": "battery-level", "serviceName": "pet-feeder", "isWritable": false, "writesByDefault": false, "isHighValue": false },
+          { "id": "2.2", "kind": "reading", "name": "fault", "serviceName": "pet-feeder", "isWritable": false, "writesByDefault": false, "isHighValue": true },
+          { "id": "2.3", "kind": "reading", "name": "pet-food-left-level", "serviceName": "pet-feeder", "isWritable": false, "writesByDefault": false, "isHighValue": true }
+        ]
+      }
+    },
     {
       "did": "did_fish_tank",
       "model": "fixture.fish.tank",

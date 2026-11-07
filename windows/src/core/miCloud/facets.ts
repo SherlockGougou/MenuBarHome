@@ -158,6 +158,23 @@ export function profileOverride(
   });
 }
 
+/** Whole words keep healthy labels such as `Flow` and `No Faults` out of alerts. */
+export function isMiotAlertLabel(label: string, profiles: DeviceProfiles = DEVICE_PROFILES): boolean {
+  const text = label.toLowerCase();
+  return profiles.alerts.words.some((word) => {
+    const needle = word.toLowerCase();
+    if (/[^\x00-\x7f]/.test(needle)) return text.includes(needle);
+    let start = text.indexOf(needle);
+    while (start >= 0) {
+      const before = Array.from(text.slice(0, start)).at(-1);
+      const after = Array.from(text.slice(start + needle.length))[0];
+      if ((!before || !/[\p{L}\p{N}]/u.test(before)) && (!after || !/[\p{L}\p{N}]/u.test(after))) return true;
+      start = text.indexOf(needle, start + needle.length);
+    }
+    return false;
+  });
+}
+
 /** The global list sweeps every match up to `maxVisible`; a family override is a priority list. */
 function markHighValue(
   facets: MiotFacet[],

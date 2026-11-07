@@ -1163,6 +1163,7 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
           isOn: boolean;
           isReadOnly: boolean;
           readouts: string[];
+          alerts?: string[];
           symbolName: string | null;
           powerFacet: ReturnType<typeof facetSummary> | null;
           facets: ReturnType<typeof facetSummary>[];
@@ -1253,6 +1254,7 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
       assert.equal(kind.isOn, item.expected.isOn, `${item.model} power`);
       assert.equal(kind.isReadOnly, item.expected.isReadOnly, `${item.model} read-only`);
       assert.deepEqual(kind.readouts, item.expected.readouts, `${item.model} readouts`);
+      assert.deepEqual(kind.alerts ?? [], item.expected.alerts ?? [], `${item.model} alerts`);
       assert.equal(kind.symbolName, item.expected.symbolName, `${item.model} symbol`);
       assert.deepEqual(
         kind.powerControl === null ? null : facetSummary(kind.powerControl),

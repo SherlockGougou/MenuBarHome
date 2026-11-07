@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import { isDeepStrictEqual } from "node:util";
-import { DEVICE_PROFILES, buildMiotFacets, matchesMiotFacetPattern } from "../src/core/miCloud/facets.js";
+import { DEVICE_PROFILES, buildMiotFacets, isMiotAlertLabel, matchesMiotFacetPattern } from "../src/core/miCloud/facets.js";
+import { MiotSynthesizer } from "../src/core/miCloud/synthesis.js";
+import { facetAlertText, facetTitle } from "../src/core/miotFacetText.js";
+import { setLanguage } from "../src/core/i18n.js";
 import type { MiotFacet } from "../src/core/miCloud/facets.js";
 import { parseMiotDeviceSpec } from "../src/core/miCloud/spec.js";
 import type { MiotDeviceSpec } from "../src/core/miCloud/spec.js";
@@ -52,6 +55,49 @@ function coverageSpecs(): [string, MiotDeviceSpec][] {
 }
 
 describe("MIoT facet engine (shared fixture)", () => {
+  it("recognizes alert words without treating healthy labels or word fragments as faults", () => {
+    for (const label of ["Low", "Low1", "Bockage", "Stuck Food", "Pump Fault", "水泵缺水"]) {
+      assert.equal(isMiotAlertLabel(label), true, label);
+    }
+    for (const label of ["Flow", "No Faults", "Normal", "Allowed", "low2", "水Low水"]) {
+      assert.equal(isMiotAlertLabel(label), false, label);
+    }
+  });
+
+  it("ignores invalid alert values and keeps the existing English titles", () => {
+    const spec = parseSpec({
+      type: "urn:miot-spec-v2:device:fish-tank:00000000:fixture:1",
+      services: [{
+        iid: 2,
+        type: "urn:miot-spec-v2:service:fish-tank:00000000:fixture:1",
+        properties: [{
+          iid: 1,
+          type: "urn:miot-spec-v2:property:pump-alarm:00000000:fixture:1",
+          description: "Pump alarm",
+          format: "uint8",
+          access: ["read"],
+          "value-list": [{ value: 1, description: "Low" }],
+        }],
+      }],
+    });
+    const record = { did: "tank", name: "tank", model: "fixture.tank", isOnline: true, specType: null };
+    for (const raw of [NaN, Infinity, -Infinity, Number.MAX_VALUE, "bad", "", null, true]) {
+      const card = MiotSynthesizer.genericCard(record, spec, new Map([["tank.2.1", raw]]));
+      assert.deepEqual(card?.kind.alerts, [], String(raw));
+    }
+    const card = MiotSynthesizer.genericCard(record, spec, new Map([["tank.2.1", 1]]));
+    const control = card?.facets[0];
+    assert.ok(control);
+    setLanguage("en");
+    try {
+      assert.equal(facetTitle({ ...control, name: "brightness", title: "亮度" }), "Brightness");
+      assert.equal(facetAlertText(control, "Low"), "Pump alarm：Low");
+      assert.equal(facetAlertText({ ...control, title: null }, "Low"), "Pump alarm：Low");
+    } finally {
+      setLanguage("zh-Hans");
+    }
+  });
+
   it("matches every hand-written rule case", () => {
     for (const ruleCase of fixture.cases) {
       const actual = buildMiotFacets(parseSpec(ruleCase.spec));

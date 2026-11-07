@@ -267,8 +267,9 @@ export interface GenericSpec {
   readonly powerControl: FacetControl | null;
   /** No facet accepts any write, so the card is a status surface and says 只读. */
   readonly isReadOnly: boolean;
-  /** At most two readings on the card, high-value facets first. */
+  /** At most two readings on the card, family preferences before high-value facets. */
   readonly readouts: readonly string[];
+  readonly alerts?: readonly string[];
   readonly symbolName: string | null;
 }
 
@@ -934,7 +935,7 @@ export function deviceStatusSummary(device: SmartDevice): string {
       return k.isOn ? t("运行中") : t("已关闭");
     }
     case "generic": {
-      const readings = k.readouts.join(" · ");
+      const readings = [...(k.alerts ?? []), ...k.readouts].join(" · ");
       if (readings) return readings;
       if (k.isReadOnly) return t("只读 · {type}", { type: k.typeTitle });
       return k.typeTitle;

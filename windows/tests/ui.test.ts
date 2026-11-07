@@ -10,7 +10,7 @@ import { installWindow } from "./dom.js";
 import { MenuMijiaWindowsApp, waitForCameraFrameGap } from "../src/ui/app.js";
 import { SKINS } from "../src/ui/panelPrefs.js";
 import { cloudFixture } from "./cloudFixture.js";
-import { MiCloudClient, MiotSynthesizer, inferFallbackSpec } from "../src/core/miCloudClient.js";
+import { MiCloudClient, MiotSynthesizer, inferFallbackSpec, parseMiotDeviceSpec } from "../src/core/miCloudClient.js";
 import { MiCloudCrypto } from "../src/core/miCloudCrypto.js";
 import type { FacetControl, GenericSpec, SmartDevice } from "../src/core/models.js";
 
@@ -4576,6 +4576,38 @@ describe("Appliance and generic cards (#9)", () => {
     gated().click();
     await setImmediate();
     assert.match(gated().textContent ?? "", /开/);
+  });
+
+  it("shows synthesized family alerts before preferred readings and clears them with a healthy snapshot", () => {
+    const corpus = JSON.parse(readFileSync(new URL("../../Tests/Fixtures/miot_golden.json", import.meta.url), "utf8"));
+    const cases: Record<string, string> = {
+      tank_alerts: "水泵告警：低水位 · 滤芯告警：需更换 · 24.5°C",
+      tank_healthy: "24.5°C",
+      feeder_alerts: "故障：故障 · 余粮：余粮不足 · Low",
+    };
+    const app = mount([]);
+    const did = "family_card";
+    for (const [caseDid, expected] of Object.entries(cases)) {
+      const item = corpus.genericCases.find((candidate: { did: string }) => candidate.did === caseDid);
+      assert.ok(item);
+      const spec = parseMiotDeviceSpec(corpus.specs[item.model]);
+      assert.ok(spec);
+      const home = MiotSynthesizer.synthesize(
+        [{ did, name: did, model: item.model, isOnline: true, specType: null }],
+        [],
+        { [item.model]: spec },
+        new Map(item.values.map((value: { siid: number; piid: number; value: unknown }) =>
+          [`${did}.${value.siid}.${value.piid}`, value.value],
+        )),
+      );
+      app.devices = home.devices;
+      app.deviceFacets = home.deviceFacets ?? {};
+      app.render();
+      const status = element(`[data-body-device="${did}"] .cc-tile-status`);
+      assert.equal(status.textContent, `全屋 · ${expected}`);
+      assert.equal(status.title, `全屋 · ${expected}`, "hover exposes the full status when the tile truncates it");
+      assert.equal(element(`[data-body-device="${did}"]`).getAttribute("aria-label"), `${did}，全屋 · ${expected}`);
+    }
   });
 
   const facet = (overrides: Partial<FacetControl>): FacetControl => ({
