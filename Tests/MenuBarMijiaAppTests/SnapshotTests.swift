@@ -1362,6 +1362,7 @@ enum SnapshotWindow {
     /// hand focus to the first focusable control (the header mic button) on any later run-loop pass,
     /// so clearing focus once before the capture (#323) still let a focus ring into CI baselines.
     static func make(size: CGSize) -> NSWindow {
+        pinOverlayScrollers()
         let window = CaptureWindow(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless],
@@ -1370,6 +1371,18 @@ enum SnapshotWindow {
         )
         window.isReleasedWhenClosed = false
         return window
+    }
+
+    /// With "Show scroll bars: automatically", AppKit switches to legacy scrollers once it notices a
+    /// mouse, a beat after launch; every scroll view in a capture then gives 17 pt to a scroller and the
+    /// layout no longer matches the baselines, which were drawn with overlay scrollers. Pin the setting
+    /// in the argument domain, which outranks the user's global one, so attached hardware cannot matter.
+    private static func pinOverlayScrollers() {
+        let defaults = UserDefaults.standard
+        var arguments = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
+        guard arguments["AppleShowScrollBars"] as? String != "WhenScrolling" else { return }
+        arguments["AppleShowScrollBars"] = "WhenScrolling"
+        defaults.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
     }
 
     private final class CaptureWindow: NSWindow {
