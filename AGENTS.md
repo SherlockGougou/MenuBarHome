@@ -40,7 +40,7 @@ CI 失败先看 `bash scripts/ci_errors.sh <pipeline-id|log-file>`（只打失�
 - 一个完整问题对应一次提交或一个 PR；同一问题的后续调整继续使用原 PR。
 - 多个代理并行时按顺序合并：上一个合并进 `main` 的流水线变绿后，再合下一个。连续合并时，后一次 push 会取消前一次的流水线，`main` 变红后就查不出是哪次合并引入的。
 - 直接 push 后，有 runner 时确认云端检查的最终结果；交付时区分“已推送”与“检查已通过”。直接 push 不等于发布新版本。
-- 合并请求（MR，即本文的 PR）用 `python3 scripts/forge.py pr create` 开，`pr checks <n>` 看流水线。`.gitlab-ci.yml` 在维护者 Mac 上的项目 runner（shell executor，标签 `macos`）跑 `bash scripts/check.sh`，含快照比对与 Windows 前端测试；Rust 由 `windows` 作业在 GitLab.com 托管 Windows runner（标签 `saas-windows-medium-amd64`）上跑 `npm run build` 与 `cargo test`，`windows/` 或 `.gitlab-ci.yml` 变更时触发。首次查询为空时按退避重试。`.github/workflows`、Codex 审查与 `pr-wait`/babysit 一类依赖 GitHub 的技能都已不可用。
+- 合并请求（MR，即本文的 PR）用 `python3 scripts/forge.py pr create` 开，`pr checks <n>` 看流水线。`.gitlab-ci.yml` 在维护者 Mac 上的项目 runner（shell executor，标签 `macos`）跑 `bash scripts/check.sh`，含快照比对、Windows 前端测试与 `vite build` 打包；Rust 由 `windows` 作业在 GitLab.com 托管 Windows runner（标签 `saas-windows-medium-amd64`）上跑 `npm run build` 与 `cargo test`，仅在 `windows/src-tauri/` 或 `.gitlab-ci.yml` 变更时触发。首次查询为空时按退避重试。`.github/workflows`、Codex 审查与 `pr-wait`/babysit 一类依赖 GitHub 的技能都已不可用。
 
 ### Worktrees
 

@@ -251,7 +251,9 @@ fi
 echo "🧪 [4/4] 运行 Windows 前端测试与 Raycast 扩展类型检查..."
 windows_status=0
 if [ -x "windows/node_modules/.bin/tsc" ]; then
-    (cd windows && npm test && npm run typecheck) || windows_status=$?
+    # `npm run build` = tsc --noEmit + vite build: the bundle that ships in the installer,
+    # which typecheck alone does not prove (asset imports, CSS, chunk limits).
+    (cd windows && npm test && npm run typecheck && npm run build) || windows_status=$?
 else
     echo "⏭️  跳过 Windows 门槛：未找到 windows/node_modules（先 cd windows && npm ci）"
 fi
