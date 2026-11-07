@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PYTHONIOENCODING=utf-8
 
 ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT_DIR"
@@ -86,7 +87,7 @@ if ! search_quiet 'defaultHost = ""' Sources/MijiaCore/LGWebOSClient.swift; then
 fi
 
 # 共享 golden 里的 10/8 是测试向量，不是个人局域网地址；只豁免这一份 fixture。
-lan_ip_hits="$(search_matches '10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' Sources/ Tests/ | grep -v '^Tests/Fixtures/local_network_endpoint_golden.json:' || true)"
+lan_ip_hits="$(search_matches '10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' Sources/ Tests/ | grep -v '^Tests[/\\]Fixtures[/\\]local_network_endpoint_golden\.json:' || true)"
 if [ -n "$lan_ip_hits" ] || search_matches 'localhost:3425' Sources/; then
     [ -n "$lan_ip_hits" ] && echo "$lan_ip_hits"
     echo "❌ 检测到硬编码的个人局域网 IP 或本机调试端口 (localhost:3425)，请移除！"

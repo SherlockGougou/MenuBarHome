@@ -62,6 +62,8 @@ import sys
 import unicodedata
 from pathlib import Path
 
+sys.stdout.reconfigure(newline="\n")
+
 mode, data_dir = sys.argv[1], Path(sys.argv[2])
 
 
