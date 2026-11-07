@@ -492,6 +492,90 @@ class MijiaCliTests(unittest.TestCase):
         url = mijia.build_url("ask", [("text", "开 灯")], TOKEN, "req1")
         self.assertEqual(url, f"menumijia://ask?text=%E5%BC%80%20%E7%81%AF&id=req1&token={TOKEN}")
 
+    def test_room_filter_merges_devices_sharing_a_room_name_across_room_ids(self) -> None:
+        snapshot = make_snapshot()
+        snapshot["devices"].append(
+            {
+                "id": "dev_ha_living_tv",
+                "name": "客厅电视",
+                "roomId": "ha_area_living",
+                "roomName": "客厅",
+                "isOnline": True,
+                "isOn": False,
+                "canToggle": True,
+                "statusText": "已关",
+                "icon": "tv",
+                "visualCategory": "generic",
+                "pinyinInitials": "ktds",
+                "pinyinFull": "ketingdianshi",
+            }
+        )
+        self.write_snapshot(snapshot)
+        code, out, err, _ = self.run_cli(["list", "--room", "客厅", "--json"])
+        self.assertEqual(code, 0, err)
+        ids = [d["id"] for d in json.loads(out)["devices"]]
+        self.assertEqual(
+            ids,
+            ["dev_living_light", "dev_living_fan", "dev_balcony_lamp", "dev_ha_living_tv"],
+        )
+
+    def test_device_and_scene_matching_supports_spaced_room_pinyin_full_entity_id_and_builtin_aliases(self) -> None:
+        snapshot = make_snapshot()
+        for dev in snapshot["devices"]:
+            if dev["id"] == "dev_study_lamp":
+                dev["pinyinFull"] = "shufangtaideng"
+        self.write_snapshot(snapshot)
+        for query in ("书房 台灯", "shufangtaideng"):
+            code, _, err, app = self.run_cli(["toggle", query])
+            self.assertEqual(code, 0, err)
+            self.assertEqual(app.query()["device"], "dev_study_lamp")
+
+        code, _, err, app = self.run_cli(["scene", "scene.movie"])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(app.query()["name"], "scene_movie")
+
+        for alias, expected in (
+            ("lights_off", "quick:lightsOff"),
+            ("quick:全屋关灯", "quick:lightsOff"),
+            ("睡眠关空调", "quick:climateSleepOff"),
+            ("撤销", "quick:undo"),
+        ):
+            code, _, err, app = self.run_cli(["scene", alias])
+            self.assertEqual(code, 0, err)
+            self.assertEqual(app.query()["name"], expected)
+
+    def test_fan_preset_validation_rejects_empty_modes_and_matches_bilingual_or_level_aliases(self) -> None:
+        # 仅支持百分比调速、无挡位列表的风扇不应放行 --preset
+        snapshot = make_snapshot()
+        for dev in snapshot["devices"]:
+            if dev["id"] == "dev_living_fan":
+                dev["capabilities"]["availablePresetModes"] = []
+        self.write_snapshot(snapshot)
+        code, _, err, app = self.run_cli(["fan", "客厅风扇", "--preset", "睡眠"])
+        self.assertEqual(code, mijia.EXIT_LOCAL_ERROR)
+        self.assertIn("不支持预设档位", err)
+        self.assertEqual(app.opened, [])
+
+        # 英文 HA 挡位名可通过中文别名或高/中/低挡匹配并归一到快照中的真实挡位名
+        for dev in snapshot["devices"]:
+            if dev["id"] == "dev_living_fan":
+                dev["capabilities"]["availablePresetModes"] = ["Level1", "Level2", "Level3", "Sleep"]
+        self.write_snapshot(snapshot)
+        code, _, err, app = self.run_cli(["fan", "客厅风扇", "--preset", "睡眠"])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(app.query()["preset"], "Sleep")
+
+        code, _, err, app = self.run_cli(["fan", "客厅风扇", "--preset", "高档"])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(app.query()["preset"], "Level3")
+
+    def test_invalid_timeout_values_fail_fast(self) -> None:
+        for bad_timeout in ("0", "-1", "nan", "inf", "500"):
+            code, _, err, app = self.run_cli(["toggle", "书房台灯", "--timeout", bad_timeout])
+            self.assertEqual(code, mijia.EXIT_LOCAL_ERROR, bad_timeout)
+            self.assertIn("等待超时秒数", err)
+            self.assertEqual(app.opened, [])
+
 
 class MijiaMcpTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -651,6 +735,17 @@ class MijiaMcpTests(unittest.TestCase):
         self.assertEqual(app.query()["device"], "dev_living_light")
 
     def test_validation_and_app_refusals_return_tool_is_error_without_opening_bad_links(self) -> None:
+        # 未知参数（如把 room 写成 room_name）不静默忽略
+        res, app = self.call_tool("list_devices", {"room_name": "书房"})
+        self.assertTrue(res["isError"])
+        self.assertIn("room_name", res["content"][0]["text"])
+        self.assertEqual(app.opened, [])
+
+        # 非字符串档位（如布尔值）报错
+        res, app = self.call_tool("set_fan", {"device": "客厅风扇", "preset": True})
+        self.assertTrue(res["isError"])
+        self.assertEqual(app.opened, [])
+
         # 布尔值不能冒充整数亮度
         res, app = self.call_tool("set_light_brightness", {"device": "客厅吸顶灯", "percent": True})
         self.assertTrue(res["isError"])
@@ -713,16 +808,38 @@ class MijiaMcpTests(unittest.TestCase):
         assert unknown_resource is not None
         self.assertEqual(unknown_resource["error"]["code"], -32602)
 
-        # 验证 Content-Length 帧与换行 JSON-RPC 双模式在 serve_mcp_stdio 下均可往返
+        # 验证 Content-Type 在前、Content-Length 在后的多头帧，以及异常 Content-Length 恢复能力
         req_body = json.dumps({"jsonrpc": "2.0", "id": 99, "method": "ping"}).encode("utf-8")
-        framed_in = io.BytesIO(f"Content-Length: {len(req_body)}\r\n\r\n".encode("ascii") + req_body)
+        stream_payload = (
+            b"Content-Length: -1\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n"
+            + b"Content-Length: abc\r\nContent-Type: application/vscode-jsonrpc\r\n\r\n"
+            + b"Content-Type: application/vscode-jsonrpc; charset=utf-8\r\n"
+            + f"Content-Length: {len(req_body)}\r\n\r\n".encode("ascii")
+            + req_body
+        )
+        framed_in = io.BytesIO(stream_payload)
         framed_out = io.BytesIO()
         code = mijia.serve_mcp_stdio(ctx, stdin=framed_in, stdout=framed_out)
         self.assertEqual(code, 0)
-        raw_reply = framed_out.getvalue()
-        self.assertTrue(raw_reply.startswith(b"Content-Length: "))
-        _, body = raw_reply.split(b"\r\n\r\n", 1)
-        self.assertEqual(json.loads(body.decode("utf-8")), {"jsonrpc": "2.0", "id": 99, "result": {}})
+        reply_reader = io.BytesIO(framed_out.getvalue())
+        bodies = []
+        while True:
+            raw_frame, is_framed = mijia._read_mcp_frame(reply_reader)
+            if raw_frame is None:
+                break
+            self.assertTrue(is_framed)
+            bodies.append(json.loads(raw_frame))
+        self.assertEqual(len(bodies), 3)
+        self.assertEqual(bodies[0]["error"]["code"], -32700)
+        self.assertEqual(bodies[1]["error"]["code"], -32700)
+        self.assertEqual(bodies[2], {"jsonrpc": "2.0", "id": 99, "result": {}})
+
+        # 截断帧体也应返回 -32700 Parse error 而非静默吞掉
+        truncated_in = io.BytesIO(b"Content-Length: 50\r\n\r\n{\"jsonrpc\":")
+        truncated_out = io.BytesIO()
+        mijia.serve_mcp_stdio(ctx, stdin=truncated_in, stdout=truncated_out)
+        _, trunc_body = truncated_out.getvalue().split(b"\r\n\r\n", 1)
+        self.assertEqual(json.loads(trunc_body.decode("utf-8"))["error"]["code"], -32700)
 
     def test_mijia_mcp_executable_runs_over_stdio_subprocess(self) -> None:
         lines = [
