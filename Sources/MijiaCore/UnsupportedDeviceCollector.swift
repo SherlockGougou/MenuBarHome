@@ -157,6 +157,35 @@ public enum DiagnosticsReportBuilder {
         }
     }
 
+    /// A crash report as the app may see it: the file name and when the file was last modified.
+    ///
+    /// Only the name decides whether the report belongs to this app. The name never reaches the
+    /// rendered report and the file contents are never read, so a stack trace, a user name or a
+    /// device payload cannot leak through this type.
+    public struct CrashReportStamp: Equatable, Sendable {
+        public var fileName: String
+        public var modifiedAt: Date
+
+        public init(fileName: String, modifiedAt: Date) {
+            self.fileName = fileName
+            self.modifiedAt = modifiedAt
+        }
+    }
+
+    /// How many local crashes happened inside the reporting window, and when the latest one did.
+    public struct CrashSummary: Equatable, Sendable {
+        public var count: Int
+        public var lastAt: Date?
+
+        public init(count: Int, lastAt: Date?) {
+            self.count = count
+            self.lastAt = lastAt
+        }
+    }
+
+    /// The window the local crash summary covers. Shared so the file scan and the report cannot drift.
+    public static let crashReportWindow: TimeInterval = 7 * 24 * 60 * 60
+
     public struct Input: Equatable, Sendable {
         public var appVersion: String
         public var buildNumber: String
@@ -170,6 +199,7 @@ public enum DiagnosticsReportBuilder {
         public var unsupported: [UnsupportedDevice]
         public var recentErrorCount: Int
         public var lastErrorAt: Date?
+        public var recentCrashTimestamps: [Date]
         public var extraSettings: [String]
 
         public init(
@@ -185,6 +215,7 @@ public enum DiagnosticsReportBuilder {
             unsupported: [UnsupportedDevice] = [],
             recentErrorCount: Int = 0,
             lastErrorAt: Date? = nil,
+            recentCrashTimestamps: [Date] = [],
             extraSettings: [String] = []
         ) {
             self.appVersion = appVersion
@@ -199,11 +230,45 @@ public enum DiagnosticsReportBuilder {
             self.unsupported = unsupported
             self.recentErrorCount = recentErrorCount
             self.lastErrorAt = lastErrorAt
+            self.recentCrashTimestamps = recentCrashTimestamps
             self.extraSettings = extraSettings
         }
     }
 
-    public static func markdown(_ input: Input) -> String {
+    /// Timestamps of this app's crash reports, newest last, that fall inside the reporting window.
+    ///
+    /// A report counts when its file name starts with `MenuBarMijia` and ends in `.ips` or `.crash`,
+    /// and its modification time is between `window` before `now` and `now`. Future-dated files are
+    /// skipped, because a modification time after "now" comes from a clock change, not a real crash.
+    public static func crashTimestamps(
+        from stamps: [CrashReportStamp],
+        now: Date = Date(),
+        window: TimeInterval = crashReportWindow
+    ) -> [Date] {
+        let earliest = now.addingTimeInterval(-window)
+        return stamps
+            .filter { stamp in
+                guard stamp.fileName.hasPrefix("MenuBarMijia") else { return false }
+                let suffix = stamp.fileName.split(separator: ".").last.map(String.init)?.lowercased()
+                guard suffix == "ips" || suffix == "crash" else { return false }
+                return stamp.modifiedAt >= earliest && stamp.modifiedAt <= now
+            }
+            .map(\.modifiedAt)
+            .sorted()
+    }
+
+    /// The count and latest time of the timestamps inside the reporting window.
+    public static func crashSummary(
+        _ timestamps: [Date],
+        now: Date = Date(),
+        window: TimeInterval = crashReportWindow
+    ) -> CrashSummary {
+        let earliest = now.addingTimeInterval(-window)
+        let inside = timestamps.filter { $0 >= earliest && $0 <= now }
+        return CrashSummary(count: inside.count, lastAt: inside.max())
+    }
+
+    public static func markdown(_ input: Input, now: Date = Date()) -> String {
         var lines: [String] = []
         lines.append("## MenuBarMijia \(L10n.tr("诊断信息", "Diagnostics"))")
         lines.append("")
@@ -255,7 +320,24 @@ public enum DiagnosticsReportBuilder {
         }
 
         lines.append("")
-        lines.append("_\(L10n.tr("此报告不包含设备 ID、令牌、服务器地址或账号信息。", "This report contains no device IDs, tokens, server addresses, or account information."))_")
+        lines.append("### \(L10n.tr("本地崩溃", "Local Crashes"))")
+        let crashes = crashSummary(input.recentCrashTimestamps, now: now)
+        if let last = crashes.lastAt {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyy-MM-dd"
+            lines.append("- " + L10n.format(
+                "最近 7 天 %@ 次（最近一次 %@）",
+                "%@ in the last 7 days, last at %@",
+                String(crashes.count),
+                formatter.string(from: last)
+            ))
+        } else {
+            lines.append("- " + L10n.format("最近 7 天 %@ 次", "%@ in the last 7 days", "0"))
+        }
+
+        lines.append("")
+        lines.append("_\(L10n.tr("此报告不包含设备 ID、令牌、服务器地址、账号信息、崩溃堆栈或文件路径。", "This report contains no device IDs, tokens, server addresses, account information, crash stacks, or file paths."))_")
         return lines.joined(separator: "\n")
     }
 }
