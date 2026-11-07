@@ -113,7 +113,63 @@
       "on",
       "brightness",
       "mode",
-      "fan-level"
+      "fan-level",
+      "fan-speed",
+      "soft-wind",
+      "vertical-swing",
+      "horizontal-swing",
+      "sleep-mode",
+      "eco",
+      "dryer",
+      "anion",
+      "uv",
+      "target-humidity"
+    ]
+  },
+  "manualControlPolicy": {
+    "strictlyHighRisk": [
+      "lock",
+      "*-lock",
+      "germicidal-lamp",
+      "alertor",
+      "garbage-disposal",
+      "router",
+      "gateway",
+      "repeater",
+      "lock-*",
+      "*-valve",
+      "*disposal*",
+      "*alarm*",
+      "*steriliz*",
+      "*router*",
+      "*wifi*",
+      "*wlan*",
+      "*gateway*",
+      "*repeater*"
+    ],
+    "heatingService": [
+      "heater",
+      "ptc",
+      "floor-heat",
+      "heating",
+      "water-heater",
+      "electric-water-heater",
+      "gas-water-heater"
+    ],
+    "lowRiskServices": [
+      "indicator-light",
+      "night-light",
+      "buzzer",
+      "speaker",
+      "physical-controls-locked"
+    ],
+    "lowRiskTokens": [
+      "led",
+      "indicator",
+      "buzzer",
+      "mute",
+      "display",
+      "screen"
     ]
   },
   "overrides": [

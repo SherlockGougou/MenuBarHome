@@ -124,7 +124,17 @@ public enum ManualControlPolicy {
         L10n.format("%@ 份", "%@ portion(s)", "\(portionCount(facet, portion: portion))")
     }
 
-    private static func facetRequiresConfirmation(_ facet: FacetControl, value: JSONValue?, for device: SmartDevice) -> Bool {
+    /// The confirmation table from `deviceProfiles.json`, decoded once (#26). The same document
+    /// Windows reads, with `ManualControlRules.defaults` as the only fallback.
+    static let currentRules: DeviceProfiles.ManualControlRules =
+        DeviceProfiles.current.manualControlPolicy ?? .defaults
+
+    static func facetRequiresConfirmation(
+        _ facet: FacetControl,
+        value: JSONValue?,
+        for device: SmartDevice,
+        rules: DeviceProfiles.ManualControlRules = currentRules
+    ) -> Bool {
         if facet.kind == .button { return true }
         if facet.target?.isAction == true { return true }
         let service = facet.serviceName.lowercased()
@@ -139,11 +149,11 @@ public enum ManualControlPolicy {
         let deviceType = genericDeviceType(device)
         // Locks, valves, security, routers, disposers and sterilizers keep every write behind a
         // confirmation even after advanced writes are enabled (#6 review).
-        if strictlyHighRisk(deviceType: deviceType, service: service) { return true }
+        if strictlyHighRisk(deviceType: deviceType, service: service, rules: rules) { return true }
 
         // Indicator, sound and child-lock controls never move the appliance's main function.
-        let lowRiskServices = ["indicator-light", "night-light", "buzzer", "speaker", "physical-controls-locked"]
-        let lowRiskTokens: Set<String> = ["led", "indicator", "buzzer", "mute", "display", "screen"]
+        let lowRiskServices = Set(rules.lowRiskServices)
+        let lowRiskTokens = Set(rules.lowRiskTokens)
         let lowRiskHA = !tokens.isDisjoint(with: lowRiskTokens)
             || name.contains("night-light")
             || name.contains("child-lock")
@@ -169,8 +179,7 @@ public enum ManualControlPolicy {
             return true
         }
 
-        let heatingService = ["heater", "ptc", "floor-heat", "heating", "water-heater", "electric-water-heater", "gas-water-heater"]
-            .contains(service)
+        let heatingService = rules.heatingService.contains(service)
         if isPower, let isOn = value?.miotBool {
             if heatingService { return isOn }
             if !device.kind.isGenericDevice {
@@ -216,15 +225,15 @@ public enum ManualControlPolicy {
     }
 
     /// Writes that never take the low-risk shortcut: locks, valves, security, routers, disposers
-    /// and sterilizers. These ask even for an off direction (#6 review).
-    private static func strictlyHighRisk(deviceType: String, service: String) -> Bool {
-        let types = ["lock", "*-lock", "germicidal-lamp", "alertor", "garbage-disposal", "router", "gateway", "repeater"]
-        let services = [
-            "lock", "lock-*", "*-lock", "*-valve", "*disposal*", "alertor", "*alarm*",
-            "*steriliz*", "*router*", "*wifi*", "*wlan*", "*gateway*", "*repeater*",
-        ]
-        return MiotFacetEngine.matches(deviceType, anyOf: types)
-            || MiotFacetEngine.matches(service, anyOf: services)
+    /// and sterilizers. These ask even for an off direction (#6 review). The table lives in
+    /// `deviceProfiles.json` (#26).
+    private static func strictlyHighRisk(
+        deviceType: String,
+        service: String,
+        rules: DeviceProfiles.ManualControlRules
+    ) -> Bool {
+        MiotFacetEngine.matches(deviceType, anyOf: rules.strictlyHighRisk)
+            || MiotFacetEngine.matches(service, anyOf: rules.strictlyHighRisk)
     }
 
     /// The lock-screen preference guard: off by default would leave every external control path open

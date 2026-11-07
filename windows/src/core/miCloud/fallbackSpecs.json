@@ -568,6 +568,50 @@
             "type": "urn:miot-spec-v2:service:lock:00007855:fallback:1",
             "properties": [],
             "actions": []
+          },
+          {
+            "iid": 3,
+            "type": "urn:miot-spec-v2:service:battery:00007805:fallback:1",
+            "properties": [
+              {
+                "iid": 1,
+                "type": "urn:miot-spec-v2:property:battery-level:00000014:fallback:1",
+                "format": "uint8",
+                "access": [
+                  "read"
+                ]
+              }
+            ],
+            "actions": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "magnet",
+      "modelAny": [
+        "sensor_magnet"
+      ],
+      "nameAny": [
+        "门磁"
+      ],
+      "spec": {
+        "type": "urn:miot-spec-v2:device:magnet-sensor:0000A016:fallback:1",
+        "services": [
+          {
+            "iid": 2,
+            "type": "urn:miot-spec-v2:service:magnet-sensor:00007827:fallback:1",
+            "properties": [
+              {
+                "iid": 1,
+                "type": "urn:miot-spec-v2:property:contact-state:0000007C:fallback:1",
+                "format": "bool",
+                "access": [
+                  "read"
+                ]
+              }
+            ],
+            "actions": []
           }
         ]
       }

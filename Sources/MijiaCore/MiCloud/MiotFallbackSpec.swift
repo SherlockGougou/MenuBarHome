@@ -7,15 +7,37 @@ public enum MiotFallbackSpec {
         let model = model.lowercased()
         let name = name.lowercased()
         let table = Table.current
-        for rule in table.rules {
-            let matchesModel = rule.modelAny?.contains { model.contains($0) } ?? false
-            let matchesSuffix = rule.modelSuffix?.contains { model.hasSuffix($0) } ?? false
-            let matchesName = rule.nameAny?.contains { name.contains($0) } ?? false
-            if matchesModel || matchesSuffix || matchesName {
-                return rule.spec
-            }
+        for rule in table.rules where matches(rule, model: model, name: name) {
+            return rule.spec
         }
         return table.fallback.spec
+    }
+
+    /// The table's rule for this model alone, without the outlet default. A caller that already
+    /// has a named fallback path uses this to tell "the table knows the model" from "give up"
+    /// (#26).
+    static func inferMatchingRule(model: String) -> Bool {
+        matchesRule(model: model.lowercased())
+    }
+
+    /// The guessed spec for a model the table knows, or nil when it has no rule (#26).
+    static func spec(for model: String) -> MiotDeviceSpec? {
+        let model = model.lowercased()
+        for rule in Table.current.rules where matches(rule, model: model, name: "") {
+            return rule.spec
+        }
+        return nil
+    }
+
+    private static func matchesRule(model: String) -> Bool {
+        Table.current.rules.contains { matches($0, model: model, name: "") }
+    }
+
+    private static func matches(_ rule: Document.Rule, model: String, name: String) -> Bool {
+        let matchesModel = rule.modelAny?.contains { model.contains($0) } ?? false
+        let matchesSuffix = rule.modelSuffix?.contains { model.hasSuffix($0) } ?? false
+        let matchesName = !name.isEmpty && (rule.nameAny?.contains { name.contains($0) } ?? false)
+        return matchesModel || matchesSuffix || matchesName
     }
 
     /// Bytes of the bundled table, so a test can prove it still matches the Windows file.
