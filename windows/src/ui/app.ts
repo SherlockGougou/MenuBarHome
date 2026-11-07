@@ -155,6 +155,8 @@ import { bindLayoutGestures } from "./layoutGestures.js";
 import { bindSettingsEvents } from "./settingsEvents.js";
 import { hasMatchingDomShape, inputKeepsDraft, morphMatchingDom, parseSingleElement, waitForCameraFrameGap } from "./dom.js";
 export { waitForCameraFrameGap } from "./dom.js";
+import { createPanelSearchState, normalizeSearch, PanelSearchIndex } from "../core/panelSearch.js";
+import { syncPanelSelection } from "./panelKeyboard.js";
 
 import { ScheduledCommandStore } from "../core/scheduledCommands.js";
 import { scheduledCommandIdentity } from "./scheduledCommands.js";
@@ -217,6 +219,8 @@ export class MenuMijiaWindowsApp {
     }
   }
 
+  public readonly panelSearch = createPanelSearchState();
+  private readonly panelSearchIndex = new PanelSearchIndex();
   public expandedDeviceId: string | null = null;
   /**
    * A high-risk manual write that needs one more tap on the same card within a few seconds.
@@ -461,7 +465,14 @@ export class MenuMijiaWindowsApp {
   }
 
   private get filteredDevices(): SmartDevice[] {
-    return filterByListCut(this.devices, this.listCut, this.settings.hideOfflineDevices);
+    const query = normalizeSearch(this.panelSearch.query);
+    if (!query) return filterByListCut(this.devices, this.listCut, this.settings.hideOfflineDevices);
+    const candidates = filterByListCut(this.devices, { kind: "all" }, this.settings.hideOfflineDevices);
+    const byId = new Map(candidates.map((device) => [device.id, device]));
+    return this.panelSearchIndex.matches(query, candidates, this.layout.aliases).flatMap((entry) => {
+      const device = byId.get(entry.deviceId);
+      return device ? [device] : [];
+    });
   }
 
   /** Cards on screen: the list cut, plus folding member lights into a visible group card (#214). */
@@ -801,7 +812,7 @@ export class MenuMijiaWindowsApp {
     markCloudValuesFresh(this);
   }
 
-  private get valuesAreStale(): boolean {
+  public get valuesAreStale(): boolean {
     if (this.settings.connectionMode === "xiaomiCloud") {
       return this.cloudValuesStale && this.devices.length > 0;
     }
@@ -966,6 +977,15 @@ export class MenuMijiaWindowsApp {
    * new one (FLIP), so reorders, resizes and group moves animate instead of jumping.
    */
   public render(): void {
+    if (this.panelSearch.isComposing) {
+      if (this.activeSheet !== "none" || !this.isShowingAssistantBar ||
+          document.activeElement?.id !== "command-input" || this.panelSearch.compositionSourceRevision !== this.sourceRevision) {
+        this.panelSearch.isComposing = false;
+      } else {
+        this.pendingCloudRender = true;
+        return;
+      }
+    }
     const focused = document.activeElement as HTMLElement | null;
     const focusedInput =
       focused && (focused.tagName === "INPUT" || focused.tagName === "TEXTAREA")
@@ -1000,6 +1020,7 @@ export class MenuMijiaWindowsApp {
     this.pendingCloudRender = false;
     this.grokBall.prepareMove();
     this.renderNow();
+    syncPanelSelection(this);
     const grokSlot = this.root.querySelector<HTMLElement>("[data-grok-slot]");
     if (grokSlot) this.grokBall.mount(grokSlot, this.grokBall.element.dataset.emotion ?? "02");
     this.syncGrokBallEmotion();
@@ -1072,6 +1093,12 @@ export class MenuMijiaWindowsApp {
   }
 
   public renderDeviceGrid(): string {
+    if (normalizeSearch(this.panelSearch.query)) {
+      const results = withAliases(this.layout, this.presentationDevices);
+      return results.length
+        ? `<div id="panel-search-results" class="cc-devices-grid is-flow">${results.map((device, index) => this.renderDeviceTile(device, this.settings.isCompactGridMode && this.expandedDeviceId !== device.id ? 3 : 6, index)).join("")}</div>`
+        : `<div id="panel-search-results" class="cc-empty-state"><div class="cc-empty-title">${t("没有匹配的设备")}</div><div class="cc-empty-subtitle">${t("输入设备名、房间或拼音首字母；整句话按回车执行")}</div></div>`;
+    }
     if (this.settings.connectionMode === "homeAssistant" && this.devices.length === 0) return `<div class="cc-empty-state"><div class="cc-empty-title">Home Assistant</div><div class="cc-empty-subtitle">${this.isSyncingCloud ? "Connecting…" : "No connected devices. Check the saved URL, token and endpoint permission."}</div><button class="cc-btn-secondary" id="btn-empty-settings">Settings</button></div>`;
     if (this.settings.connectionMode === "xiaomiCloud" && this.devices.length === 0) {
       if (this.isSyncingCloud) {

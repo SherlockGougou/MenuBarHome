@@ -3011,3 +3011,14 @@ input[type="checkbox"]:checked::after {
 .cc-popover.scheme-light .cc-opacity-preview-panel {
   background: linear-gradient(180deg, rgba(248, 250, 254, var(--panel-alpha-top)) 0%, rgba(235, 239, 247, var(--panel-alpha-bottom)) 100%);
 }
+
+.cc-tile.is-keyboard-selected {
+  outline: 2px solid var(--accent, #4c8dff);
+  outline-offset: -2px;
+}
+
+.cc-search-count {
+  color: var(--text-secondary, #737373);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}

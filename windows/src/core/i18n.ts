@@ -14,6 +14,13 @@ export type LanguagePreference = "system" | AppLanguage;
 
 /** Chinese key → [Simplified Chinese, English]. */
 const CATALOG: Readonly<Record<string, readonly [string, string]>> = {
+  "没有匹配的设备": ["没有匹配的设备", "No matching devices"],
+  "输入设备名、房间或拼音首字母；整句话按回车执行": ["输入设备名、房间或拼音首字母；整句话按回车执行", "Type a device, room or pinyin initials; press Enter to run a command"],
+  "搜索设备，或直接说一句话": ["搜索设备，或直接说一句话", "Search devices, or say a command"],
+  "搜索设备或输入指令": ["搜索设备或输入指令", "Search devices or enter a command"],
+  "Ctrl+F 聚焦，↑↓ 选择，回车开关或执行口令，→ 展开，Esc 清空": ["Ctrl+F 聚焦，↑↓ 选择，回车开关或执行口令，→ 展开，Esc 清空", "Ctrl+F to focus, up/down to select, Enter to toggle or run, right to expand, Esc to clear"],
+  "清空输入": ["清空输入", "Clear input"],
+  "设备列表": ["设备列表", "Devices"],
   "开始": ["开始", "Start"],
   "暂停": ["暂停", "Pause"],
   "停止": ["停止", "Stop"],

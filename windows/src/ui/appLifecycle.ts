@@ -1,3 +1,4 @@
+import { finishPanelComposition, handlePanelKey } from "./panelKeyboard.js";
 import { processScheduledCommands } from "./scheduledCommands.js";
 import type { MenuMijiaWindowsApp } from "./app.js";
 import { t } from "../core/i18n.js";
@@ -288,6 +289,7 @@ export async function applyGlobalHotkey(host: MenuMijiaWindowsApp): Promise<void
   }
 
 export function bindGlobalKeys(host: MenuMijiaWindowsApp): void {
+    window.addEventListener("blur", () => finishPanelComposition(host));
     window.addEventListener("keydown", (e) => {
       if (host.isRecordingHotkey) {
         e.preventDefault();
@@ -311,12 +313,14 @@ export function bindGlobalKeys(host: MenuMijiaWindowsApp): void {
         return;
       }
 
+      if (handlePanelKey(host, e)) return;
+
       if (e.key === "Escape") {
         if (host.isGrokBallStageExpanded) {
           host.setGrokBallStageExpanded(false);
           return;
         }
-        if (host.cameraLive.activeLiveCameraId !== null) {
+        if (host.cameraLive.activeLiveCameraId !== null && !host.cameraLive.liveCameraHidden) {
           host.cameraLive.hideCameraLiveView();
           return;
         }
@@ -329,7 +333,7 @@ export function bindGlobalKeys(host: MenuMijiaWindowsApp): void {
         } else {
           invokeTauriVoid("hide_panel");
         }
-      } else if (e.key === "/" && document.activeElement?.tagName !== "INPUT") {
+      } else if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey && document.activeElement?.tagName !== "INPUT") {
         e.preventDefault();
         host.isShowingAssistantBar = true;
         host.render();

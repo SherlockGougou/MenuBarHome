@@ -86,10 +86,14 @@ import { quickActions } from "./demo.js";
                 id="command-input"
                 class="cc-spotlight-input"
                 type="text"
-                placeholder="${t("说一句：我困了 / 调低两度 / 10分钟后关灯 / 撤销...")}"
-                aria-label="${t("自然语言指令")}"
+                placeholder="${t("搜索设备，或直接说一句话")}"
+                value="${host.escapeHtml(host.panelSearch.query)}"
+                autocomplete="off"
+                aria-description="${t("Ctrl+F 聚焦，↑↓ 选择，回车开关或执行口令，→ 展开，Esc 清空")}"
+                aria-label="${t("搜索设备或输入指令")}"
                 ${host.isResolvingIntent ? "disabled" : ""}
               />
+              ${host.panelSearch.query ? `<span class="cc-search-count" role="status">${host.presentationDevices.length}</span><button class="cc-circle-btn is-small" id="btn-clear-search" aria-label="${t("清空输入")}">×</button>` : ""}
               <button
                 id="btn-send"
                 class="cc-spotlight-send"
@@ -259,7 +263,7 @@ import { quickActions } from "./demo.js";
 
         <div class="cc-divider"></div>
 
-        <main class="cc-scroll-area">
+        <main class="cc-scroll-area" aria-label="${t("设备列表")}">
           ${host.renderDeviceGrid()}
         </main>
 
