@@ -60,6 +60,8 @@ export class CameraLiveController {
   public cameraStreamQualities: Record<string, CameraStreamQuality> = {};
   /** The live picture arrives as MJPEG frames in a persistent `<img>`, which never restarts on re-render. */
   public liveCameraMode: "mjpeg" | null = null;
+  /** Only a raw `<video>` element can carry audio; it starts muted like the macOS HLS player (#29). */
+  public liveCameraMuted = true;
   public liveCameraQualityApplies = true;
   public liveCameraImgEl: HTMLImageElement | null = null;
   public liveCameraAbort: AbortController | null = null;
@@ -91,6 +93,7 @@ export class CameraLiveController {
       this.closeCameraLiveView();
     }
     this.activeLiveCameraId = dev.id;
+    this.liveCameraMuted = true;
     this.liveCameraQualityApplies = true;
     this.liveCameraHidden = false;
     this.clearCameraKeepAlive();
@@ -152,6 +155,7 @@ export class CameraLiveController {
     this.liveCameraHidden = false;
     this.stopLiveTransport();
     this.activeLiveCameraId = null;
+    this.liveCameraMuted = true;
     this.liveCameraQualityApplies = true;
     this.liveCameraStreamURL = null;
     this.liveCameraLoading = false;
@@ -686,7 +690,27 @@ export class CameraLiveController {
     const motionOn = Boolean(k.isMotionDetectionOn);
 
     let viewportHtml = "";
+    // One value drives both the viewport and the HUD audio affordance, so the "video only"
+    // label can never disagree with what is actually on screen.
+    let mediaKind: "sleeping" | "frames" | "image" | "loading" | "video" | "demo" | "error";
     if (!k.isOn) {
+      mediaKind = "sleeping";
+    } else if (this.liveCameraMode) {
+      mediaKind = "frames";
+    } else if (this.liveCameraLoading) {
+      mediaKind = "loading";
+    } else if (this.liveCameraStreamURL && this.isOwnedGo2rtcApiUrl(this.liveCameraStreamURL)) {
+      mediaKind = "loading";
+    } else if (this.liveCameraStreamURL && /^https?:/i.test(this.liveCameraStreamURL)) {
+      mediaKind = /\.(jpg|jpeg|png)|snapshot|camera_proxy|frame\.jpeg|mjpeg/i.test(this.liveCameraStreamURL)
+        ? "image"
+        : "video";
+    } else if (this.host.settings.connectionMode === "demo") {
+      mediaKind = "demo";
+    } else {
+      mediaKind = "error";
+    }
+    if (mediaKind === "sleeping") {
       const canWake = k.powerWritable !== false;
       viewportHtml = `
         <div class="cc-camera-stage is-sleeping">
@@ -699,29 +723,23 @@ export class CameraLiveController {
           }
         </div>
       `;
-    } else if (this.liveCameraMode) {
+    } else if (mediaKind === "frames") {
       // The media element is created once and re-attached here, so polling renders never
       // restart the stream.
       viewportHtml = `<div class="cc-camera-stage" id="cc-camera-stage"></div>`;
-    } else if (this.liveCameraLoading) {
+    } else if (mediaKind === "image") {
+      const safeURL = this.host.escapeHtml(this.liveCameraStreamURL ?? "");
+      viewportHtml = `<div class="cc-camera-stage"><img id="cc-camera-live-img" src="${safeURL}" alt="${this.host.escapeHtml(dev.name)}" style="max-width:100%;border-radius:10px;" /></div>`;
+    } else if (mediaKind === "loading") {
       viewportHtml = `
         <div class="cc-camera-stage" style="padding:28px 16px;text-align:center;">
           <strong>${t("正在握手并连接摄像机实时画面…")}</strong>
         </div>
       `;
-    } else if (this.liveCameraStreamURL && this.isOwnedGo2rtcApiUrl(this.liveCameraStreamURL)) {
-      viewportHtml = `
-        <div class="cc-camera-stage" style="padding:28px 16px;text-align:center;">
-          <strong>${t("正在握手并连接摄像机实时画面…")}</strong>
-        </div>
-      `;
-    } else if (this.liveCameraStreamURL && /^https?:/i.test(this.liveCameraStreamURL)) {
-      const safeURL = this.host.escapeHtml(this.liveCameraStreamURL);
-      const isImg = /\.(jpg|jpeg|png)|snapshot|camera_proxy|frame\.jpeg|mjpeg/i.test(this.liveCameraStreamURL);
-      viewportHtml = isImg
-        ? `<div class="cc-camera-stage"><img id="cc-camera-live-img" src="${safeURL}" alt="${this.host.escapeHtml(dev.name)}" style="max-width:100%;border-radius:10px;" /></div>`
-        : `<div class="cc-camera-stage"><video id="cc-camera-video" src="${safeURL}" controls autoplay muted playsinline preload="auto" style="width:100%;border-radius:10px;background:#090d16;"></video></div>`;
-    } else if (this.host.settings.connectionMode === "demo") {
+    } else if (mediaKind === "video") {
+      const safeURL = this.host.escapeHtml(this.liveCameraStreamURL ?? "");
+      viewportHtml = `<div class="cc-camera-stage"><video id="cc-camera-video" src="${safeURL}" controls autoplay${this.liveCameraMuted ? " muted" : ""} playsinline preload="auto" style="width:100%;border-radius:10px;background:#090d16;"></video></div>`;
+    } else if (mediaKind === "demo") {
       viewportHtml = `
         <div class="cc-camera-stage is-demo" style="padding:18px;border-radius:12px;background:${isNight ? "linear-gradient(135deg,#072219,#03110c)" : "linear-gradient(135deg,#10233d,#091224)"};color:#fff;text-align:center;">
           <div style="display:flex;justify-content:space-between;font-size:11px;opacity:0.85;margin-bottom:16px;">
@@ -747,12 +765,21 @@ export class CameraLiveController {
       `;
     }
 
+    const muteLabel = t(this.liveCameraMuted ? "开启声音" : "关闭声音");
+    const audioControl =
+      mediaKind === "video"
+        ? `<button type="button" class="cc-circle-btn is-small" id="cc-camera-mute" title="${muteLabel}" aria-label="${muteLabel}" aria-pressed="${this.liveCameraMuted}">${this.liveCameraMuted ? "🔇" : "🔊"}</button>`
+        : mediaKind === "frames" || mediaKind === "image" || mediaKind === "demo"
+          ? `<span class="cc-pill-label" id="cc-camera-audio-badge" title="${t("当前视频流（米家 P2P / MJPEG / 抓拍）只传画面，不含音频")}">${t("仅画面")}</span>`
+          : "";
+
     return `
       <div class="cc-sheet-backdrop" ${this.liveCameraHidden ? 'style="display:none"' : ""}>
         <div class="cc-sheet cc-camera-live-sheet" role="dialog" aria-modal="true" aria-label="${this.host.escapeHtml(dev.name)} ${t("实时画面")}">
           <div class="cc-sheet-header">
             <strong>${this.host.escapeHtml(dev.name)} · ${t("实时画面小窗")}</strong>
             <div style="display:flex;gap:6px;">
+              ${audioControl}
               <button class="cc-circle-btn is-small" id="btn-reload-camera-live" title="${t("重新连接")}" aria-label="${t("重新连接")}">${SF_ICONS.arrowClockwise}</button>
               <button class="cc-circle-btn is-small" id="btn-toggle-camera-url" title="${t("配置流地址")}">🔗</button>
               <button class="cc-circle-btn is-small" id="btn-close-camera-live" title="${t("关闭画面")}" aria-label="${t("关闭画面")}">
@@ -862,6 +889,27 @@ export class CameraLiveController {
       this.reconnectCameraLiveView();
     });
 
+    // Toggle in place: a re-render would rebuild the <video> element and restart playback.
+    this.host.root.querySelector("#cc-camera-mute")?.addEventListener("click", () => {
+      const muted = !this.liveCameraMuted;
+      const video = this.host.root.querySelector<HTMLVideoElement>("#cc-camera-video");
+      if (video) {
+        video.muted = muted;
+        // A native control can mute or zero the volume on its own, and unmuting alone leaves a
+        // zero volume silent, so restore an audible level when turning sound on.
+        if (!muted && video.volume === 0) video.volume = 1;
+      }
+      this.liveCameraMuted = muted;
+      this.syncCameraMuteControl();
+    });
+
+    // Native video controls can mute or zero the volume on their own; keep the HUD in step.
+    this.host.root.querySelector("#cc-camera-video")?.addEventListener("volumechange", (event) => {
+      const video = event.currentTarget as HTMLVideoElement;
+      this.liveCameraMuted = video.muted || video.volume === 0;
+      this.syncCameraMuteControl();
+    });
+
     this.host.root.querySelectorAll<HTMLElement>("[data-cameraquality]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const deviceId = btn.dataset.cameraquality ?? "";
@@ -908,6 +956,16 @@ export class CameraLiveController {
     this.host.root.querySelector("#btn-save-camera-url")?.addEventListener("click", () => {
       void this.commitCameraStreamUrl();
     });
+  }
+
+  private syncCameraMuteControl(): void {
+    const button = this.host.root.querySelector<HTMLElement>("#cc-camera-mute");
+    if (!button) return;
+    const label = t(this.liveCameraMuted ? "开启声音" : "关闭声音");
+    button.textContent = this.liveCameraMuted ? "🔇" : "🔊";
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.setAttribute("aria-pressed", String(this.liveCameraMuted));
   }
 
 }
