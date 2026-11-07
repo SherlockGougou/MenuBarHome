@@ -31,8 +31,16 @@ import {
   type MiotService,
   type MiotValueListItem,
 } from "./spec.js";
-import { DEVICE_PROFILES, buildMiotFacets, facetControls, miotFallbackAllows } from "./facets.js";
-import { facetValue, genericSymbolName, genericTypeTitle } from "../miotFacetText.js";
+import {
+  DEVICE_PROFILES,
+  buildMiotFacets,
+  facetControls,
+  isMiotAlertLabel,
+  matchesMiotFacetPattern,
+  miotFallbackAllows,
+  profileOverride,
+} from "./facets.js";
+import { facetAlertText, facetValue, genericSymbolName, genericTypeTitle } from "../miotFacetText.js";
 import { percentFromRaw } from "./percentScale.js";
 
 export function exposesWrite(access: readonly string[] | undefined): boolean {
@@ -935,15 +943,38 @@ export const MiotSynthesizer = {
           if (lhsOwn !== rhsOwn) return lhsOwn ? -1 : 1;
           return lhs.index - rhs.index;
         })[0]?.control ?? null;
-    const readable = controls
-      .map((control, index) => ({ control, index }))
-      .filter(({ control }) => control.kind === "reading" && control.value !== null)
-      .sort((lhs, rhs) => {
-        if (lhs.control.isHighValue !== rhs.control.isHighValue) return lhs.control.isHighValue ? -1 : 1;
-        return lhs.index - rhs.index;
-      })
-      .slice(0, 2)
-      .map(({ control }) => facetValue(control));
+    const preferred = profileOverride(spec, record.model)?.readouts ?? [];
+    const picked: FacetControl[] = [];
+    for (const pattern of preferred) {
+      if (picked.length >= 2) break;
+      const match = controls.find((control) =>
+        control.kind === "reading" && control.value !== null &&
+        matchesMiotFacetPattern(control.name, [pattern]) &&
+        !picked.some((chosen) => chosen.id === control.id),
+      );
+      if (match) picked.push(match);
+    }
+    if (picked.length === 0) {
+      picked.push(...controls
+        .map((control, index) => ({ control, index }))
+        .filter(({ control }) => control.kind === "reading" && control.value !== null)
+        .sort((lhs, rhs) => {
+          if (lhs.control.isHighValue !== rhs.control.isHighValue) return lhs.control.isHighValue ? -1 : 1;
+          return lhs.index - rhs.index;
+        })
+        .slice(0, 2)
+        .map(({ control }) => control));
+    }
+    const alerts = new Set<string>();
+    for (const control of controls) {
+      const raw = control.value;
+      if (control.kind !== "reading") continue;
+      const numeric = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() ? Number(raw) : NaN;
+      const code = Math.sign(numeric) * Math.round(Math.abs(numeric));
+      if (!Number.isSafeInteger(code)) continue;
+      const option = control.options.find((item) => item.value === code);
+      if (option && isMiotAlertLabel(option.label)) alerts.add(facetAlertText(control, option.label));
+    }
     return {
       kind: {
         kind: "generic",
@@ -953,7 +984,8 @@ export const MiotSynthesizer = {
         isOn: miotBool(power?.value) === true,
         powerControl: power,
         isReadOnly: !controls.some((control) => control.isWritable),
-        readouts: readable,
+        readouts: picked.map(facetValue),
+        alerts: [...alerts],
         symbolName: genericSymbolName(deviceType),
       },
       // The tile's main switch is not repeated under 更多设置.

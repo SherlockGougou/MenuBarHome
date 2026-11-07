@@ -688,7 +688,7 @@ export function renderDeviceTile(dev: SmartDevice, state: DeviceTileViewState): 
             aria-pressed="${isOn}"
           >
             <div class="cc-tile-name">${escape(dev.name)}</div>
-            <div class="cc-tile-status">${escape(shownSubtitle)}</div>
+            <div class="cc-tile-status" title="${escape(shownSubtitle)}">${escape(shownSubtitle)}</div>
           </button>
 
           ${
