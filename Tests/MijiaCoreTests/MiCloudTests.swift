@@ -1330,7 +1330,16 @@ struct MiCloudProviderTests {
         let resolved = try await provider.resolveCameraStream(for: cameraDevice)
         #expect(resolved == .liveMP4(
             URL(string: "http://127.0.0.1:43123/api/stream.mp4?src=cam_raw_1105610385&mp4")!,
-            mjpegFallback: URL(string: "http://127.0.0.1:43123/api/stream.mjpeg?src=cam_mjpeg_1105610385")!
+            mjpegFallback: URL(string: "http://127.0.0.1:43123/api/stream.mjpeg?src=cam_mjpeg_1105610385")!,
+            ptz: CameraPTZBinding(
+                capability: CameraPTZCapability(
+                    model: "chuangmi.camera.061a01",
+                    vendor: "cs2",
+                    mode: .unknown,
+                    confidence: .pendingRealDevice
+                ),
+                streamName: "cam_raw_1105610385"
+            )
         ))
 
         let actions = await api.callActionCalls
@@ -1681,6 +1690,51 @@ struct MiCloudClientTests {
         #expect(XiaomiCameraBridge.decideGo2RTCAction(Go2RTCOwnershipProbe(
             pidAlive: false, authenticated: true, nonceMatches: true, configChanged: false
         )) == .spawnFresh)
+        #expect(XiaomiCameraBridge.decideGo2RTCAction(Go2RTCOwnershipProbe(
+            pidAlive: true,
+            authenticated: true,
+            nonceMatches: true,
+            configChanged: false,
+            binaryChanged: true
+        )) == .restartOwned)
+    }
+
+    @Test("The PTZ probe requires both the method response and the bridge version header")
+    func ptzProbeIdentity() {
+        #expect(XiaomiCameraBridge.isPTZProbeResponse(status: 405, header: "v1"))
+        #expect(!XiaomiCameraBridge.isPTZProbeResponse(status: 405, header: nil))
+        #expect(!XiaomiCameraBridge.isPTZProbeResponse(status: 405, header: "v2"))
+        #expect(!XiaomiCameraBridge.isPTZProbeResponse(status: 404, header: "v1"))
+    }
+
+    @Test("An owned go2rtc records the binary it was started from")
+    func go2rtcOwnerRecordsBinaryIdentity() throws {
+        let session = Go2RTCSession(
+            apiListen: "127.0.0.1:43123",
+            rtspListen: "127.0.0.1:43124",
+            username: "muser0001",
+            password: "mpass0001",
+            nonce: "mnonce0001"
+        )
+        let record = Go2RTCOwnerRecord(
+            pid: 42,
+            session: session,
+            binaryPath: "/tmp/MenuBarMijia.app/Contents/Resources/bin/go2rtc",
+            binarySize: 40_900_000,
+            binaryModifiedAt: 1_700_000_000
+        )
+        let parsed = try #require(Go2RTCOwnerRecord.parse(record.serialized()))
+        #expect(parsed == record)
+        // A record written by an older build has no identity and must be restarted, not reused.
+        let legacy = try #require(Go2RTCOwnerRecord.parse("""
+        pid=42
+        nonce=mnonce0001
+        api_listen=127.0.0.1:43123
+        rtsp_listen=127.0.0.1:43124
+        username=muser0001
+        password=mpass0001
+        """))
+        #expect(legacy.binaryPath.isEmpty)
     }
 
     @Test("Ephemeral go2rtc sessions avoid the well-known ports and authenticate stream URLs")

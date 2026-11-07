@@ -773,7 +773,17 @@ public actor MiCloudProvider: HomeProvider {
                             await stopCameraStream(for: device)
                             throw CancellationError()
                         }
-                        return .liveMP4(endpoints.mp4, mjpegFallback: endpoints.mjpeg)
+                        let capability = CameraPTZCapability.resolve(
+                            model: record.model,
+                            vendor: vendor.vendorName
+                        )
+                        let binding = capability.map {
+                            CameraPTZBinding(
+                                capability: $0,
+                                streamName: "cam_raw_\(XiaomiCameraBridge.sanitizeDid(did))"
+                            )
+                        }
+                        return .liveMP4(endpoints.mp4, mjpegFallback: endpoints.mjpeg, ptz: binding)
                     }
                 } else {
                     failureReason = L10n.tr(

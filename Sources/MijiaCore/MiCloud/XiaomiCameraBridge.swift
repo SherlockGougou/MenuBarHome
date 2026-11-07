@@ -54,6 +54,12 @@ struct Go2RTCSession: Equatable, Sendable {
 struct Go2RTCOwnerRecord: Equatable, Sendable {
     var pid: Int32
     var session: Go2RTCSession
+    /// The binary that process was started from. A new app bundle (patched or official) has a
+    /// different path or modification time, so an owned process is replaced instead of silently
+    /// keeping the old bridge.
+    var binaryPath: String = ""
+    var binarySize: Int64 = 0
+    var binaryModifiedAt: TimeInterval = 0
 
     func serialized() -> String {
         [
@@ -63,6 +69,9 @@ struct Go2RTCOwnerRecord: Equatable, Sendable {
             "rtsp_listen=\(session.rtspListen)",
             "username=\(session.username)",
             "password=\(session.password)",
+            "binary_path=\(XiaomiCameraBridge.encodeField(binaryPath))",
+            "binary_size=\(binarySize)",
+            "binary_mtime=\(binaryModifiedAt)",
             "",
         ].joined(separator: "\n")
     }
@@ -93,7 +102,10 @@ struct Go2RTCOwnerRecord: Equatable, Sendable {
                 username: username,
                 password: password,
                 nonce: nonce
-            )
+            ),
+            binaryPath: fields["binary_path"].flatMap(XiaomiCameraBridge.decodeField) ?? "",
+            binarySize: Int64(fields["binary_size"] ?? "") ?? 0,
+            binaryModifiedAt: TimeInterval(fields["binary_mtime"] ?? "") ?? 0
         )
     }
 }
@@ -109,6 +121,8 @@ struct Go2RTCOwnershipProbe: Equatable, Sendable {
     var authenticated: Bool
     var nonceMatches: Bool
     var configChanged: Bool
+    /// The owned process was started from a different binary than the one this build resolved.
+    var binaryChanged: Bool = false
 }
 
 /// Manages the local CS2 UDP LAN relay and `go2rtc` transcode daemon for Xiaomi P2P cameras (#97).
@@ -119,10 +133,14 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
     private var relays: [String: RelayHandle] = [:]
     private var go2rtcProcess: Process?
     private var activeOwner: Go2RTCOwnerRecord?
+    /// True only when the running go2rtc build exposes the PTZ endpoint. The official v1.9.15
+    /// binary returns 404 there, so the drag surface stays off and video behaviour is unchanged.
+    private var ptzEndpointAvailable = false
 
     private struct RelayHandle {
         let port: UInt16
         let stopBox: RelayStopBox
+        let commandChannelDrained: Bool
     }
 
     public init() {}
@@ -164,7 +182,11 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         // h264Name is no longer registered but is still deleted, so streams left by older builds go away.
         await stopBridgeInternal(http: session, cleanDid: cleanDid, names: [rawName, h264Name, mjpegName])
 
-        let relayPort = try ensureRelayPort(cleanDid: cleanDid, camIP: ipv4)
+        let relayPort = try ensureRelayPort(
+            cleanDid: cleanDid,
+            camIP: ipv4,
+            commandChannelDrained: ptzEndpointAvailable
+        )
 
         let query = Self.xiaomiStreamQuery(
             clientPublic: clientPublic,
@@ -288,7 +310,7 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         if !owned {
             return .spawnFresh
         }
-        return probe.configChanged ? .restartOwned : .reuseOwned
+        return (probe.configChanged || probe.binaryChanged) ? .restartOwned : .reuseOwned
     }
 
     private func putStream(http: URLSession, owner: Go2RTCSession, name: String, src: String) async throws {
@@ -305,13 +327,28 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         }
     }
 
-    private func ensureRelayPort(cleanDid: String, camIP: in_addr) throws -> UInt16 {
+    private func ensureRelayPort(
+        cleanDid: String,
+        camIP: in_addr,
+        commandChannelDrained: Bool
+    ) throws -> UInt16 {
         if let existing = relays[cleanDid], !existing.stopBox.isStopped {
-            return existing.port
+            if existing.commandChannelDrained == commandChannelDrained {
+                return existing.port
+            }
+            // The bridge was replaced by a build with a different command-channel behaviour.
+            existing.stopBox.stop()
         }
         relays.removeValue(forKey: cleanDid)
-        let (port, stopBox) = try Self.spawnCS2UDPRelay(camIP: camIP)
-        relays[cleanDid] = RelayHandle(port: port, stopBox: stopBox)
+        let (port, stopBox) = try Self.spawnCS2UDPRelay(
+            camIP: camIP,
+            commandChannelDrained: commandChannelDrained
+        )
+        relays[cleanDid] = RelayHandle(
+            port: port,
+            stopBox: stopBox,
+            commandChannelDrained: commandChannelDrained
+        )
         return port
     }
 
@@ -332,17 +369,24 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
             let desired = Self.desiredGo2RTCConfig(ffmpegBin: ffmpegBin, session: record.session)
             let existing = (try? String(contentsOf: Self.go2rtcConfigURL(), encoding: .utf8)) ?? ""
             let changed = Self.baseConfig(existing) != Self.baseConfig(desired)
+            let identity = Self.binaryIdentity(exePath)
+            let binaryChanged = record.binaryPath != identity.path
+                || record.binarySize != identity.size
+                || abs(record.binaryModifiedAt - identity.modifiedAt) > 0.5
             let action = Self.decideGo2RTCAction(Go2RTCOwnershipProbe(
                 pidAlive: true,
                 authenticated: probe.authenticated,
                 nonceMatches: probe.nonceMatches,
-                configChanged: changed
+                configChanged: changed,
+                binaryChanged: binaryChanged
             ))
             switch action {
             case .reuseOwned:
                 activeOwner = record
+                ptzEndpointAvailable = await probePTZEndpoint(record.session)
                 return
             case .restartOwned:
+                ptzEndpointAvailable = false
                 await stopOwnedProcess(record)
             case .spawnFresh:
                 if let proc = go2rtcProcess, proc.isRunning, proc.processIdentifier == record.pid {
@@ -354,6 +398,73 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         }
 
         try await spawnFreshGo2RTC(exePath: exePath, ffmpegBin: ffmpegBin, appSupportBin: appSupportBin)
+        if let owner = activeOwner {
+            ptzEndpointAvailable = await probePTZEndpoint(owner.session)
+        }
+    }
+
+    /// The pinned PTZ build answers a GET on this path with 405; the official binary has no
+    /// route and answers 404. A probe never moves a camera.
+    private func probePTZEndpoint(_ session: Go2RTCSession) async -> Bool {
+        guard let url = Self.streamURL(session: session, path: "/api/xiaomi/ptz", query: nil) else {
+            return false
+        }
+        let http = Self.makeLocalHTTPClient(timeout: 1.2)
+        defer { http.invalidateAndCancel() }
+        let request = Self.authorizedURLRequest(for: url)
+        guard let (_, response) = try? await http.data(for: request),
+              let httpResponse = response as? HTTPURLResponse else {
+            return false
+        }
+        return Self.isPTZProbeResponse(
+            status: httpResponse.statusCode,
+            header: httpResponse.value(forHTTPHeaderField: "X-MenuBarMijia-PTZ")
+        )
+    }
+
+    /// The status alone could be an unrelated route; the version header identifies this bridge
+    /// and lets a future schema change fail closed.
+    static func isPTZProbeResponse(status: Int, header: String?) -> Bool {
+        status == 405 && header == "v1"
+    }
+
+    /// A client for one already-registered stream, or nil when this bridge cannot move cameras.
+    public func makePTZClient(streamName: String) -> CameraPTZClient? {
+        guard ptzEndpointAvailable,
+              let owner = activeOwner,
+              let baseURL = URL(string: "http://\(owner.session.apiListen)") else {
+            return nil
+        }
+        return CameraPTZClient(
+            baseURL: baseURL,
+            streamName: streamName,
+            username: owner.session.username,
+            password: owner.session.password
+        )
+    }
+
+    struct Go2RTCBinaryIdentity: Equatable {
+        var path: String
+        var size: Int64
+        var modifiedAt: TimeInterval
+    }
+
+    static func binaryIdentity(_ path: String) -> Go2RTCBinaryIdentity {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: path)
+        return Go2RTCBinaryIdentity(
+            path: path,
+            size: (attributes?[.size] as? NSNumber)?.int64Value ?? 0,
+            modifiedAt: (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        )
+    }
+
+    static func encodeField(_ raw: String) -> String {
+        Data(raw.utf8).base64EncodedString()
+    }
+
+    static func decodeField(_ raw: String) -> String? {
+        guard let data = Data(base64Encoded: raw) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     private func existingOwnedRecord() -> Go2RTCOwnerRecord? {
@@ -387,7 +498,14 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
             proc.standardError = logHandle ?? FileHandle.nullDevice
             try proc.run()
 
-            let record = Go2RTCOwnerRecord(pid: proc.processIdentifier, session: session)
+            let identity = Self.binaryIdentity(exePath)
+            let record = Go2RTCOwnerRecord(
+                pid: proc.processIdentifier,
+                session: session,
+                binaryPath: identity.path,
+                binarySize: identity.size,
+                binaryModifiedAt: identity.modifiedAt
+            )
             try Self.writeSecretFile(record.serialized(), to: Self.go2rtcOwnerURL())
             go2rtcProcess = proc
             activeOwner = record
@@ -881,7 +999,10 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
 
     // MARK: - CS2 UDP LAN Relay
 
-    private static func spawnCS2UDPRelay(camIP: in_addr) throws -> (UInt16, RelayStopBox) {
+    private static func spawnCS2UDPRelay(
+        camIP: in_addr,
+        commandChannelDrained: Bool
+    ) throws -> (UInt16, RelayStopBox) {
         #if canImport(Darwin)
         let probeFD = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
         guard probeFD >= 0 else {
@@ -986,7 +1107,7 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
             }
             var go2rtcAddr: sockaddr_in?
             var camDynamicPort: UInt16 = 32108
-            var commandGate = CS2CommandChannelGate()
+            var commandGate = CS2CommandChannelGate(isDraining: commandChannelDrained)
             var droppedCommands = 0
             let relayLogger = Logger(subsystem: "com.jryang1997.MenuBarMijia", category: "XiaomiCameraBridge")
             var buf = [UInt8](repeating: 0, count: 65_536)
@@ -1107,6 +1228,12 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
 struct CS2CommandChannelGate {
     static let passthroughLimit = 6
     private var forwardedSequences: Set<UInt16> = []
+    /// A patched bridge reads the command channel continuously, so it needs every message.
+    private let isDraining: Bool
+
+    init(isDraining: Bool = false) {
+        self.isDraining = isDraining
+    }
 
     mutating func reset() {
         forwardedSequences.removeAll()
@@ -1115,7 +1242,8 @@ struct CS2CommandChannelGate {
     /// True for a camera→client DRW packet on channel 0 beyond the passthrough allowance.
     /// Retransmissions of an already forwarded message keep passing so go2rtc can re-ACK them.
     mutating func shouldDrop(_ packet: [UInt8], count: Int) -> Bool {
-        guard count >= 8, packet[0] == 0xF1, packet[1] == 0xD0, packet[4] == 0xD1, packet[5] == 0 else {
+        guard !isDraining,
+              count >= 8, packet[0] == 0xF1, packet[1] == 0xD0, packet[4] == 0xD1, packet[5] == 0 else {
             return false
         }
         let seq = UInt16(packet[6]) << 8 | UInt16(packet[7])

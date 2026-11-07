@@ -404,8 +404,9 @@ extension CameraSpec {
 public enum CameraStreamSource: Equatable, Sendable {
     case hls(URL)
     /// Progressive fragmented MP4 (H.264/H.265) decoded natively; `mjpegFallback` is played
-    /// if native decoding cannot start (#97).
-    case liveMP4(URL, mjpegFallback: URL?)
+    /// if native decoding cannot start (#97). `ptz` is set only for a camera whose model and
+    /// transport are known PTZ-capable and whose bridge is the pinned build.
+    case liveMP4(URL, mjpegFallback: URL?, ptz: CameraPTZBinding?)
     case mjpeg(URL)
     case snapshot(URL)
     case demo(deviceId: String)
