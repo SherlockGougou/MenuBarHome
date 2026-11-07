@@ -596,6 +596,52 @@ struct SnapshotTests {
         )
     }
 
+    @Test("An expanded air-conditioner card lists its synthesized 更多设置 rows (#30)")
+    func expandedClimateFacetSnapshot() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+        let savedPanel = UserDefaults.standard.object(forKey: PanelPrefs.climatePanelKey)
+        UserDefaults.standard.set(true, forKey: PanelPrefs.climatePanelKey)
+        defer {
+            if let savedPanel {
+                UserDefaults.standard.set(savedPanel, forKey: PanelPrefs.climatePanelKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: PanelPrefs.climatePanelKey)
+            }
+        }
+
+        let climate = try #require(fixture.store.devices.first { device in
+            if case .climate = device.kind { return true } else { return false }
+        })
+        // Two synthesized controls the panel card used to drop (#30): the fresh-air switch and the
+        // louver direction. Both live in the shared 更多设置 section the card now appends.
+        fixture.store.deviceFacets[climate.id] = [
+            FacetControl(
+                id: "4.1", kind: .toggle, name: "on", title: "新风", serviceName: "fresh-air",
+                value: .bool(true), isWritable: true, writesByDefault: true, isHighValue: true,
+                target: .property(entityId: "miot:\(climate.id):4", piid: 1)
+            ),
+            FacetControl(
+                id: "3.1", kind: .select, name: "vertical-swing", title: "上下摆风", serviceName: "air-conditioner",
+                value: .number(1),
+                options: [MiotFacetOption(value: 0, label: "关"), MiotFacetOption(value: 1, label: "开")],
+                isWritable: true, writesByDefault: true, isHighValue: true,
+                target: .property(entityId: "miot:\(climate.id):3", piid: 1)
+            ),
+        ]
+        fixture.store.expandedDeviceId = climate.id
+
+        assertRendered(
+            snapshotReady(
+                DeviceCardView(device: climate, store: fixture.store, showRoomBadge: true)
+                    .padding(8)
+                    .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 460),
+            named: "expanded-climate-facets-zh-light"
+        )
+    }
+
     /// The program names are the released `mibx5.washer.f27vn` list (#3); 25 entries is what the
     /// drawer's scrolling pill row is for.
     private static var washer: SmartDevice {

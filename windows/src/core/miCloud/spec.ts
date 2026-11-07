@@ -266,9 +266,19 @@ export function inferFallbackSpec(record: Pick<MiDeviceRecord, "model" | "name">
   return structuredClone(FALLBACK_SPEC_DOCUMENT.fallback.spec);
 }
 
+/**
+ * True for the guessed, read-only table above: it tags every URN with `fallback` as the vendor
+ * segment. A cached guess must be retried instead of trusted forever (#30).
+ */
+export function isFallbackSpec(spec: MiotDeviceSpec): boolean {
+  return spec.type.split(":")[5] === "fallback";
+}
+
 export class MiotSpecResolver {
   private readonly specByModel = new Map<string, MiotDeviceSpec>();
   private readonly specByType = new Map<string, MiotDeviceSpec>();
+  /// Models served by the guessed table; every resolve() retries the released instance (#30).
+  private readonly fallbackModels = new Set<string>();
   private typeIndex: Record<string, string> | null = null;
   private indexPromise: Promise<Record<string, string>> | null = null;
 
@@ -280,6 +290,7 @@ export class MiotSpecResolver {
     if (initialModelSpecs) {
       for (const [m, s] of Object.entries(initialModelSpecs)) {
         this.specByModel.set(m, s);
+        if (isFallbackSpec(s)) this.fallbackModels.add(m);
       }
     }
     if (initialModelTypes && Object.keys(initialModelTypes).length > 0) {
@@ -324,7 +335,7 @@ export class MiotSpecResolver {
 
   async resolve(device: MiDeviceRecord): Promise<MiotDeviceSpec> {
     const existing = this.specByModel.get(device.model);
-    if (existing) return existing;
+    if (existing && !this.fallbackModels.has(device.model)) return existing;
 
     let urn = device.specType && device.specType.trim() !== "" ? device.specType.trim() : null;
     if (!urn) {
@@ -335,13 +346,17 @@ export class MiotSpecResolver {
     if (urn) {
       const fetched = await this.fetchInstance(urn);
       if (fetched) {
+        this.fallbackModels.delete(device.model);
         this.specByModel.set(device.model, fetched);
         return fetched;
       }
     }
 
+    // Keep the fallback the previous attempt returned; a later refresh tries the network again.
+    if (existing) return existing;
     const fallback = inferFallbackSpec(device);
     this.specByModel.set(device.model, fallback);
+    this.fallbackModels.add(device.model);
     return fallback;
   }
 
@@ -367,6 +382,9 @@ export class MiotSpecResolver {
       } catch {
         // network fallback
       }
+      // A failed index fetch must not stay cached as the empty answer, or resolve() keeps
+      // returning the fallback even after the network recovers (#30).
+      this.indexPromise = null;
       return this.typeIndex ?? {};
     })();
     return this.indexPromise;

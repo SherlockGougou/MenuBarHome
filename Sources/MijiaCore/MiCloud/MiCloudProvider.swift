@@ -37,6 +37,8 @@ public actor MiCloudProvider: HomeProvider {
     /// Light-group did → member dids, refreshed with the device list (#189).
     private var groupMembersByGroup: [String: [String]] = [:]
     private var specsByModel: [String: MiotDeviceSpec] = [:]
+    /// Models currently served by the read-only fallback; retried on every device-list refresh (#30).
+    private var fallbackSpecModels: Set<String> = []
     private var values: [MiotPropKey: JSONValue] = [:]
     /// Lights whose `mode` write the cloud rejected as unsupported; their scene chips are hidden.
     private var effectsUnsupported: Set<String> = []
@@ -368,7 +370,8 @@ public actor MiCloudProvider: HomeProvider {
             var name: String
         }
         var pending: [String: SpecRequest] = [:]
-        for device in devices where specsByModel[device.model] == nil && pending[device.model] == nil {
+        for device in devices where (specsByModel[device.model] == nil || fallbackSpecModels.contains(device.model))
+            && pending[device.model] == nil {
             pending[device.model] = SpecRequest(specType: device.specType, name: device.name)
         }
         guard !pending.isEmpty else { return }
@@ -403,11 +406,22 @@ public actor MiCloudProvider: HomeProvider {
         for outcome in loaded {
             if let spec = outcome.spec {
                 specsByModel[outcome.model] = spec
+                if Self.isFallbackSpec(spec) {
+                    fallbackSpecModels.insert(outcome.model)
+                } else {
+                    fallbackSpecModels.remove(outcome.model)
+                }
             }
             if let error = outcome.errorDescription {
                 logger.error("Spec load failed for \(outcome.model, privacy: .public): \(error, privacy: .public); using the read-only fallback")
             }
         }
+    }
+
+    /// The bundled fallback table tags every URN with `fallback` as its vendor segment (#30), so a
+    /// guessed spec cannot masquerade as a released one and stop the retry.
+    static func isFallbackSpec(_ spec: MiotDeviceSpec) -> Bool {
+        spec.type.split(separator: ":").dropFirst(5).first == "fallback"
     }
 
     /// Reads the selected home's devices only (all homes when none is selected) (#26).

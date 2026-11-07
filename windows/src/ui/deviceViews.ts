@@ -110,12 +110,15 @@ import { SF_ICONS } from "./appConstants.js";
     valuesAreStale: boolean,
     waitingDeviceIds: ReadonlySet<string>,
     escapeHtml: (value: string) => string,
+    facets: readonly FacetControl[] = [],
+    allowAdvancedFacetWrites = false,
   ): string {
     const readout = deviceReadout(waitingDeviceIds.has(dev.id), valuesAreStale);
     const running = readout !== "possiblyStale" && dev.isOnline && k.isOn && k.hvacMode !== "off";
     const powerWritable = k.powerWritable !== false;
     const temperatureWritable = k.temperatureWritable !== false;
-    const canExpand = temperatureWritable || k.availableModes.length > 0 || k.availableFanModes.length > 0;
+    const canExpand =
+      temperatureWritable || k.availableModes.length > 0 || k.availableFanModes.length > 0 || facets.length > 0;
     const open = canExpand && (forceOpen || expandedDeviceId === dev.id);
     const id = escapeHtml(dev.id);
     const modeLabel: Record<string, string> = { cool: t("制冷"), heat: t("制热"), dry: t("除湿"), fan_only: t("送风"), auto: t("自动") };
@@ -182,6 +185,7 @@ import { SF_ICONS } from "./appConstants.js";
                         .join("")}</div>`
                     : ""
                 }
+                ${renderMoreSettings({ deviceId: dev.id, facets, allowAdvanced: allowAdvancedFacetWrites, escapeHtml })}
               </div>`
             : ""
         }
@@ -602,7 +606,7 @@ export function renderDeviceTile(dev: SmartDevice, state: DeviceTileViewState): 
     return renderSensorCard(dev, dev.kind, state.span < 6, attrs, motion, badge, state.selectedRoom, state.valuesAreStale, escape);
   }
   if (dev.kind.kind === "climate" && size !== "half") {
-    return renderClimateStrip(dev, dev.kind, size === "panel", attrs, motion, badge, state.expandedDeviceId, state.selectedRoom, state.valuesAreStale, state.waitingDeviceIds, escape);
+    return renderClimateStrip(dev, dev.kind, size === "panel", attrs, motion, badge, state.expandedDeviceId, state.selectedRoom, state.valuesAreStale, state.waitingDeviceIds, escape, state.deviceFacets[dev.id] ?? [], state.allowAdvancedFacetWrites);
   }
   const isExpanded = state.expandedDeviceId === dev.id || size === "panel";
   const readout = deviceReadout(state.waitingDeviceIds.has(dev.id), state.valuesAreStale);
