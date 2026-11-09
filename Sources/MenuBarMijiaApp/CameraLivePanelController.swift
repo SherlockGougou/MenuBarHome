@@ -69,6 +69,8 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
     public var isPinnedOnTop = true {
         didSet { syncWindowLevel() }
     }
+    /// Rotation is a mounting preference per camera, so switching cameras keeps each one upright.
+    public private(set) var videoRotations: [String: Int] = [:]
     /// HLS streams can carry an audio track; every other source is video only. The player still
     /// starts muted, so sound is an explicit opt-in (#29).
     public var isMuted = true
@@ -111,6 +113,8 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
     private var warmPlaybacks: [WarmCameraPlayback] = []
     private var selectedLensByDevice: [String: CameraLens.Role] = [:]
     private var closeReleaseTask: Task<Void, Never>?
+    private var closeReleaseGeneration = 0
+    private var activeCameraEntityID: String?
     private var doorbellDismissTask: Task<Void, Never>?
     /// The window sits where a ring put it, so closing it must not overwrite the user's saved position.
     private var isDoorbellPlacement = false
@@ -183,6 +187,18 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         return store?.devices.first(where: { $0.id == id })
     }
 
+    private static func cameraEntityID(for device: SmartDevice) -> String? {
+        guard case .camera(let spec) = device.kind else { return nil }
+        return spec.entityId
+    }
+
+    /// A backend handoff can change the entity id while the canonical device id stays the
+    /// same. Reload only when that replacement did not come from the camera switcher itself.
+    public func handleCameraEntityChange(_ entityID: String?) {
+        guard let entityID, entityID != activeCameraEntityID else { return }
+        reloadStream()
+    }
+
     /// Every camera in the current home, including offline ones so a camera that drops off
     /// the network does not disappear from the switcher while it is being watched.
     public var cameraDevices: [SmartDevice] {
@@ -226,6 +242,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
             return
         }
         finishPTZMove()
+        closeReleaseGeneration &+= 1
         closeReleaseTask?.cancel()
         closeReleaseTask = nil
         doorbellDismissTask?.cancel()
@@ -246,12 +263,16 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
             && errorMessage == nil
             && (activePlayback != nil || streamSource != nil || isLoadingStream)
         )
+        let reservedWarm = canReuseHotStream
+            ? nil
+            : takeWarmPlayback(deviceID: device.id, lensID: targetLensID)
         if let previousDeviceId, !canReuseHotStream {
             let oldId = previousDeviceId
             if previousDeviceId != device.id,
                let playback = activePlayback,
                playback.failure == nil,
                case .liveMP4 = playback.source {
+                tearDownPictureInPicture()
                 warmActivePlayback(
                     playback,
                     deviceID: previousDeviceId,
@@ -266,6 +287,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
 
         activeDeviceId = device.id
         activeLensID = targetLensID
+        activeCameraEntityID = Self.cameraEntityID(for: device)
         customURLInput = store.cameraCustomStreamURL(for: device.id) ?? ""
         isShowingURLConfig = false
 
@@ -296,8 +318,9 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
             panel.orderFront(nil)
         }
         if !canReuseHotStream {
-            if let warm = takeWarmPlayback(deviceID: device.id, lensID: targetLensID) {
+            if let warm = reservedWarm {
                 if warm.playback.failure == nil {
+                    tearDownPictureInPicture()
                     activePlayback = warm.playback
                     streamSource = warm.playback.source
                     videoPlayer = warm.playback.player
@@ -329,6 +352,8 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         }
         isDoorbellPlacement = false
         doorbellOwnsClose = false
+        closeReleaseGeneration &+= 1
+        let releaseGeneration = closeReleaseGeneration
         let closingDeviceId = activeDeviceId
         let activePlaybackIDs = warmPlaybacks.map(\.deviceID)
         let store = self.store
@@ -342,10 +367,13 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         panelWindow?.orderOut(nil)
 
         closeReleaseTask = Task { @MainActor [weak self] in
-            guard !Task.isCancelled, let store else { return }
+            guard let store else { return }
             var deviceIDs = Set(activePlaybackIDs)
             if let closingDeviceId { deviceIDs.insert(closingDeviceId) }
             for deviceID in deviceIDs {
+                guard !Task.isCancelled,
+                      let self,
+                      self.closeReleaseGeneration == releaseGeneration else { return }
                 await store.stopCameraStream(for: deviceID)
             }
             self?.closeReleaseTask = nil
@@ -371,6 +399,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
     }
 
     private func warmActivePlayback(_ playback: CameraLivePlayback, deviceID: String, lensID: String) {
+        tearDownPictureInPicture()
         activePlayback = nil
         videoPlayer = nil
         hasLiveVideoFrame = false
@@ -471,6 +500,25 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         isMuted.toggle()
     }
 
+    public func showVideoOnlyNotice() {
+        store?.showToast(
+            L10n.tr(
+                "此画面流仅传输视频，没有音轨；自定义 HLS 流可开启声音",
+                "This stream is video only; a custom HLS stream can carry sound"
+            )
+        )
+    }
+
+    public func videoRotation(for deviceID: String?) -> Int {
+        guard let deviceID else { return 0 }
+        return videoRotations[deviceID] ?? 0
+    }
+
+    public func rotateVideo() {
+        guard let deviceID = activeDeviceId else { return }
+        videoRotations[deviceID] = CameraVideoRotation.next(videoRotations[deviceID] ?? 0)
+    }
+
     public func toggleExpandedSize() {
         isExpandedSize.toggle()
         guard let panel = panelWindow else { return }
@@ -519,6 +567,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         guard let store, let device = currentDevice, case .camera(let spec) = device.kind else {
             return
         }
+        activeCameraEntityID = spec.entityId
         guard spec.isOn else {
             let deviceId = device.id
             Task { await store.stopCameraStream(for: deviceId) }
@@ -600,6 +649,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         snapshotLoopTask = nil
         videoPlayer?.stop()
         videoPlayer = nil
+        tearDownPictureInPicture()
         hasLiveVideoFrame = false
         snapshotImage = nil
         activePlayback = playback
@@ -827,7 +877,12 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
 
     private func syncWindowLevel() {
         let pinnedLevel = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
-        panelWindow?.level = isPinnedOnTop ? pinnedLevel : .floating
+        guard let panel = panelWindow else { return }
+        panel.isFloatingPanel = isPinnedOnTop
+        panel.level = isPinnedOnTop ? pinnedLevel : .normal
+        panel.collectionBehavior = isPinnedOnTop
+            ? [.canJoinAllSpaces, .fullScreenAuxiliary]
+            : [.managed]
     }
 
     private func initialFrame(for size: NSSize) -> NSRect {
@@ -985,6 +1040,22 @@ struct CameraHLSPlayerView: NSViewRepresentable {
 
 // MARK: - Live HUD Audio Status (#29)
 
+enum CameraVideoRotation {
+    static func next(_ degrees: Int) -> Int {
+        ((degrees % 360) + 360 + 90) % 360
+    }
+
+    /// A quarter turn swaps width and height; scaling by this factor keeps the picture inside
+    /// the viewport instead of letting the rotated bounds clip.
+    static func fitScale(degrees: Int, in size: CGSize) -> CGFloat {
+        let normalized = ((degrees % 360) + 360) % 360
+        guard normalized == 90 || normalized == 270, size.width > 0, size.height > 0 else {
+            return 1
+        }
+        return min(size.width / size.height, size.height / size.width)
+    }
+}
+
 /// What the live HUD can say about sound for the stream on screen. Only an HLS stream can carry
 /// an audio track; P2P, MJPEG, snapshot and demo sources are video only.
 enum CameraLiveAudioStatus: Equatable {
@@ -1001,10 +1072,13 @@ enum CameraLiveAudioStatus: Equatable {
     }
 }
 
-/// Mute toggle for an HLS stream, or the "video only" label for every frame-based source. Split
-/// from the panel so the two states can be snapshotted without an AVPlayerView (#29).
+/// Mute toggle for an HLS stream, or the "video only" status for every frame-based source.
+/// The status is clickable only to explain why there is no audio. Split from the panel so the
+/// two states can be snapshotted without an AVPlayerView (#29).
 struct CameraLiveAudioStatusView: View {
     let status: CameraLiveAudioStatus
+    var isCompact: Bool = false
+    var onExplainVideoOnly: () -> Void = {}
     let onToggleMute: () -> Void
 
     var body: some View {
@@ -1012,7 +1086,20 @@ struct CameraLiveAudioStatusView: View {
         case .hidden:
             EmptyView()
         case .videoOnly:
-            videoOnlyBadge
+            if isCompact {
+                CameraHUDIconButton(
+                    symbol: "speaker.slash",
+                    isActive: false,
+                    help: videoOnlyHelp,
+                    action: onExplainVideoOnly
+                )
+            } else {
+                Button(action: onExplainVideoOnly) {
+                    videoOnlyBadge
+                }
+                .buttonStyle(.plain)
+                .help(videoOnlyHelp)
+            }
         case .audio(let isMuted):
             CameraHUDIconButton(
                 symbol: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
@@ -1034,10 +1121,14 @@ struct CameraLiveAudioStatusView: View {
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
         .background(Capsule().fill(Color.white.opacity(0.10)))
-        .help(L10n.tr(
-            "当前视频流（米家 P2P / MJPEG / 快照）仅传输画面；配置包含音轨的自定义 HLS (.m3u8) 流可开启声音。",
-            "Current stream (Xiaomi P2P / MJPEG / Snapshot) carries video only; custom HLS (.m3u8) streams with an audio track support sound."
-        ))
+        .contentShape(Capsule())
+    }
+
+    private var videoOnlyHelp: String {
+        L10n.tr(
+            "当前视频流仅传输画面，不含音轨；点击查看说明",
+            "This stream is video only and has no audio track; click for details"
+        )
     }
 }
 
@@ -1070,6 +1161,7 @@ private struct CameraHUDIconButton: View {
 struct CameraLivePanelView: View {
     @Bindable var controller: CameraLivePanelController
     let store: HomeStore
+    @Environment(\.effectiveReduceMotion) private var reduceMotion
     @State private var demoTick: Int = 0
 
     private var device: SmartDevice? {
@@ -1143,6 +1235,9 @@ struct CameraLivePanelView: View {
         .onChange(of: cameraSpec?.isOn) { _, _ in
             controller.reloadStream()
         }
+        .onChange(of: cameraSpec?.entityId) { _, newValue in
+            controller.handleCameraEntityChange(newValue)
+        }
     }
 
     private var topHUDBar: some View {
@@ -1154,7 +1249,7 @@ struct CameraLivePanelView: View {
 
             cameraTitle
 
-            if let room = device?.roomName, !room.isEmpty {
+            if controller.isExpandedSize, let room = device?.roomName, !room.isEmpty {
                 Text(L10n.displayRoomName(room))
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.72))
@@ -1166,7 +1261,9 @@ struct CameraLivePanelView: View {
             Spacer(minLength: 4)
 
             CameraLiveAudioStatusView(
-                status: CameraLiveAudioStatus(streamSource: controller.streamSource, isMuted: controller.isMuted)
+                status: CameraLiveAudioStatus(streamSource: controller.streamSource, isMuted: controller.isMuted),
+                isCompact: !controller.isExpandedSize,
+                onExplainVideoOnly: { controller.showVideoOnlyNotice() }
             ) {
                 controller.toggleMute()
             }
@@ -1191,6 +1288,19 @@ struct CameraLivePanelView: View {
                 }
                 .disabled(!controller.hasLiveVideoFrame && !controller.isPictureInPictureActive)
                 .opacity(controller.hasLiveVideoFrame || controller.isPictureInPictureActive ? 1 : 0.4)
+            }
+
+            CameraHUDIconButton(
+                symbol: "rotate.right",
+                isActive: controller.videoRotation(for: device?.id) != 0,
+                help: controller.videoRotation(for: device?.id) == 0
+                    ? L10n.tr("顺时针旋转画面 90°（四次恢复）", "Rotate picture 90° clockwise (four clicks restore)")
+                    : L10n.tr(
+                        "再旋转 90°（当前 \(controller.videoRotation(for: device?.id))°）",
+                        "Rotate another 90° (now \(controller.videoRotation(for: device?.id))°)"
+                    )
+            ) {
+                controller.rotateVideo()
             }
 
             CameraHUDIconButton(
@@ -1376,12 +1486,16 @@ struct CameraLivePanelView: View {
         } else if let source = controller.streamSource {
             switch source {
             case .hls(let url):
-                CameraHLSPlayerView(url: url, isMuted: controller.isMuted)
+                rotatedMedia {
+                    CameraHLSPlayerView(url: url, isMuted: controller.isMuted)
+                }
             case .liveMP4:
                 ZStack {
                     if let player = controller.videoPlayer {
-                        CameraLiveVideoSurface(player: player)
-                            .allowsHitTesting(false)
+                        rotatedMedia {
+                            CameraLiveVideoSurface(player: player)
+                                .allowsHitTesting(false)
+                        }
                     }
                     if !controller.hasLiveVideoFrame {
                         VStack(spacing: 8) {
@@ -1395,11 +1509,12 @@ struct CameraLivePanelView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .mjpeg:
                 if let img = controller.snapshotImage {
-                    Image(nsImage: img)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .allowsHitTesting(false)
+                    rotatedMedia {
+                        Image(nsImage: img)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .allowsHitTesting(false)
+                    }
                 } else {
                     VStack(spacing: 8) {
                         ProgressView()
@@ -1410,11 +1525,12 @@ struct CameraLivePanelView: View {
                 }
             case .snapshot:
                 if let img = controller.snapshotImage {
-                    Image(nsImage: img)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .allowsHitTesting(false)
+                    rotatedMedia {
+                        Image(nsImage: img)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .allowsHitTesting(false)
+                    }
                 } else {
                     VStack(spacing: 8) {
                         ProgressView()
@@ -1424,7 +1540,9 @@ struct CameraLivePanelView: View {
                     }
                 }
             case .demo:
-                demoLiveCanvas
+                rotatedMedia {
+                    demoLiveCanvas
+                }
             }
         } else if let err = controller.errorMessage {
             VStack(spacing: 10) {
@@ -1472,6 +1590,26 @@ struct CameraLivePanelView: View {
             }
             .padding(16)
         }
+    }
+
+    private var videoRotationDegrees: Int {
+        controller.videoRotation(for: device?.id)
+    }
+
+    /// Rotates only the picture. Loading and error states stay upright so their text remains
+    /// readable while a P2P stream is still connecting.
+    private func rotatedMedia<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        let media = content()
+        return GeometryReader { proxy in
+            media
+                .frame(width: proxy.size.width, height: proxy.size.height)
+                .rotationEffect(.degrees(Double(videoRotationDegrees)))
+                .scaleEffect(
+                    CameraVideoRotation.fitScale(degrees: videoRotationDegrees, in: proxy.size)
+                )
+        }
+        .clipped()
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: videoRotationDegrees)
     }
 
     private var demoLiveCanvas: some View {

@@ -1905,6 +1905,76 @@ struct MenuBarPanelControllerTests {
         #expect(cameraController.isMuted, "closing the live window returns the next open to muted")
     }
 
+    @Test("Camera pin toggle changes the window level and rotation cycles in quarter turns")
+    func cameraLivePanelPinAndRotation() async throws {
+        _ = NSApplication.shared
+        let (store, suite) = try await makeStore()
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let camera = try #require(store.devices.first(where: {
+            if case .camera = $0.kind { return true }
+            return false
+        }))
+
+        let cameraController = CameraLivePanelController.shared
+        cameraController.presentsActively = false
+        cameraController.install(with: store)
+        defer {
+            cameraController.closePanel()
+            cameraController.presentsActively = true
+        }
+
+        store.openCameraLiveView(camera.id)
+        let panel = try #require(cameraController.panelWindow)
+
+        cameraController.isPinnedOnTop = false
+        #expect(panel.level == .normal)
+        #expect(panel.isFloatingPanel == false)
+        #expect(!panel.collectionBehavior.contains(.fullScreenAuxiliary))
+
+        cameraController.isPinnedOnTop = true
+        #expect(panel.level.rawValue > NSWindow.Level.statusBar.rawValue)
+        #expect(panel.isFloatingPanel == true)
+        #expect(panel.collectionBehavior.contains(.fullScreenAuxiliary))
+
+        for expected in [90, 180, 270, 0] {
+            cameraController.rotateVideo()
+            #expect(cameraController.videoRotation(for: camera.id) == expected)
+        }
+    }
+
+    @Test("Camera rotation keeps a quarter turn inside the viewport")
+    func cameraRotationMath() {
+        #expect(CameraVideoRotation.next(270) == 0)
+        #expect(CameraVideoRotation.fitScale(degrees: 0, in: CGSize(width: 640, height: 420)) == 1)
+        #expect(CameraVideoRotation.fitScale(degrees: 180, in: CGSize(width: 640, height: 420)) == 1)
+        let quarterTurn = CameraVideoRotation.fitScale(degrees: 90, in: CGSize(width: 640, height: 420))
+        #expect(abs(quarterTurn - 420.0 / 640.0) < 0.0001)
+    }
+
+    @Test("The video-only HUD explains the missing audio track")
+    func cameraVideoOnlyHUDExplainsAudio() async throws {
+        _ = NSApplication.shared
+        let (store, suite) = try await makeStore()
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let camera = try #require(store.devices.first(where: {
+            if case .camera = $0.kind { return true }
+            return false
+        }))
+
+        let cameraController = CameraLivePanelController.shared
+        cameraController.presentsActively = false
+        cameraController.install(with: store)
+        defer {
+            cameraController.closePanel()
+            cameraController.presentsActively = true
+        }
+
+        store.openCameraLiveView(camera.id)
+        cameraController.showVideoOnlyNotice()
+        let notice = try #require(store.toastNotice)
+        #expect(notice.message.contains("没有音轨"))
+    }
+
     @Test("Closing the camera mini-window hides it at once and releases the stream")
     func cameraLivePanelCloseReleasesStreamImmediately() async throws {
         _ = NSApplication.shared
