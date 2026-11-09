@@ -5,6 +5,7 @@ import MijiaCore
 
 public struct ControlCenterPanel: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.panelFoldRecord) private var panelFoldRecord
     @AppStorage(PanelPrefs.climatePanelKey) var climatePanelModule: Bool = true
     @State var draggingId: String?
     @State var activeResize: ActiveTileResize?
@@ -48,6 +49,11 @@ public struct ControlCenterPanel: View {
     /// Re-centers the active room pill when the user taps an already-selected pill after scrolling.
     @State var roomScrollTrigger = 0
     @State var kindScrollTrigger = 0
+    /// The kind-chip row stays hidden until the user taps the active 全部 pill again.
+    @State var kindChipsRevealed = false
+    /// Which pending notice the 「还有 N 条提醒」 button has walked to. The highest priority is
+    /// shown on every open and whenever the pending set changes.
+    @State var noticeIndex = 0
 
     /// Card sizes are remembered per page: a room id, or "all" for the overview.
     var layoutScope: String { store.selectedRoomId ?? "all" }
@@ -68,8 +74,11 @@ public struct ControlCenterPanel: View {
     /// resolve the effective scheme locally (#51).
     var effectiveScheme: ColorScheme { appearance.colorScheme ?? colorScheme }
 
-    public init(store: HomeStore) {
+    /// - Parameter initialNoticeIndex: lets the snapshot and layout tests put a specific pending
+    ///   notice on screen. Production always starts at the highest priority.
+    public init(store: HomeStore, initialNoticeIndex: Int = 0) {
         self.store = store
+        _noticeIndex = State(initialValue: initialNoticeIndex)
     }
     public var body: some View {
         let _ = (store.effectiveLanguage, store.selectedRoomId, store.rooms.count)
@@ -82,11 +91,14 @@ public struct ControlCenterPanel: View {
             .onChange(of: store.assistantState) { _, state in handleAssistantState(state) }
             // #45: the only place that sees every error toast is the panel root.
             .onChange(of: store.toastNotice?.id) { _, _ in handleToastNotice() }
+            // A newly pending notice takes priority; a stale cycle position would hide it.
+            .onChange(of: store.panelNoticeKinds) { _, _ in noticeIndex = 0 }
             // Frequently opened utility: show immediately, including keyboard invocation.
             .onReceive(NotificationCenter.default.publisher(for: MenuBarPanelController.didShowNotification)) { _ in
                 UndoAvailabilityTracker.shared.syncAction(at: store.lastAssistantActionAt)
                 LaunchAtLoginCoordinator.live(store: store).refresh()
                 isPresented = true
+                noticeIndex = 0
             }
             .onAppear { handlePanelAppear() }
             // The panel tree survives a close, so a half-typed query would come back on the next open.
@@ -250,35 +262,10 @@ public struct ControlCenterPanel: View {
                 .padding(.top, 12)
                 .padding(.bottom, 8)
 
-            // #180 review: after connecting, the lessons stay above the dashboard so search and
-            // All Off/Undo can be tried while these instructions are still on screen.
-            // Reordering wants the height for the list instead (§5.1).
-            if store.showsOnboardingChecklistCard, !isRoomOrdering {
-                OnboardingChecklistCard(
-                    store: store,
-                    onBeginSearch: { search.focus() }
-                )
-                .padding(.horizontal, 14)
-                .padding(.bottom, 8)
-                .transition(AppleMotion.drawerTransition)
-            }
-
-            if store.miSessionShowsExpired || store.miSessionExpiringSoonDate != nil {
-                miSessionExpiryBanner
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
-                    .transition(AppleMotion.drawerTransition)
-            }
-
-            if let suggestion = store.pendingHAAddressSuggestion {
-                haAddressSuggestionBanner(suggestion)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
-                    .transition(AppleMotion.drawerTransition)
-            }
-
-            if let prompt = store.haPlaintextPrompt {
-                haPlaintextConsentBanner(prompt)
+            // A blocked session or a plaintext-token choice stays pinned under the header so it
+            // is the first thing the user reads. Lower-priority notices scroll with the devices.
+            if let slot = pinnedNotice {
+                systemNotice(slot)
                     .padding(.horizontal, 14)
                     .padding(.bottom, 8)
                     .transition(AppleMotion.drawerTransition)
@@ -288,8 +275,9 @@ public struct ControlCenterPanel: View {
             // the height for the list instead.
             if !isRoomOrdering {
                 omnibar
+                    .foldOrigin { $0.omnibarMinY = $1 }
                     .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 4)
 
                 if showsInputDrawer {
                     inputDrawer
@@ -321,9 +309,9 @@ public struct ControlCenterPanel: View {
                         .padding(.bottom, 8)
                     }
                 } else {
-                    listFilterBars
+                    browsingFilters
                         .padding(.horizontal, 14)
-                        .padding(.bottom, 8)
+                        .padding(.bottom, 4)
                 }
             }
 
@@ -347,8 +335,113 @@ public struct ControlCenterPanel: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
         }
+        .foldOrigin { $0.panelMinY = $1 }
         .animation(AppleMotion.snappySpring, value: store.isShowingAssistantBar)
         .animation(AppleMotion.snappySpring, value: layoutUI.editMode)
+        .animation(AppleMotion.snappySpring, value: kindChipsRevealed)
+        .onChange(of: roomScrollTrigger) { _, value in handleAllPillReselect(value) }
+    }
+
+    /// Re-tapping the already-selected 全部 pill increments `roomScrollTrigger`. That second tap
+    /// is the gesture that shows or hides the kind chips.
+    private func handleAllPillReselect(_ value: Int) {
+        guard value > 0, store.listCut == .all else { return }
+        kindChipsRevealed.toggle()
+    }
+
+    /// Every pending notice in priority order.
+    private var noticeKinds: [PanelNoticeSlot.Kind] { store.panelNoticeKinds }
+
+    /// The notice on screen: the highest priority one unless the reminder button walked forward.
+    private var currentNotice: PanelNoticeSlot? {
+        PanelNotice.slot(noticeKinds, at: noticeIndex)
+    }
+
+    /// Blocked and security notices stay above the search field. Anything quieter scrolls.
+    private var pinnedNotice: PanelNoticeSlot? {
+        guard let slot = currentNotice, slot.hidesChecklist else { return nil }
+        return slot
+    }
+
+    private var scrollingNotice: PanelNoticeSlot? {
+        guard let slot = currentNotice, !slot.hidesChecklist else { return nil }
+        return slot
+    }
+
+    private var showsLessonRow: Bool {
+        store.showsOnboardingChecklistCard && !noticeKinds.contains(where: \.hidesChecklist)
+    }
+
+    /// Walks to the next pending notice; the last step returns to the highest priority.
+    private func advanceNotice() {
+        let count = noticeKinds.count
+        guard count > 1 else { return }
+        withAnimation(AppleMotion.snappySpring) { noticeIndex = (noticeIndex + 1) % count }
+    }
+
+    private var showsScrollPreface: Bool {
+        scrollingNotice != nil || showsLessonRow
+    }
+
+    /// The toast the panel actually draws. A pinned blocked notice already carries the same
+    /// message and Scan action, so #47's persistent expiry toast must not repeat it.
+    var visibleToast: ToastNotice? {
+        guard let toast = store.toastNotice else { return nil }
+        guard !(store.panelNoticeSlot?.repeats(toast) ?? false) else { return nil }
+        return toast
+    }
+
+    private var showsKindChips: Bool {
+        KindChipRowPolicy.isShown(listCut: store.listCut, revealed: kindChipsRevealed)
+    }
+
+    private var browsingFilters: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            roomFilterBar
+            if showsKindChips {
+                kindFilterBar
+                    .foldOrigin { $0.kindRowMinY = $1 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var scrollPreface: some View {
+        if let slot = scrollingNotice {
+            systemNotice(slot)
+        }
+        if showsLessonRow {
+            OnboardingChecklistCard(store: store, onBeginSearch: { search.focus() })
+                .foldOrigin { $0.lessonRowMinY = $1 }
+        }
+    }
+
+    @ViewBuilder
+    func systemNotice(_ slot: PanelNoticeSlot) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            switch slot.kind {
+            case .miBlocked, .miExpiringSoon:
+                miSessionExpiryBanner
+            case .haPlaintext(let prompt):
+                haPlaintextConsentBanner(prompt)
+            case .haAddress(let instance):
+                haAddressSuggestionBanner(instance)
+            }
+            if slot.extraCount > 0 {
+                Button {
+                    advanceNotice()
+                } label: {
+                    Text(PanelNotice.extraReminderLabel(count: slot.extraCount))
+                        .font(.system(size: DesignTokens.TypeSize.micro, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("panel-notice-extra")
+                .panelHelp(L10n.tr("查看下一条提醒", "Show the next reminder"))
+            }
+        }
+        .foldOrigin { $0.systemNoticeMinY = $1 }
+        .accessibilityIdentifier("panel-system-notice")
     }
 
     /// The 460 pt panel gives the height to the list instead of a strip that duplicates it (§5.1).
@@ -363,40 +456,48 @@ public struct ControlCenterPanel: View {
                         uniqueKeysWithValues: sections.flatMap(\.devices).prefix(9).enumerated().map { ($1.id, $0 + 1) }
                     )
 
-                    VStack(alignment: .leading, spacing: 11) {
-                        if search.isSearching {
-                            searchResultsList(results: searchResults)
-                        } else if store.visibleDevices.isEmpty {
-                            emptyStateView
-                        } else {
-                            ForEach(sections) { section in
-                                if section.title != nil {
-                                    groupHeader(section)
-                                }
-                                if !collapsedGroups.contains(collapseKey(section)) {
-                                    deviceCollectionView(
-                                        devices: section.devices,
-                                        showRoomBadge: store.selectedRoomId == nil,
-                                        quickIndexMap: quickIndexMap
-                                    )
-                                    .transition(.asymmetric(
-                                        insertion: .opacity.combined(with: .offset(y: -8)),
-                                        removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .top))
-                                    ))
+                    VStack(alignment: .leading, spacing: 0) {
+                        if showsScrollPreface {
+                            scrollPreface
+                        }
+                        VStack(alignment: .leading, spacing: 11) {
+                            if search.isSearching {
+                                searchResultsList(results: searchResults)
+                            } else if store.visibleDevices.isEmpty {
+                                emptyStateView
+                            } else {
+                                ForEach(sections) { section in
+                                    if section.title != nil {
+                                        groupHeader(section)
+                                    }
+                                    if !collapsedGroups.contains(collapseKey(section)) {
+                                        deviceCollectionView(
+                                            devices: section.devices,
+                                            showRoomBadge: store.selectedRoomId == nil,
+                                            quickIndexMap: quickIndexMap
+                                        )
+                                        .transition(.asymmetric(
+                                            insertion: .opacity.combined(with: .offset(y: -8)),
+                                            removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .top))
+                                        ))
+                                    }
                                 }
                             }
                         }
-                    }
-                    .coordinateSpace(name: TileSpace.name)
-                    // Cards stop hit-testing in edit mode; the container must still catch the press.
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(tileDragGesture)
-                    .onPreferenceChange(TileFramesKey.self) { frames in
-                        if frames != tileFrames { tileFrames = frames }
+                        .coordinateSpace(name: TileSpace.name)
+                        // Cards stop hit-testing in edit mode; the container must still catch the press.
+                        .contentShape(Rectangle())
+                        .simultaneousGesture(tileDragGesture)
+                        .onPreferenceChange(TileFramesKey.self) { frames in
+                            if frames != tileFrames { tileFrames = frames }
+                        }
+                        .onPreferenceChange(CardGlobalTopKey.self) { tops in
+                            panelFoldRecord?.cardTops = tops
+                        }
                     }
                     .padding(.horizontal, 13)
-                    .padding(.top, 10)
-                    .padding(.bottom, store.undoBanner != nil || store.toastNotice != nil ? 48 : 12)
+                    .padding(.top, showsScrollPreface ? 0 : 10)
+                    .padding(.bottom, store.undoBanner != nil || visibleToast != nil ? 48 : 12)
                 }
                 .onChange(of: pendingScrollToDeviceId) { _, targetId in
                     guard let targetId else { return }
@@ -840,5 +941,58 @@ enum PanelSearchKeyboard {
         Task { @MainActor in
             await store.runAssistantCommand(utterance)
         }
+    }
+}
+
+/// Per-panel measurements for the fold test. Absent unless a test injects one, so other UI
+/// suites do not share this storage.
+final class PanelFoldRecord: @unchecked Sendable {
+    var panelMinY: CGFloat?
+    var systemNoticeMinY: CGFloat?
+    var omnibarMinY: CGFloat?
+    var lessonRowMinY: CGFloat?
+    var kindRowMinY: CGFloat?
+    var cardTops: [String: CGFloat] = [:]
+}
+
+private struct PanelFoldRecordKey: EnvironmentKey {
+    static let defaultValue: PanelFoldRecord? = nil
+}
+
+extension EnvironmentValues {
+    var panelFoldRecord: PanelFoldRecord? {
+        get { self[PanelFoldRecordKey.self] }
+        set { self[PanelFoldRecordKey.self] = newValue }
+    }
+}
+
+struct CardGlobalTopKey: PreferenceKey {
+    static let defaultValue: [String: CGFloat] = [:]
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+private struct FoldOriginWriter: View {
+    @Environment(\.panelFoldRecord) private var record
+    var assign: (PanelFoldRecord, CGFloat) -> Void
+
+    var body: some View {
+        GeometryReader { geo in
+            let y = geo.frame(in: .global).minY
+            Color.clear
+                .onAppear {
+                    if let record { assign(record, y) }
+                }
+                .onChange(of: y) { _, newY in
+                    if let record { assign(record, newY) }
+                }
+        }
+    }
+}
+
+private extension View {
+    func foldOrigin(_ assign: @escaping (PanelFoldRecord, CGFloat) -> Void) -> some View {
+        background { FoldOriginWriter(assign: assign) }
     }
 }

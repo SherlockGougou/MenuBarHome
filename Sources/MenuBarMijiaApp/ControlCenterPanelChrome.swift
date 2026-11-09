@@ -132,7 +132,7 @@ extension ControlCenterPanel {
                             count: store.allOffTargets.count,
                             helpText: copy.tooltip,
                             onConfirm: {
-                                withAnimation(AppleMotion.snappySpring) { _ = store.turnAllOff() }
+                                withAnimation(AppleMotion.snappySpring) { _ = store.rehearseAllOff() }
                                 SoundFeedback.playSuccess()
                             },
                             onTap: {
@@ -1051,7 +1051,7 @@ extension ControlCenterPanel {
                 }
             }
             .transition(AppleMotion.drawerTransition)
-        } else if let toast = store.toastNotice {
+        } else if let toast = visibleToast {
             let toastShape = Capsule(style: .continuous)
             NoticeToastBanner(
                 notice: toast,
