@@ -1046,6 +1046,30 @@ struct MenuBarPanelControllerTests {
         #expect(controller.panelWindow === panel, "the window is reused, not recreated")
     }
 
+    @Test("Scanning from the Settings toast opens the panel that owns the QR view")
+    func settingsToastScanRevealsPanel() async throws {
+        let (store, suite) = try await makeExpiredMiSessionStore()
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let controller = makeController(store: store)
+        defer { controller.uninstall() }
+
+        let previousReveal = ToastNoticeActions.revealPanel
+        ToastNoticeActions.revealPanel = { controller.showPanel() }
+        defer { ToastNoticeActions.revealPanel = previousReveal }
+
+        store.dismissMiReauth()
+        ToastNoticeActions.perform(
+            ToastAction(title: "扫码", kind: .presentMiReauth),
+            store: store
+        )
+
+        #expect(store.isShowingMiReauth)
+        #expect(controller.isPanelVisible)
+        let panel = try #require(controller.panelWindow)
+        let hosting = try #require(panel.contentView as? NSHostingView<ControlCenterPanel>)
+        #expect(hosting.rootView.store.isShowingMiReauth)
+    }
+
     @Test("Toggle switches between visible and hidden while preserving the same SwiftUI tree")
     func toggleCyclesVisibility() async throws {
         let (store, suite) = try await makeStore()

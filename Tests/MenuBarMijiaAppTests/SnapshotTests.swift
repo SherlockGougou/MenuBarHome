@@ -50,10 +50,26 @@ struct SnapshotTests {
 
         UserDefaults.standard.set(AppAppearance.system.rawValue, forKey: AppAppearance.storageKey)
 
+        #expect(fixture.store.panelHealth == .ok)
         assertRendered(
             snapshotReady(ControlCenterPanel(store: fixture.store)),
             size: CGSize(width: 376, height: 560),
             named: "panel-zh-light"
+        )
+    }
+
+    @Test("A panel with no configured source names that instead of connected")
+    func panelNoSourceSnapshot() async throws {
+        let fixture = try await SnapshotFixture(configuredHASource: false)
+        defer { fixture.restore() }
+
+        UserDefaults.standard.set(AppAppearance.system.rawValue, forKey: AppAppearance.storageKey)
+        #expect(fixture.store.panelHealth == .notConfigured)
+
+        assertRendered(
+            snapshotReady(ControlCenterPanel(store: fixture.store)),
+            size: CGSize(width: 376, height: 560),
+            named: "panel-no-source-zh-light"
         )
     }
 
@@ -66,7 +82,8 @@ struct SnapshotTests {
                 ssecurity: "c2VjcmV0",
                 serviceToken: "tok",
                 expiresAt: Date(timeIntervalSince1970: 1_700_000_000)
-            )
+            ),
+            configuredHASource: false
         )
         defer { fixture.restore() }
 
@@ -76,6 +93,34 @@ struct SnapshotTests {
             snapshotReady(ControlCenterPanel(store: fixture.store)),
             size: CGSize(width: 376, height: 560),
             named: "panel-mi-session-expired-zh-light"
+        )
+    }
+
+    @Test("Panel shows the persistent expired-session toast with its Scan action and close button")
+    func panelExpiredMiSessionToastSnapshot() async throws {
+        let fixture = try await SnapshotFixture(
+            miSession: MiSession(
+                userId: "42",
+                cUserId: "c",
+                ssecurity: "c2VjcmV0",
+                serviceToken: "tok",
+                expiresAt: Date(timeIntervalSince1970: 1_700_000_000)
+            ),
+            configuredHASource: false
+        )
+        defer { fixture.restore() }
+
+        UserDefaults.standard.set(AppAppearance.system.rawValue, forKey: AppAppearance.storageKey)
+        #expect(fixture.store.miSessionBlocksControl)
+        let device = try #require(fixture.store.devices.first { $0.isPrimaryToggleable })
+        #expect(fixture.store.togglePrimary(device) == nil)
+        #expect(fixture.store.toastNotice?.persistent == true)
+        #expect(fixture.store.toastNotice?.action == ToastAction(title: "扫码", kind: .presentMiReauth))
+
+        assertRendered(
+            snapshotReady(ControlCenterPanel(store: fixture.store)),
+            size: CGSize(width: 376, height: 560),
+            named: "panel-mi-session-expired-toast-zh-light"
         )
     }
 
@@ -985,7 +1030,7 @@ struct SnapshotTests {
 
     @Test("Settings remain readable in light and dark appearances")
     func settingsSnapshots() async throws {
-        let fixture = try await SnapshotFixture()
+        let fixture = try await SnapshotFixture(configuredHASource: false)
         defer { fixture.restore() }
         for tab in [SettingsTab.general, .connection, .assistant, .appearance, .privacy, .about] {
             for scheme in [ColorScheme.light, .dark] {
@@ -1004,7 +1049,7 @@ struct SnapshotTests {
 
     @Test("Settings capsule fits English at minimum window size with glass enabled")
     func settingsCapsuleVariants() async throws {
-        let fixture = try await SnapshotFixture()
+        let fixture = try await SnapshotFixture(configuredHASource: false)
         defer { fixture.restore() }
         for language in [AppLanguage.zhHans, .en] {
             L10n.currentLanguage = language
@@ -1025,7 +1070,7 @@ struct SnapshotTests {
 
     @Test("Settings stay proportional in wide windows and with motion enabled")
     func settingsWideWindows() async throws {
-        let fixture = try await SnapshotFixture()
+        let fixture = try await SnapshotFixture(configuredHASource: false)
         defer { fixture.restore() }
         for width: CGFloat in [900, 1200] {
             for scheme in [ColorScheme.light, .dark] {
@@ -1359,7 +1404,8 @@ private struct SnapshotFixture {
         miSession: MiSession? = nil,
         roomCount: Int? = nil,
         editMode: PanelEditMode = .none,
-        includeCamera: Bool = false
+        includeCamera: Bool = false,
+        configuredHASource: Bool = true
     ) async throws {
         previousLanguage = L10n.currentLanguage
         L10n.currentLanguage = .zhHans
@@ -1407,6 +1453,9 @@ private struct SnapshotFixture {
             attempts += 1
         }
         #expect(!store.devices.isEmpty, "MockHomeProvider should deliver a snapshot right away")
+        if configuredHASource {
+            store.hasHASource = true
+        }
 
         if editMode == .roomOrder {
             LayoutUIState.shared.beginRoomOrder(
