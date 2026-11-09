@@ -1209,6 +1209,25 @@ struct SnapshotTests {
         )
     }
 
+    @Test("Camera control dropdown shows the selected option")
+    func cameraControlMenuSnapshot() async throws {
+        let options = [
+            CameraControlMenuOption(id: "main", title: "主镜头", isSelected: true),
+            CameraControlMenuOption(id: "secondary", title: "第二镜头", isSelected: false),
+        ]
+        assertRendered(
+            snapshotReady(
+                CameraControlMenuList(options: options) { _ in }
+                    .padding(10)
+                    .background(Color(red: 0.05, green: 0.07, blue: 0.11)),
+                scheme: .dark
+            ),
+            size: CGSize(width: 180, height: 100),
+            named: "camera-control-menu-dark",
+            scheme: .dark
+        )
+    }
+
     // MARK: - Rendering switches
 
     private func snapshotReady<V: View>(_ view: V, scheme: ColorScheme = .light) -> some View {

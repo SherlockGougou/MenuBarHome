@@ -1065,42 +1065,6 @@ private struct CameraHUDIconButton: View {
     }
 }
 
-/// Camera controls use the same selected treatment as the camera switcher: a cyan fill,
-/// cyan outline and brighter text. The shared `PillActionButtonStyle` stays unchanged because
-/// its quiet selected state is intentional elsewhere in the app.
-private struct CameraControlButtonStyle: ButtonStyle {
-    let isSelected: Bool
-    @Environment(\.effectiveReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 5) {
-            if isSelected {
-                Circle()
-                    .fill(Color.cyan)
-                    .frame(width: 5, height: 5)
-            }
-            configuration.label
-        }
-        .font(.system(size: DesignTokens.TypeSize.caption, weight: isSelected ? .semibold : .medium))
-        .foregroundStyle(.white.opacity(isSelected ? 0.92 : 0.76))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(
-            Capsule().fill(
-                isSelected ? Color.cyan.opacity(0.20) : Color.white.opacity(0.08)
-            )
-        )
-        .overlay(
-            Capsule().strokeBorder(
-                isSelected ? Color.cyan.opacity(0.55) : Color.white.opacity(0.10),
-                lineWidth: 1
-            )
-        )
-        .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1.0)
-        .animation(reduceMotion ? nil : AppleMotion.pressFeedback, value: configuration.isPressed)
-    }
-}
-
 // MARK: - Floating Camera Panel SwiftUI Content
 
 struct CameraLivePanelView: View {
@@ -1604,27 +1568,46 @@ struct CameraLivePanelView: View {
                     if let device,
                        spec.lenses.count > 1,
                        (store.cameraCustomStreamURL(for: device.id) ?? "").isEmpty {
-                        ForEach(spec.lenses) { lens in
-                            Button(lensTitle(lens)) {
+                        let currentLens = controller.selectedLens(for: device) ?? spec.lenses[0]
+                        CameraControlMenu(
+                            title: L10n.tr("镜头", "Lens"),
+                            value: lensTitle(currentLens),
+                            isActive: currentLens.role == .secondary,
+                            options: spec.lenses.map {
+                                CameraControlMenuOption(
+                                    id: $0.id,
+                                    title: lensTitle($0),
+                                    isSelected: $0.id == currentLens.id
+                                )
+                            },
+                            onSelect: { option in
+                                guard let lens = spec.lenses.first(where: { $0.id == option.id }) else { return }
                                 controller.selectLens(lens, for: device)
                             }
-                            .buttonStyle(CameraControlButtonStyle(
-                                isSelected: controller.selectedLens(for: device)?.id == lens.id
-                            ))
-                        }
+                        )
                     }
 
                     if store.deviceBackend(for: device?.id ?? "") == .xiaomiCloud,
                        (store.cameraCustomStreamURL(for: device?.id ?? "") ?? "").isEmpty,
                        let deviceId = device?.id {
-                        ForEach(XiaomiCameraStreamQuality.allCases, id: \.self) { quality in
-                            let selected = store.cameraStreamQuality(for: deviceId) == quality
-                            Button(Self.qualityTitle(quality)) {
+                        let currentQuality = store.cameraStreamQuality(for: deviceId)
+                        CameraControlMenu(
+                            title: L10n.tr("画质", "Quality"),
+                            value: Self.qualityTitle(currentQuality),
+                            isActive: currentQuality != .sd,
+                            options: XiaomiCameraStreamQuality.allCases.map {
+                                CameraControlMenuOption(
+                                    id: $0.rawValue,
+                                    title: Self.qualityTitle($0),
+                                    isSelected: $0 == currentQuality
+                                )
+                            },
+                            onSelect: { option in
+                                guard let quality = XiaomiCameraStreamQuality(rawValue: option.id) else { return }
                                 store.setCameraStreamQuality(quality, for: deviceId)
                                 controller.reloadStream()
                             }
-                            .buttonStyle(CameraControlButtonStyle(isSelected: selected))
-                        }
+                        )
                     }
 
                     if spec.motionDetectionEntityId != nil {
@@ -1642,14 +1625,25 @@ struct CameraLivePanelView: View {
                         .buttonStyle(CameraControlButtonStyle(isSelected: motionOn))
                     }
 
-                    ForEach(spec.availableNightShots, id: \.self) { mode in
-                        let selected = (spec.nightShot == mode)
-                        Button(SmartDevice.localizeNightShot(mode)) {
-                            if let dev = device {
-                                store.setCameraNightShot(dev.id, mode: mode)
+                    if spec.availableNightShots.count > 1 {
+                        let currentNightShot = spec.nightShot ?? spec.availableNightShots[0]
+                        CameraControlMenu(
+                            title: L10n.tr("夜视", "Night"),
+                            value: SmartDevice.localizeNightShot(currentNightShot),
+                            isActive: currentNightShot.lowercased() != "off",
+                            options: spec.availableNightShots.map {
+                                CameraControlMenuOption(
+                                    id: $0,
+                                    title: SmartDevice.localizeNightShot($0),
+                                    isSelected: $0 == currentNightShot
+                                )
+                            },
+                            onSelect: { option in
+                                if let dev = device {
+                                    store.setCameraNightShot(dev.id, mode: option.id)
+                                }
                             }
-                        }
-                        .buttonStyle(CameraControlButtonStyle(isSelected: selected))
+                        )
                     }
                 }
             }
