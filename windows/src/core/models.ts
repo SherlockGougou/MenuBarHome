@@ -110,6 +110,12 @@ export interface CameraSpec {
   /** HA-only still frame URL; always absent on the MIoT backend (model parity with macOS). */
   readonly snapshotPath?: string | null;
   readonly powerWritable?: boolean;
+  readonly lenses?: readonly CameraLens[];
+}
+
+export interface CameraLens {
+  readonly role: "main" | "secondary";
+  readonly channel: number;
 }
 
 export interface SensorSpec {

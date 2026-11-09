@@ -755,6 +755,23 @@
         }
       ]
     },
+    "isa.camera.500dh": {
+      "type": "urn:miot-spec-v2:device:camera:0000A01C:isa-500dh:1",
+      "services": [
+        {
+          "iid": 2,
+          "type": "urn:miot-spec-v2:service:camera-control:0000782F:isa-500dh:1",
+          "properties": [
+            {
+              "iid": 1,
+              "type": "urn:miot-spec-v2:property:on:00000006:isa-500dh:1",
+              "format": "bool",
+              "access": ["read", "write"]
+            }
+          ]
+        }
+      ]
+    },
     "zhimi.airp.rma3": {
       "type": "urn:miot-spec-v2:device:air-purifier:0000A007:zhimi-rma3:1",
       "services": [
@@ -3292,6 +3309,12 @@
       "isOnline": true
     },
     {
+      "did": "did_dual_camera",
+      "name": "书房双摄",
+      "model": "isa.camera.500dh",
+      "isOnline": true
+    },
+    {
       "did": "did_purifier",
       "name": "米家空气净化器 4 Lite",
       "model": "zhimi.airp.rma3",
@@ -3453,6 +3476,7 @@
     { "did": "did_camera", "siid": 2, "piid": 1, "value": 1 },
     { "did": "did_camera", "siid": 2, "piid": 3, "value": 2 },
     { "did": "did_camera", "siid": 5, "piid": 1, "value": true },
+    { "did": "did_dual_camera", "siid": 2, "piid": 1, "value": true },
     { "did": "did_purifier", "siid": 2, "piid": 1, "value": true },
     { "did": "did_purifier", "siid": 2, "piid": 4, "value": 0 },
     { "did": "did_purifier", "siid": 11, "piid": 1, "value": 7 },
@@ -3754,6 +3778,20 @@
       "motionDetectionEntityId": "miot:did_camera:5",
       "isMotionDetectionOn": true,
       "streamEntityId": "miot:did_camera:20"
+    },
+    "did_dual_camera": {
+      "kind": "camera",
+      "entityId": "miot:did_dual_camera:2",
+      "isOn": true,
+      "nightShot": null,
+      "availableNightShots": [],
+      "motionDetectionEntityId": null,
+      "isMotionDetectionOn": null,
+      "streamEntityId": null,
+      "lenses": [
+        { "role": "main", "channel": 0 },
+        { "role": "secondary", "channel": 1 }
+      ]
     },
     "did_purifier": {
       "kind": "fan",
@@ -4123,6 +4161,9 @@
       { "did": "did_camera", "siid": 2, "piid": 1 },
       { "did": "did_camera", "siid": 2, "piid": 3 },
       { "did": "did_camera", "siid": 5, "piid": 1 }
+    ],
+    "did_dual_camera": [
+      { "did": "did_dual_camera", "siid": 2, "piid": 1 }
     ],
     "did_purifier": [
       { "did": "did_purifier", "siid": 2, "piid": 1 },

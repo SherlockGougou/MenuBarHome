@@ -19,6 +19,7 @@ import {
   type MiRoom,
   type MiotPropKey,
 } from "./client.js";
+import { cameraLensesFor } from "./cameraLens.js";
 import {
   hvacModeFromDescription,
   inferFallbackSpec,
@@ -806,7 +807,15 @@ export const MiotSynthesizer = {
       for (const plan of plans) {
         const touched = new Set<string>();
         const consumed = new Set<string>();
-        const built = this.buildDeviceKind(miotDid(record), plan.spec, values, touched, consumed);
+        const built = this.buildDeviceKind(
+          miotDid(record),
+          plan.spec,
+          values,
+          touched,
+          consumed,
+          record.model,
+          record.name
+        );
         if (!built) {
           // The last rung of the resolution ladder (#6): no dedicated builder, but the generic
           // facet layer still finds a control or a reading. A mains breaker stays out.
@@ -1059,7 +1068,9 @@ export const MiotSynthesizer = {
     /** Readable properties the builder read; they are polled and hidden from 更多设置. */
     touched?: Set<string>,
     /** Properties the builder owns even without reading them, e.g. a write-only motor control. */
-    consumed?: Set<string>
+    consumed?: Set<string>,
+    model = "",
+    name = ""
   ): DeviceKind | null {
     const primaryService = primaryMiotService(spec);
     if (!primaryService) return null;
@@ -1656,6 +1667,7 @@ export const MiotSynthesizer = {
           : null;
 
       const onWritable = exposesWrite(on?.prop.access);
+      const lenses = cameraLensesFor(model, name);
       return {
         kind: "camera",
         entityId: makeMiotAddress(did, primaryService.iid),
@@ -1668,6 +1680,7 @@ export const MiotSynthesizer = {
           motion && exposesWrite(motion.prop.access) ? makeMiotAddress(did, motion.service.iid) : null,
         isMotionDetectionOn: miotBool(motion?.val),
         streamEntityId: streamSvc ? makeMiotAddress(did, streamSvc.iid) : null,
+        ...(lenses.length > 0 ? { lenses } : {}),
         ...readOnlyFlags({ powerWritable: onWritable }),
       };
     }

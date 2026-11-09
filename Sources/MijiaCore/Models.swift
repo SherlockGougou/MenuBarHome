@@ -355,7 +355,7 @@ public struct TVSpec: Equatable, Sendable {
     }
 }
 
-public struct CameraLens: Identifiable, Equatable, Sendable {
+public struct CameraLens: Identifiable, Codable, Equatable, Sendable {
     public enum Role: String, Codable, Sendable {
         case main
         case secondary

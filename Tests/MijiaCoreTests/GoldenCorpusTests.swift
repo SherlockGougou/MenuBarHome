@@ -147,6 +147,7 @@ struct GoldenCorpusTests {
             let streamEntityId: String?
             let snapshotPath: String?
             let powerWritable: Bool?
+            let lenses: [CameraLens]?
         }
 
         struct SensorPayload: Decodable {
@@ -364,7 +365,8 @@ struct GoldenCorpusTests {
                         isMotionDetectionOn: p.isMotionDetectionOn,
                         streamEntityId: p.streamEntityId,
                         snapshotPath: p.snapshotPath,
-                        powerWritable: p.powerWritable ?? true
+                        powerWritable: p.powerWritable ?? true,
+                        lenses: p.lenses ?? []
                     )
                 )
             case .sensor(let p):
