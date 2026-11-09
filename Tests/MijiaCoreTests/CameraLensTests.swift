@@ -29,6 +29,13 @@ struct CameraLensTests {
         #expect(single.lenses.isEmpty)
     }
 
+    @Test("Battery-camera hub models map to their indoor receiver")
+    func batteryCameraHubMapping() {
+        #expect(CameraHubCatalog.hubModel(for: "mxiang.camera.mwc11") == "mxiang.camera.mwc10")
+        #expect(CameraHubCatalog.isHub(model: "mxiang.camera.mwc10"))
+        #expect(!CameraHubCatalog.isHub(model: "mxiang.camera.mwc11"))
+    }
+
     private func caseCamera(_ kind: DeviceKind) -> CameraSpec? {
         guard case .camera(let spec) = kind else { return nil }
         return spec

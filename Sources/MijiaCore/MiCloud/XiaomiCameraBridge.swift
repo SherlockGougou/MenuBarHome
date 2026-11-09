@@ -19,10 +19,11 @@ public protocol XiaomiCameraBridging: Sendable {
         vendor: String,
         uid: String?,
         quality: XiaomiCameraStreamQuality,
-        channel: Int
+        channel: Int,
+        subdid: String?
     ) async throws -> XiaomiCameraStreamEndpoints
 
-    func stopBridge(did: String) async
+    func stopBridge(did: String, subdid: String?) async
 
     func probeRegisteredStream(candidates: [String]) async -> URL?
 }
@@ -164,7 +165,8 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         vendor: String,
         uid: String?,
         quality: XiaomiCameraStreamQuality,
-        channel: Int
+        channel: Int,
+        subdid: String?
     ) async throws -> XiaomiCameraStreamEndpoints {
         let trimmedIP = localIP.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let ipv4 = Self.parsePrivateOrLoopbackIPv4(trimmedIP) else {
@@ -174,16 +176,17 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         try await ensureGo2RTCRunning()
 
         let cleanDid = Self.sanitizeDid(did)
+        let streamKey = Self.streamKey(cleanDid: cleanDid, subdid: subdid)
         let suffix = channel == 0 ? "" : "_c\(channel)"
-        let rawName = "cam_raw_\(cleanDid)\(suffix)"
-        let mjpegName = "cam_mjpeg_\(cleanDid)\(suffix)"
+        let rawName = Self.rawStreamName(cleanDid: streamKey, channel: channel)
+        let mjpegName = "cam_mjpeg_\(streamKey)\(suffix)"
 
         let session = Self.makeLocalHTTPClient()
         defer { session.invalidateAndCancel() }
 
         // Switching lenses must remove the previous channel's streams before the new
         // channel is registered; both would share the same single-camera relay.
-        await stopBridgeInternal(http: session, cleanDid: cleanDid, names: Self.allStreamNames(cleanDid: cleanDid))
+        await stopBridgeInternal(http: session, cleanDid: cleanDid, names: Self.allStreamNames(cleanDid: streamKey))
 
         let relayPort = try ensureRelayPort(
             cleanDid: cleanDid,
@@ -200,7 +203,8 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
             model: model,
             quality: quality,
             uid: uid,
-            channel: channel
+            channel: channel,
+            subdid: subdid
         )
         let xiaomiURL = "xiaomi://127.0.0.1:\(relayPort)?\(query)"
 
@@ -219,11 +223,17 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         return XiaomiCameraStreamEndpoints(mp4: mp4URL, mjpeg: mjpegURL)
     }
 
-    public func stopBridge(did: String) async {
+    public func stopBridge(did: String, subdid: String?) async {
         let cleanDid = Self.sanitizeDid(did)
+        let streamKey = Self.streamKey(cleanDid: cleanDid, subdid: subdid)
         let http = Self.makeLocalHTTPClient(timeout: 3.0)
         defer { http.invalidateAndCancel() }
-        await stopBridgeInternal(http: http, cleanDid: cleanDid, names: Self.allStreamNames(cleanDid: cleanDid))
+        await stopBridgeInternal(http: http, cleanDid: cleanDid, names: Self.allStreamNames(cleanDid: streamKey))
+    }
+
+    static func streamKey(cleanDid: String, subdid: String?) -> String {
+        guard let subdid, !subdid.isEmpty else { return cleanDid }
+        return "\(cleanDid)_sub_\(sanitizeDid(subdid))"
     }
 
     /// Every stream name a bridge build may have registered for one camera. Older builds used
@@ -237,6 +247,11 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
             names.append("cam_mjpeg_\(cleanDid)\(suffix)")
         }
         return names
+    }
+
+    static func rawStreamName(cleanDid: String, channel: Int) -> String {
+        let suffix = channel == 0 ? "" : "_c\(channel)"
+        return "cam_raw_\(cleanDid)\(suffix)"
     }
 
     public func probeRegisteredStream(candidates: [String]) async -> URL? {
@@ -259,7 +274,7 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         let matchedKey = json.keys.first { key in
             let lower = key.lowercased()
             return lowered.contains { lower == $0 || lower.contains($0) || $0.contains(lower) }
-        } ?? (json.keys.count == 1 ? json.keys.first : nil)
+        }
         guard let src = matchedKey else { return nil }
         return Self.streamURL(session: owner.session, path: "/api/stream.m3u8", query: "src=\(Self.urlEncode(src))")
     }
@@ -972,7 +987,8 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         model: String,
         quality: XiaomiCameraStreamQuality,
         uid: String?,
-        channel: Int
+        channel: Int,
+        subdid: String?
     ) -> String {
         let subtype = quality.subtypeQueryValue
         var query = [
@@ -991,6 +1007,9 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         }
         if channel > 0 {
             query += "&channel=\(channel)"
+        }
+        if let subdid, !subdid.isEmpty {
+            query += "&subdid=\(urlEncode(subdid))"
         }
         return query
     }

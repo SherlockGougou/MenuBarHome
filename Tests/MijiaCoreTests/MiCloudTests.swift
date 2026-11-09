@@ -959,8 +959,9 @@ actor StubMiCloudAPI: MiCloudAPI {
 }
 
 actor StubXiaomiCameraBridge: XiaomiCameraBridging {
-    private(set) var startCalls: [(did: String, model: String, localIP: String, vendor: String, uid: String?, quality: XiaomiCameraStreamQuality, channel: Int)] = []
+    private(set) var startCalls: [(did: String, model: String, localIP: String, vendor: String, uid: String?, quality: XiaomiCameraStreamQuality, channel: Int, subdid: String?)] = []
     private(set) var stopCalls: [String] = []
+    private(set) var stopSubdidCalls: [(did: String, subdid: String?)] = []
     var startDelay: Duration?
     var onStartEntered: (@Sendable () -> Void)?
     var stubEndpoints = XiaomiCameraStreamEndpoints(
@@ -984,9 +985,10 @@ actor StubXiaomiCameraBridge: XiaomiCameraBridging {
         vendor: String,
         uid: String?,
         quality: XiaomiCameraStreamQuality,
-        channel: Int
+        channel: Int,
+        subdid: String?
     ) async throws -> XiaomiCameraStreamEndpoints {
-        startCalls.append((did: did, model: model, localIP: localIP, vendor: vendor, uid: uid, quality: quality, channel: channel))
+        startCalls.append((did: did, model: model, localIP: localIP, vendor: vendor, uid: uid, quality: quality, channel: channel, subdid: subdid))
         onStartEntered?()
         if let startDelay {
             try? await Task.sleep(for: startDelay)
@@ -994,8 +996,9 @@ actor StubXiaomiCameraBridge: XiaomiCameraBridging {
         return stubEndpoints
     }
 
-    func stopBridge(did: String) async {
+    func stopBridge(did: String, subdid: String?) async {
         stopCalls.append(did)
+        stopSubdidCalls.append((did: did, subdid: subdid))
     }
 }
 
@@ -1359,7 +1362,12 @@ struct MiCloudProviderTests {
         #expect(starts.first?.quality == .sd)
         #expect(starts.first?.channel == 0)
 
-        _ = try await provider.resolveCameraStream(for: cameraDevice, quality: .sd, channel: 1)
+        let secondLens = try await provider.resolveCameraStream(for: cameraDevice, quality: .sd, channel: 1)
+        guard case .liveMP4(_, _, let secondLensPTZ) = secondLens else {
+            Issue.record("second lens should use the P2P bridge")
+            return
+        }
+        #expect(secondLensPTZ?.streamName == "cam_raw_1105610385_c1")
         let secondLensStarts = await bridge.startCalls
         #expect(secondLensStarts.count == 2)
         #expect(secondLensStarts.last?.channel == 1)
@@ -1370,6 +1378,79 @@ struct MiCloudProviderTests {
         let actionsAfterStop = await api.callActionCalls
         #expect(actionsAfterStop.count == 5)
         #expect(actionsAfterStop.last == MiotActionCall(did: "1105610385", siid: 9, aiid: 2, inputs: []))
+        await provider.shutdown()
+    }
+
+    @Test("A battery camera resolves through its indoor hub with a subdid")
+    func batteryCameraUsesHubSubdid() async throws {
+        let cameraSpecJSON = #"{"type":"urn:miot-spec-v2:device:camera:0000A01C:mxiang-mwc11:1","services":[{"iid":2,"type":"urn:miot-spec-v2:service:camera-control:0000782F:mxiang-mwc11:1","properties":[{"iid":1,"type":"urn:miot-spec-v2:property:on:00000006:mxiang-mwc11:1","format":"bool","access":["read","write","notify"]}]}]}"#
+        let hubSpecJSON = #"{"type":"urn:miot-spec-v2:device:camera:0000A01C:mxiang-mwc10:1","services":[{"iid":2,"type":"urn:miot-spec-v2:service:camera-control:0000782F:mxiang-mwc10:1","properties":[{"iid":1,"type":"urn:miot-spec-v2:property:on:00000006:mxiang-mwc10:1","format":"bool","access":["read","write","notify"]}]}]}"#
+        let cameraSpec = MiotFixtures.decode(cameraSpecJSON)
+        let hubSpec = MiotFixtures.decode(hubSpecJSON)
+        struct CameraSpecSource: MiotSpecSource {
+            let specs: [String: MiotDeviceSpec]
+            func spec(model: String, specType: String?) async throws -> MiotDeviceSpec? {
+                specs[model]
+            }
+        }
+
+        let hub = MiDeviceRecord(
+            did: "hub123",
+            name: "小米电池版（室内机）",
+            model: "mxiang.camera.mwc10",
+            isOnline: true,
+            localIp: "192.168.50.60"
+        )
+        let camera = MiDeviceRecord(
+            did: "camera456",
+            name: "小米电池版（摄像机）",
+            model: "mxiang.camera.mwc11",
+            isOnline: true
+        )
+        let api = StubMiCloudAPI(
+            devices: [hub, camera],
+            rooms: [MiRoom(id: "r1", name: "儿童房", dids: ["hub123", "camera456"])],
+            values: [
+                MiotPropKey(did: "hub123", siid: 2, piid: 1): .bool(true),
+                MiotPropKey(did: "camera456", siid: 2, piid: 1): .bool(true),
+            ]
+        )
+        let bridge = StubXiaomiCameraBridge()
+        let provider = MiCloudProvider(
+            sessionLoader: { fakeSession },
+            apiFactory: { _ in api },
+            specSource: CameraSpecSource(specs: [
+                "mxiang.camera.mwc10": hubSpec,
+                "mxiang.camera.mwc11": cameraSpec,
+            ]),
+            cameraBridge: bridge,
+            pollInterval: .seconds(60),
+            cameraSessionReleaseDelay: .milliseconds(5)
+        )
+        let (log, task) = consume(provider)
+        defer { task.cancel() }
+
+        #expect(await log.wait { await !$0.snapshots.isEmpty })
+        let cameraDevice = try #require(await log.snapshots.first?.devices.first { $0.model == "mxiang.camera.mwc11" })
+        let resolved = try await provider.resolveCameraStream(for: cameraDevice)
+        guard case .liveMP4(_, _, let ptz) = resolved else {
+            Issue.record("the hub-backed camera should use the local P2P bridge")
+            return
+        }
+        #expect(ptz == nil)
+        let starts = await bridge.startCalls
+        #expect(starts.count == 1)
+        #expect(starts.first?.did == "hub123")
+        #expect(starts.first?.model == "mxiang.camera.mwc10")
+        #expect(starts.first?.localIP == "192.168.50.60")
+        #expect(starts.first?.subdid == "camera456")
+        #expect(await api.vendorRequestedDid == "hub123")
+
+        await provider.stopCameraStream(for: cameraDevice)
+        let stops = await bridge.stopSubdidCalls
+        #expect(stops.count == 1)
+        #expect(stops.first?.did == "hub123")
+        #expect(stops.first?.subdid == "camera456")
         await provider.shutdown()
     }
 

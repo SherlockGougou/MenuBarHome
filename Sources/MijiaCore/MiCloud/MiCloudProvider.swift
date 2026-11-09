@@ -680,6 +680,28 @@ public actor MiCloudProvider: HomeProvider {
            let record = devices.first(where: { $0.did == device.id }) ?? devices.first(where: { $0.miotDid == device.id }),
            let spec = specsByModel[record.model] {
             let did = record.miotDid
+            if CameraHubCatalog.isHub(model: record.model) {
+                throw HomeProviderError.serviceCallFailed(
+                    501,
+                    L10n.tr(
+                        "这是电池摄像机的室内机中继底座，不提供实时画面；请在机位条选择对应的摄像机",
+                        "This is the indoor hub for a battery camera and has no live video. Select the camera in the camera rail."
+                    )
+                )
+            }
+            let hub = Self.hubRecord(for: record, devices: devices, rooms: rooms)
+            if CameraHubCatalog.hubModel(for: record.model) != nil, hub == nil {
+                throw HomeProviderError.serviceCallFailed(
+                    501,
+                    L10n.tr(
+                        "找不到这台电池摄像机的室内机中继。请确认室内机在线后重试",
+                        "Could not find the indoor hub for this battery camera. Make sure the hub is online and retry."
+                    )
+                )
+            }
+            let bridgeRecord = hub ?? record
+            let bridgeDid = bridgeRecord.miotDid
+            let subdid = hub == nil ? nil : record.did
             if let pending = pendingCameraReleases[did] {
                 await pending.value
                 if pendingCameraReleases[did] == pending {
@@ -697,6 +719,7 @@ public actor MiCloudProvider: HomeProvider {
                 return spec.services(named: "camera-stream-for-google-home").first { $0.action(named: "start-hls-stream") != nil }
             }()
             if channel == 0,
+               hub == nil,
                let svc = streamService,
                let act = svc.action(named: "start-hls-stream") {
                 if let result = try? await api.callAction(MiotActionCall(did: did, siid: svc.iid, aiid: act.iid, inputs: [])),
@@ -740,24 +763,24 @@ public actor MiCloudProvider: HomeProvider {
             try await abortIfCancelled()
 
             let resolvedIP: String = await {
-                let cached = record.localIp?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let cached = bridgeRecord.localIp?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 if !cached.isEmpty { return cached }
-                let fetched = try? await api.cameraLocalIP(did: did)
+                let fetched = try? await api.cameraLocalIP(did: bridgeDid)
                 return fetched?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             }()
             try await abortIfCancelled()
 
             if !resolvedIP.isEmpty {
                 let kp = XiaomiCameraBridge.makeX25519KeyPair()
-                if let vendor = try? await api.cameraP2PVendor(did: did, appPublicKey: kp.publicKeyHex),
+                if let vendor = try? await api.cameraP2PVendor(did: bridgeDid, appPublicKey: kp.publicKeyHex),
                    !vendor.devicePublicKey.isEmpty,
                    !vendor.sign.isEmpty {
                     try await abortIfCancelled()
                     let endpoints: XiaomiCameraStreamEndpoints?
                     do {
                         endpoints = try await cameraBridge.startBridge(
-                            did: did,
-                            model: record.model,
+                            did: bridgeDid,
+                            model: bridgeRecord.model,
                             localIP: resolvedIP,
                             clientPublic: kp.publicKeyHex,
                             clientPrivate: kp.privateKeyHex,
@@ -766,7 +789,8 @@ public actor MiCloudProvider: HomeProvider {
                             vendor: vendor.vendorName,
                             uid: vendor.p2pId,
                             quality: quality,
-                            channel: channel
+                            channel: channel,
+                            subdid: subdid
                         )
                     } catch {
                         if Task.isCancelled || error is CancellationError {
@@ -784,13 +808,19 @@ public actor MiCloudProvider: HomeProvider {
                             throw CancellationError()
                         }
                         let capability = CameraPTZCapability.resolve(
-                            model: record.model,
+                            model: bridgeRecord.model,
                             vendor: vendor.vendorName
                         )
                         let binding = capability.map {
                             CameraPTZBinding(
                                 capability: $0,
-                                streamName: "cam_raw_\(XiaomiCameraBridge.sanitizeDid(did))"
+                                streamName: XiaomiCameraBridge.rawStreamName(
+                                    cleanDid: XiaomiCameraBridge.streamKey(
+                                        cleanDid: XiaomiCameraBridge.sanitizeDid(bridgeDid),
+                                        subdid: subdid
+                                    ),
+                                    channel: channel
+                                )
                             )
                         }
                         return .liveMP4(endpoints.mp4, mjpegFallback: endpoints.mjpeg, ptz: binding)
@@ -831,6 +861,9 @@ public actor MiCloudProvider: HomeProvider {
     public func stopCameraStream(for device: SmartDevice) async {
         let record = devices.first(where: { $0.did == device.id }) ?? devices.first(where: { $0.miotDid == device.id })
         let did = record?.miotDid ?? device.id
+        let hub = record.flatMap { Self.hubRecord(for: $0, devices: devices, rooms: rooms) }
+        let bridgeDid = hub?.miotDid ?? did
+        let subdid = hub == nil ? nil : record?.did
         let bridge = cameraBridge
         let apiClient = api
         let releaseDelay = cameraSessionReleaseDelay
@@ -846,7 +879,7 @@ public actor MiCloudProvider: HomeProvider {
         let previousRelease = pendingCameraReleases[did]
         let releaseTask = Task<Void, Never> {
             await previousRelease?.value
-            await bridge.stopBridge(did: did)
+            await bridge.stopBridge(did: bridgeDid, subdid: subdid)
             if let apiClient, let stopCall {
                 _ = try? await apiClient.callAction(stopCall)
                 try? await Task.sleep(for: releaseDelay)
@@ -857,6 +890,24 @@ public actor MiCloudProvider: HomeProvider {
         if pendingCameraReleases[did] == releaseTask {
             pendingCameraReleases.removeValue(forKey: did)
         }
+    }
+
+    static func hubRecord(
+        for record: MiDeviceRecord,
+        devices: [MiDeviceRecord],
+        rooms: [MiRoom]
+    ) -> MiDeviceRecord? {
+        guard let hubModel = CameraHubCatalog.hubModel(for: record.model) else { return nil }
+        let candidates = devices.filter {
+            $0.model.lowercased().hasPrefix(hubModel) && $0.isOnline
+        }
+        guard !candidates.isEmpty else { return nil }
+        let roomDids = rooms.first { $0.dids.contains(record.did) }?.dids
+        if let roomDids,
+           let sameRoom = candidates.first(where: { roomDids.contains($0.did) }) {
+            return sameRoom
+        }
+        return candidates.first
     }
 
     public static func extractStreamURL(from value: JSONValue) -> URL? {
