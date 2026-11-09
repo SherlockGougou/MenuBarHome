@@ -959,7 +959,7 @@ actor StubMiCloudAPI: MiCloudAPI {
 }
 
 actor StubXiaomiCameraBridge: XiaomiCameraBridging {
-    private(set) var startCalls: [(did: String, model: String, localIP: String, vendor: String, uid: String?, quality: XiaomiCameraStreamQuality)] = []
+    private(set) var startCalls: [(did: String, model: String, localIP: String, vendor: String, uid: String?, quality: XiaomiCameraStreamQuality, channel: Int)] = []
     private(set) var stopCalls: [String] = []
     var startDelay: Duration?
     var onStartEntered: (@Sendable () -> Void)?
@@ -983,9 +983,10 @@ actor StubXiaomiCameraBridge: XiaomiCameraBridging {
         sign: String,
         vendor: String,
         uid: String?,
-        quality: XiaomiCameraStreamQuality
+        quality: XiaomiCameraStreamQuality,
+        channel: Int
     ) async throws -> XiaomiCameraStreamEndpoints {
-        startCalls.append((did: did, model: model, localIP: localIP, vendor: vendor, uid: uid, quality: quality))
+        startCalls.append((did: did, model: model, localIP: localIP, vendor: vendor, uid: uid, quality: quality, channel: channel))
         onStartEntered?()
         if let startDelay {
             try? await Task.sleep(for: startDelay)
@@ -1356,12 +1357,18 @@ struct MiCloudProviderTests {
         #expect(starts.first?.vendor == "cs2")
         #expect(starts.first?.uid == "TICK-123456-ABCDE")
         #expect(starts.first?.quality == .sd)
+        #expect(starts.first?.channel == 0)
+
+        _ = try await provider.resolveCameraStream(for: cameraDevice, quality: .sd, channel: 1)
+        let secondLensStarts = await bridge.startCalls
+        #expect(secondLensStarts.count == 2)
+        #expect(secondLensStarts.last?.channel == 1)
 
         await provider.stopCameraStream(for: cameraDevice)
         let stops = await bridge.stopCalls
         #expect(stops == ["1105610385"])
         let actionsAfterStop = await api.callActionCalls
-        #expect(actionsAfterStop.count == 3)
+        #expect(actionsAfterStop.count == 5)
         #expect(actionsAfterStop.last == MiotActionCall(did: "1105610385", siid: 9, aiid: 2, inputs: []))
         await provider.shutdown()
     }

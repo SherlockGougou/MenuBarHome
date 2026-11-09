@@ -141,7 +141,7 @@ public enum MiotSynthesizer {
             let splitPerService = plans.count > 1
 
             for (service, build) in plans {
-                let kind = build(reader, service)
+                let kind = Self.attachCameraLenses(build(reader, service), model: record.model, name: record.name)
                 let device = SmartDevice(
                     id: splitPerService ? trackID(record: record, siid: service.iid) : record.did,
                     name: splitPerService ? trackName(service: service, fallback: name) : name,
@@ -991,6 +991,14 @@ public enum MiotSynthesizer {
             streamEntityId: streamService.map { MiotAddress.make(did: r.did, siid: $0.iid) },
             powerWritable: on?.property.isWritable == true
         ))
+    }
+
+    static func attachCameraLenses(_ kind: DeviceKind, model: String, name: String = "") -> DeviceKind {
+        guard case .camera(var spec) = kind else { return kind }
+        let lenses = CameraLensCatalog.lenses(for: model, name: name)
+        guard !lenses.isEmpty else { return kind }
+        spec.lenses = lenses
+        return .camera(spec)
     }
 
     static func buildFridge(_ r: MiotReader, _ s: MiotService) -> DeviceKind {

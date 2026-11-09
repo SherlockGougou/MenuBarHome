@@ -1119,7 +1119,7 @@ extension HomeStore {
         userDefaults.set(map, forKey: Self.cameraStreamQualityKey)
     }
 
-    public func resolveCameraStream(for deviceId: String) async throws -> CameraStreamSource {
+    public func resolveCameraStream(for deviceId: String, channel: Int = 0) async throws -> CameraStreamSource {
         guard let device = devices.first(where: { $0.id == deviceId }),
               case .camera = device.kind else {
             throw HomeProviderError.serviceCallFailed(400, L10n.tr("未找到该摄像头设备", "Camera device not found"))
@@ -1140,7 +1140,11 @@ extension HomeStore {
             }
             return .hls(url)
         }
-        return try await provider.resolveCameraStream(for: device, quality: cameraStreamQuality(for: deviceId))
+        return try await provider.resolveCameraStream(
+            for: device,
+            quality: cameraStreamQuality(for: deviceId),
+            channel: channel
+        )
     }
 
     public func stopCameraStream(for deviceId: String) async {

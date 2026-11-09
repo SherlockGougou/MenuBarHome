@@ -87,6 +87,12 @@ public protocol HomeProvider: Sendable {
     /// Resolves a playable live video or snapshot stream for a camera device.
     func resolveCameraStream(for device: SmartDevice) async throws -> CameraStreamSource
     func resolveCameraStream(for device: SmartDevice, quality: XiaomiCameraStreamQuality) async throws -> CameraStreamSource
+    /// `channel` selects a second lens on cameras whose bridge supports it. Zero is the main lens.
+    func resolveCameraStream(
+        for device: SmartDevice,
+        quality: XiaomiCameraStreamQuality,
+        channel: Int
+    ) async throws -> CameraStreamSource
     /// Releases any active live stream session (such as a single-session P2P bridge) for a camera device.
     func stopCameraStream(for device: SmartDevice) async
     func readBack(deviceId: String) async -> ControlReadBack
@@ -106,6 +112,13 @@ extension HomeProvider {
     }
     public func resolveCameraStream(for device: SmartDevice, quality: XiaomiCameraStreamQuality) async throws -> CameraStreamSource {
         try await resolveCameraStream(for: device)
+    }
+    public func resolveCameraStream(
+        for device: SmartDevice,
+        quality: XiaomiCameraStreamQuality,
+        channel: Int
+    ) async throws -> CameraStreamSource {
+        try await resolveCameraStream(for: device, quality: quality)
     }
     public func stopCameraStream(for device: SmartDevice) async {}
     /// Providers with nothing running in the background have nothing to stop.
