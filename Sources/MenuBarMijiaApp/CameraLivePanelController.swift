@@ -28,6 +28,20 @@ final class CameraFloatingPanel: NSPanel {
     }
 }
 
+@MainActor
+private final class WarmCameraPlayback {
+    let playback: CameraLivePlayback
+    let deviceID: String
+    let lensID: String
+    var expiryTask: Task<Void, Never>?
+
+    init(playback: CameraLivePlayback, deviceID: String, lensID: String) {
+        self.playback = playback
+        self.deviceID = deviceID
+        self.lensID = lensID
+    }
+}
+
 @Observable
 @MainActor
 public final class CameraLivePanelController: NSObject, NSWindowDelegate {
@@ -36,8 +50,11 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
     public static let compactSize = NSSize(width: 360, height: 244)
     public static let expandedSize = NSSize(width: 640, height: 420)
     private static let frameStorageKey = "camera_live_panel_frame_v1"
+    private static let maxWarmPlaybacks = 2
+    private static let warmPlaybackLifetime: Duration = .seconds(90)
 
     public internal(set) var activeDeviceId: String?
+    public internal(set) var activeLensID: String?
     public internal(set) var streamSource: CameraStreamSource?
     public private(set) var isLoadingStream = false
     public private(set) var errorMessage: String?
@@ -90,6 +107,9 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
     private var resolveTask: Task<Void, Never>?
     private var snapshotLoopTask: Task<Void, Never>?
     private var mjpegSession: URLSession?
+    private var activePlayback: CameraLivePlayback?
+    private var warmPlaybacks: [WarmCameraPlayback] = []
+    private var selectedLensByDevice: [String: CameraLens.Role] = [:]
     private var closeReleaseTask: Task<Void, Never>?
     private var doorbellDismissTask: Task<Void, Never>?
     /// The window sits where a ring put it, so closing it must not overwrite the user's saved position.
@@ -163,8 +183,48 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         return store?.devices.first(where: { $0.id == id })
     }
 
+    /// Every camera in the current home, including offline ones so a camera that drops off
+    /// the network does not disappear from the switcher while it is being watched.
+    public var cameraDevices: [SmartDevice] {
+        guard let store else { return [] }
+        return store.devices.filter {
+            guard !store.hiddenDeviceIds.contains($0.id) else { return false }
+            if case .camera = $0.kind { return true }
+            return false
+        }
+    }
+
+    public func selectedLens(for device: SmartDevice) -> CameraLens? {
+        guard case .camera(let spec) = device.kind, !spec.lenses.isEmpty else { return nil }
+        let role = selectedLensByDevice[device.id] ?? .main
+        return spec.lenses.first { $0.role == role } ?? spec.lenses.first
+    }
+
+    public func selectLens(_ lens: CameraLens, for device: SmartDevice) {
+        selectedLensByDevice[device.id] = lens.role
+        guard activeDeviceId == device.id else { return }
+        reloadStream()
+    }
+
+    public func presentNextCamera() {
+        guard let store else { return }
+        let online = cameraDevices.filter(\.isOnline)
+        guard online.count > 1 else { return }
+        let index = online.firstIndex { $0.id == activeDeviceId } ?? -1
+        let next = online[(index + 1) % online.count]
+        store.openCameraLiveView(next.id)
+    }
+
     public func present(device: SmartDevice) {
         guard let store else { return }
+        guard case .camera = device.kind else { return }
+        guard device.isOnline else {
+            store.showToast(
+                L10n.tr("\(device.name) 当前离线", "\(device.name) is offline"),
+                isError: true
+            )
+            return
+        }
         finishPTZMove()
         closeReleaseTask?.cancel()
         closeReleaseTask = nil
@@ -177,19 +237,35 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         }
 
         let previousDeviceId = activeDeviceId
+        let previousLensID = activeLensID
+        let targetLens = selectedLens(for: device)
+        let targetLensID = targetLens?.id ?? "main"
         let canReuseHotStream = (
             previousDeviceId == device.id
+            && previousLensID == targetLensID
             && errorMessage == nil
-            && (streamSource != nil || isLoadingStream)
+            && (activePlayback != nil || streamSource != nil || isLoadingStream)
         )
-        if let previousDeviceId, previousDeviceId != device.id {
+        if let previousDeviceId, !canReuseHotStream {
             let oldId = previousDeviceId
-            stopStreamTasks()
+            if previousDeviceId != device.id,
+               let playback = activePlayback,
+               playback.failure == nil,
+               case .liveMP4 = playback.source {
+                warmActivePlayback(
+                    playback,
+                    deviceID: previousDeviceId,
+                    lensID: previousLensID ?? "main"
+                )
+            } else {
+                stopStreamTasks()
+                Task { await store.stopCameraStream(for: oldId) }
+            }
             isMuted = true
-            Task { await store.stopCameraStream(for: oldId) }
         }
 
         activeDeviceId = device.id
+        activeLensID = targetLensID
         customURLInput = store.cameraCustomStreamURL(for: device.id) ?? ""
         isShowingURLConfig = false
 
@@ -220,7 +296,22 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
             panel.orderFront(nil)
         }
         if !canReuseHotStream {
-            reloadStream()
+            if let warm = takeWarmPlayback(deviceID: device.id, lensID: targetLensID) {
+                if warm.playback.failure == nil {
+                    activePlayback = warm.playback
+                    streamSource = warm.playback.source
+                    videoPlayer = warm.playback.player
+                    hasLiveVideoFrame = warm.playback.hasFrame
+                    isLoadingStream = false
+                    errorMessage = nil
+                    configurePTZ(for: warm.playback.source)
+                } else {
+                    releaseWarmPlayback(warm)
+                    reloadStream()
+                }
+            } else {
+                reloadStream()
+            }
         }
     }
 
@@ -238,15 +329,25 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         }
         isDoorbellPlacement = false
         doorbellOwnsClose = false
-        let deviceId = activeDeviceId
+        let closingDeviceId = activeDeviceId
+        let activePlaybackIDs = warmPlaybacks.map(\.deviceID)
         let store = self.store
         stopStreamTasks()
+        for warm in warmPlaybacks {
+            warm.expiryTask?.cancel()
+            warm.playback.stop()
+        }
+        warmPlaybacks.removeAll()
         isMuted = true
         panelWindow?.orderOut(nil)
 
         closeReleaseTask = Task { @MainActor [weak self] in
-            guard !Task.isCancelled, let deviceId, let store else { return }
-            await store.stopCameraStream(for: deviceId)
+            guard !Task.isCancelled, let store else { return }
+            var deviceIDs = Set(activePlaybackIDs)
+            if let closingDeviceId { deviceIDs.insert(closingDeviceId) }
+            for deviceID in deviceIDs {
+                await store.stopCameraStream(for: deviceID)
+            }
             self?.closeReleaseTask = nil
         }
     }
@@ -259,13 +360,56 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         snapshotLoopTask = nil
         mjpegSession?.invalidateAndCancel()
         mjpegSession = nil
-        videoPlayer?.stop()
+        activePlayback?.stop()
+        activePlayback = nil
         videoPlayer = nil
         tearDownPictureInPicture()
         hasLiveVideoFrame = false
         snapshotImage = nil
         streamSource = nil
         isLoadingStream = false
+    }
+
+    private func warmActivePlayback(_ playback: CameraLivePlayback, deviceID: String, lensID: String) {
+        activePlayback = nil
+        videoPlayer = nil
+        hasLiveVideoFrame = false
+        streamSource = nil
+        isLoadingStream = false
+        errorMessage = nil
+        clearPTZ()
+
+        let warm = WarmCameraPlayback(playback: playback, deviceID: deviceID, lensID: lensID)
+        warmPlaybacks.append(warm)
+        while warmPlaybacks.count > Self.maxWarmPlaybacks {
+            releaseWarmPlayback(warmPlaybacks.removeFirst())
+        }
+        warm.expiryTask = Task { @MainActor [weak self, weak warm] in
+            try? await Task.sleep(for: Self.warmPlaybackLifetime)
+            guard !Task.isCancelled, let self, let warm else { return }
+            self.releaseWarmPlayback(warm)
+        }
+    }
+
+    private func takeWarmPlayback(deviceID: String, lensID: String) -> WarmCameraPlayback? {
+        guard let index = warmPlaybacks.firstIndex(where: {
+            $0.deviceID == deviceID && $0.lensID == lensID
+        }) else {
+            return nil
+        }
+        let warm = warmPlaybacks.remove(at: index)
+        warm.expiryTask?.cancel()
+        warm.expiryTask = nil
+        return warm
+    }
+
+    private func releaseWarmPlayback(_ warm: WarmCameraPlayback) {
+        warm.expiryTask?.cancel()
+        warm.expiryTask = nil
+        warmPlaybacks.removeAll { $0 === warm }
+        warm.playback.stop()
+        guard let store else { return }
+        Task { await store.stopCameraStream(for: warm.deviceID) }
     }
 
     // MARK: - Picture in Picture
@@ -383,18 +527,25 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
 
         isLoadingStream = true
         let deviceId = device.id
+        let lens = selectedLens(for: device)
+        activeLensID = lens?.id ?? "main"
+        let channel = lens?.channel ?? 0
         resolveTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let resolved = try await store.resolveCameraStream(for: deviceId)
+                let resolved = try await store.resolveCameraStream(for: deviceId, channel: channel)
                 guard !Task.isCancelled else { return }
                 self.streamSource = resolved
                 self.isLoadingStream = false
                 switch resolved {
                 case .snapshot(let url):
                     self.startSnapshotLoop(url: url)
-                case .liveMP4(let url, let fallback, let ptz):
-                    self.startLiveVideo(url: url, mjpegFallback: fallback, ptz: ptz)
+                case .liveMP4:
+                    self.startLiveVideo(
+                        source: resolved,
+                        deviceID: deviceId,
+                        lensID: lens?.id ?? "main"
+                    )
                 case .mjpeg(let url):
                     self.startMJPEGStream(url: url)
                 case .hls, .demo:
@@ -421,80 +572,70 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// Plays the camera's own bitstream through VideoToolbox, reconnecting when go2rtc drops the
-    /// connection. If no frame ever decodes (unsupported codec, broken parameter sets, no data
-    /// for 15 s) it switches to the transcoded MJPEG fallback so the window still shows video.
-    private func startLiveVideo(url: URL, mjpegFallback: URL?, ptz: CameraPTZBinding?) {
+    private func configurePTZ(for source: CameraStreamSource) {
         clearPTZ()
+        guard case .liveMP4(_, _, let ptz) = source, let ptz else { return }
         ptzBinding = ptz
         let lifecycle = ptzLifecycleID
-        if let ptz {
-            Task { @MainActor [weak self] in
-                guard let client = await XiaomiCameraBridge.shared.makePTZClient(streamName: ptz.streamName) else {
-                    return
-                }
-                guard let self,
-                      self.ptzLifecycleID == lifecycle,
-                      self.ptzBinding == ptz,
-                      self.streamSource != nil else { return }
-                self.ptzClient = client
-                self.ptzClientReady = true
+        Task { @MainActor [weak self] in
+            guard let client = await XiaomiCameraBridge.shared.makePTZClient(streamName: ptz.streamName) else {
+                return
             }
+            guard let self,
+                  self.ptzLifecycleID == lifecycle,
+                  self.ptzBinding == ptz,
+                  self.streamSource != nil else { return }
+            self.ptzClient = client
+            self.ptzClientReady = true
+        }
+    }
+
+    /// Plays the camera's own bitstream through VideoToolbox. The playback object owns the
+    /// reconnect loop so it can stay warm while another camera is on screen.
+    private func startLiveVideo(source: CameraStreamSource, deviceID: String, lensID: String) {
+        guard let playback = CameraLivePlayback(deviceID: deviceID, lensID: lensID, source: source) else {
+            return
         }
         snapshotLoopTask?.cancel()
+        snapshotLoopTask = nil
         videoPlayer?.stop()
-        let player = CameraLiveVideoPlayer()
-        player.onFirstFrame = { [weak self, weak player] in
-            guard let self, let player, self.videoPlayer === player else { return }
+        videoPlayer = nil
+        hasLiveVideoFrame = false
+        snapshotImage = nil
+        activePlayback = playback
+        videoPlayer = playback.player
+        configurePTZ(for: source)
+
+        playback.onFirstFrame = { [weak self, weak playback] in
+            guard let self, let playback, self.activePlayback === playback else { return }
             self.hasLiveVideoFrame = true
         }
-        videoPlayer = player
-        hasLiveVideoFrame = false
 
-        snapshotLoopTask = Task { @MainActor [weak self] in
-            var failedAttempts = 0
-            while !Task.isCancelled {
-                let watchdog = Task { @MainActor in
-                    try? await Task.sleep(for: .seconds(15))
-                    guard !Task.isCancelled, self?.hasLiveVideoFrame == false else { return }
-                    player.stop()
-                }
-                let outcome = await player.play(url: url)
-                watchdog.cancel()
-                guard !Task.isCancelled, let self, self.videoPlayer === player else { return }
-
-                if outcome.framesDecoded > 0 {
-                    failedAttempts = 0
-                    try? await Task.sleep(for: .milliseconds(400))
-                    continue
-                }
-                failedAttempts += 1
-                if failedAttempts >= 2, !self.hasLiveVideoFrame, let mjpegFallback {
-                    self.clearPTZ()
-                    self.videoPlayer?.stop()
-                    self.videoPlayer = nil
-                    self.hasLiveVideoFrame = false
-                    self.tearDownPictureInPicture()
-                    self.streamSource = .mjpeg(mjpegFallback)
-                    self.startMJPEGStream(url: mjpegFallback)
-                    return
-                }
-                if failedAttempts >= 4 {
-                    self.clearPTZ()
-                    self.errorMessage = L10n.tr(
-                        "实时画面中断：\(outcome.failure ?? "无数据")",
-                        "Live video stopped: \(outcome.failure ?? "no data")"
-                    )
-                    self.videoPlayer?.stop()
-                    self.videoPlayer = nil
-                    self.hasLiveVideoFrame = false
-                    self.streamSource = nil
-                    self.tearDownPictureInPicture()
-                    return
-                }
-                try? await Task.sleep(for: .milliseconds(900))
-            }
+        playback.onFallback = { [weak self, weak playback] url in
+            guard let self, let playback, self.activePlayback === playback else { return }
+            self.clearPTZ()
+            self.activePlayback = nil
+            self.videoPlayer = nil
+            self.hasLiveVideoFrame = false
+            self.tearDownPictureInPicture()
+            self.streamSource = .mjpeg(url)
+            self.startMJPEGStream(url: url)
         }
+
+        playback.onFailure = { [weak self, weak playback] detail in
+            guard let self, let playback, self.activePlayback === playback else { return }
+            self.clearPTZ()
+            self.activePlayback = nil
+            self.videoPlayer = nil
+            self.hasLiveVideoFrame = false
+            self.streamSource = nil
+            self.errorMessage = L10n.tr(
+                "实时画面中断：\(detail ?? "无数据")",
+                "Live video stopped: \(detail ?? "no data")"
+            )
+            self.tearDownPictureInPicture()
+        }
+        playback.start()
     }
 
     private func startMJPEGStream(url: URL) {
@@ -924,6 +1065,42 @@ private struct CameraHUDIconButton: View {
     }
 }
 
+/// Camera controls use the same selected treatment as the camera switcher: a cyan fill,
+/// cyan outline and brighter text. The shared `PillActionButtonStyle` stays unchanged because
+/// its quiet selected state is intentional elsewhere in the app.
+private struct CameraControlButtonStyle: ButtonStyle {
+    let isSelected: Bool
+    @Environment(\.effectiveReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 5) {
+            if isSelected {
+                Circle()
+                    .fill(Color.cyan)
+                    .frame(width: 5, height: 5)
+            }
+            configuration.label
+        }
+        .font(.system(size: DesignTokens.TypeSize.caption, weight: isSelected ? .semibold : .medium))
+        .foregroundStyle(.white.opacity(isSelected ? 0.92 : 0.76))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+            Capsule().fill(
+                isSelected ? Color.cyan.opacity(0.20) : Color.white.opacity(0.08)
+            )
+        )
+        .overlay(
+            Capsule().strokeBorder(
+                isSelected ? Color.cyan.opacity(0.55) : Color.white.opacity(0.10),
+                lineWidth: 1
+            )
+        )
+        .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1.0)
+        .animation(reduceMotion ? nil : AppleMotion.pressFeedback, value: configuration.isPressed)
+    }
+}
+
 // MARK: - Floating Camera Panel SwiftUI Content
 
 struct CameraLivePanelView: View {
@@ -938,6 +1115,10 @@ struct CameraLivePanelView: View {
     private var cameraSpec: CameraSpec? {
         guard let dev = device, case .camera(let spec) = dev.kind else { return nil }
         return spec
+    }
+
+    private var cameras: [SmartDevice] {
+        controller.cameraDevices
     }
 
     /// HA has no video for this camera and no Mi account is signed in (#97).
@@ -981,6 +1162,10 @@ struct CameraLivePanelView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
 
+            if controller.isExpandedSize, cameras.count > 1 {
+                cameraSwitcherRail
+            }
+
             if let spec = cameraSpec {
                 bottomControlsBar(spec: spec)
             }
@@ -994,9 +1179,6 @@ struct CameraLivePanelView: View {
         .onChange(of: cameraSpec?.isOn) { _, _ in
             controller.reloadStream()
         }
-        .onChange(of: cameraSpec?.entityId) { _, _ in
-            controller.reloadStream()
-        }
     }
 
     private var topHUDBar: some View {
@@ -1006,10 +1188,7 @@ struct CameraLivePanelView: View {
                 .frame(width: 8, height: 8)
                 .shadow(color: statusDotColor.opacity(0.75), radius: 4)
 
-            Text(device?.name ?? L10n.tr("智能摄像机", "Smart Camera"))
-                .font(.system(size: 12.5, weight: .semibold))
-                .foregroundStyle(.white)
-                .lineLimit(1)
+            cameraTitle
 
             if let room = device?.roomName, !room.isEmpty {
                 Text(L10n.displayRoomName(room))
@@ -1095,6 +1274,75 @@ struct CameraLivePanelView: View {
                 WindowDragArea()
             }
         }
+    }
+
+    @ViewBuilder
+    private var cameraTitle: some View {
+        if cameras.count > 1 {
+            Button {
+                controller.presentNextCamera()
+            } label: {
+                Text(device?.name ?? L10n.tr("智能摄像机", "Smart Camera"))
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            .help(L10n.tr("点击切换下一台摄像机", "Click to switch to the next camera"))
+        } else {
+            Text(device?.name ?? L10n.tr("智能摄像机", "Smart Camera"))
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+        }
+    }
+
+    private var cameraSwitcherRail: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(cameras) { camera in
+                    Button {
+                        store.openCameraLiveView(camera.id)
+                    } label: {
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(camera.id == device?.id ? Color.cyan : Color.white.opacity(0.45))
+                                .frame(width: 5, height: 5)
+                            Text(camera.name)
+                                .lineLimit(1)
+                            if !camera.isOnline {
+                                Text(L10n.tr("离线", "Offline"))
+                                    .foregroundStyle(.white.opacity(0.48))
+                            }
+                        }
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.white.opacity(camera.isOnline ? 0.92 : 0.55))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule().fill(
+                                camera.id == device?.id
+                                    ? Color.cyan.opacity(0.20)
+                                    : Color.white.opacity(0.08)
+                            )
+                        )
+                        .overlay(
+                            Capsule().strokeBorder(
+                                camera.id == device?.id
+                                    ? Color.cyan.opacity(0.55)
+                                    : Color.white.opacity(0.10),
+                                lineWidth: 1
+                            )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!camera.isOnline)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+        }
+        .background(Color.black.opacity(0.38))
     }
 
     private var customURLBar: some View {
@@ -1350,7 +1598,20 @@ struct CameraLivePanelView: View {
                                 systemImage: spec.isOn ? "moon.zzz.fill" : "power"
                             )
                         }
-                        .buttonStyle(PillActionButtonStyle(isSelected: !spec.isOn, tintColor: .cyan))
+                        .buttonStyle(CameraControlButtonStyle(isSelected: !spec.isOn))
+                    }
+
+                    if let device,
+                       spec.lenses.count > 1,
+                       (store.cameraCustomStreamURL(for: device.id) ?? "").isEmpty {
+                        ForEach(spec.lenses) { lens in
+                            Button(lensTitle(lens)) {
+                                controller.selectLens(lens, for: device)
+                            }
+                            .buttonStyle(CameraControlButtonStyle(
+                                isSelected: controller.selectedLens(for: device)?.id == lens.id
+                            ))
+                        }
                     }
 
                     if store.deviceBackend(for: device?.id ?? "") == .xiaomiCloud,
@@ -1362,7 +1623,7 @@ struct CameraLivePanelView: View {
                                 store.setCameraStreamQuality(quality, for: deviceId)
                                 controller.reloadStream()
                             }
-                            .buttonStyle(PillActionButtonStyle(isSelected: selected, tintColor: .cyan))
+                            .buttonStyle(CameraControlButtonStyle(isSelected: selected))
                         }
                     }
 
@@ -1378,7 +1639,7 @@ struct CameraLivePanelView: View {
                                 systemImage: "figure.walk.motion"
                             )
                         }
-                        .buttonStyle(PillActionButtonStyle(isSelected: motionOn, tintColor: .cyan))
+                        .buttonStyle(CameraControlButtonStyle(isSelected: motionOn))
                     }
 
                     ForEach(spec.availableNightShots, id: \.self) { mode in
@@ -1388,7 +1649,7 @@ struct CameraLivePanelView: View {
                                 store.setCameraNightShot(dev.id, mode: mode)
                             }
                         }
-                        .buttonStyle(PillActionButtonStyle(isSelected: selected, tintColor: .cyan))
+                        .buttonStyle(CameraControlButtonStyle(isSelected: selected))
                     }
                 }
             }
@@ -1411,6 +1672,15 @@ struct CameraLivePanelView: View {
         case .sd: return L10n.tr("流畅", "SD")
         case .hd: return L10n.tr("高清", "HD")
         case .max: return L10n.tr("超清", "Ultra")
+        }
+    }
+
+    private func lensTitle(_ lens: CameraLens) -> String {
+        switch lens.role {
+        case .main:
+            return L10n.tr("主镜头", "Main")
+        case .secondary:
+            return L10n.tr("第二镜头", "Second")
         }
     }
 

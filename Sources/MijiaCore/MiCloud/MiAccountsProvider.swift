@@ -356,6 +356,14 @@ public actor MiAccountsProvider: HomeProvider {
     }
 
     public func resolveCameraStream(for device: SmartDevice, quality: XiaomiCameraStreamQuality) async throws -> CameraStreamSource {
+        try await resolveCameraStream(for: device, quality: quality, channel: 0)
+    }
+
+    public func resolveCameraStream(
+        for device: SmartDevice,
+        quality: XiaomiCameraStreamQuality,
+        channel: Int
+    ) async throws -> CameraStreamSource {
         let ownerId = deviceOwners[device.id]?.first ?? device.accountId
         guard let ownerId, let child = childProvider(for: ownerId) else {
             throw HomeProviderError.serviceCallFailed(
@@ -363,7 +371,7 @@ public actor MiAccountsProvider: HomeProvider {
                 L10n.tr("当前数据源暂未返回该摄像头的实时画面流", "Current backend did not return a live stream for this camera")
             )
         }
-        return try await child.resolveCameraStream(for: device, quality: quality)
+        return try await child.resolveCameraStream(for: device, quality: quality, channel: channel)
     }
 
     public func stopCameraStream(for device: SmartDevice) async {

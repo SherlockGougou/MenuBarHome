@@ -355,6 +355,25 @@ public struct TVSpec: Equatable, Sendable {
     }
 }
 
+public struct CameraLens: Identifiable, Equatable, Sendable {
+    public enum Role: String, Codable, Sendable {
+        case main
+        case secondary
+    }
+
+    public var role: Role
+    /// go2rtc's `channel` query. Zero selects the main lens; any non-zero value
+    /// selects the second lens on the models we have verified.
+    public var channel: Int
+
+    public var id: String { role.rawValue }
+
+    public init(role: Role, channel: Int) {
+        self.role = role
+        self.channel = channel
+    }
+}
+
 public struct CameraSpec: Equatable, Sendable {
     public var entityId: String
     public var isOn: Bool
@@ -365,6 +384,8 @@ public struct CameraSpec: Equatable, Sendable {
     public var streamEntityId: String?
     public var snapshotPath: String?
     public var powerWritable: Bool
+    /// Empty for single-lens cameras and for sources that cannot expose a channel choice.
+    public var lenses: [CameraLens]
 
     public init(
         entityId: String,
@@ -375,7 +396,8 @@ public struct CameraSpec: Equatable, Sendable {
         isMotionDetectionOn: Bool? = nil,
         streamEntityId: String? = nil,
         snapshotPath: String? = nil,
-        powerWritable: Bool = true
+        powerWritable: Bool = true,
+        lenses: [CameraLens] = []
     ) {
         self.entityId = entityId
         self.isOn = isOn
@@ -386,6 +408,7 @@ public struct CameraSpec: Equatable, Sendable {
         self.streamEntityId = streamEntityId
         self.snapshotPath = snapshotPath
         self.powerWritable = powerWritable
+        self.lenses = lenses
     }
 }
 

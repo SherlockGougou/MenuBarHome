@@ -18,7 +18,8 @@ public protocol XiaomiCameraBridging: Sendable {
         sign: String,
         vendor: String,
         uid: String?,
-        quality: XiaomiCameraStreamQuality
+        quality: XiaomiCameraStreamQuality,
+        channel: Int
     ) async throws -> XiaomiCameraStreamEndpoints
 
     func stopBridge(did: String) async
@@ -162,7 +163,8 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         sign: String,
         vendor: String,
         uid: String?,
-        quality: XiaomiCameraStreamQuality
+        quality: XiaomiCameraStreamQuality,
+        channel: Int
     ) async throws -> XiaomiCameraStreamEndpoints {
         let trimmedIP = localIP.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let ipv4 = Self.parsePrivateOrLoopbackIPv4(trimmedIP) else {
@@ -172,15 +174,16 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         try await ensureGo2RTCRunning()
 
         let cleanDid = Self.sanitizeDid(did)
-        let rawName = "cam_raw_\(cleanDid)"
-        let h264Name = "cam_h264_\(cleanDid)"
-        let mjpegName = "cam_mjpeg_\(cleanDid)"
+        let suffix = channel == 0 ? "" : "_c\(channel)"
+        let rawName = "cam_raw_\(cleanDid)\(suffix)"
+        let mjpegName = "cam_mjpeg_\(cleanDid)\(suffix)"
 
         let session = Self.makeLocalHTTPClient()
         defer { session.invalidateAndCancel() }
 
-        // h264Name is no longer registered but is still deleted, so streams left by older builds go away.
-        await stopBridgeInternal(http: session, cleanDid: cleanDid, names: [rawName, h264Name, mjpegName])
+        // Switching lenses must remove the previous channel's streams before the new
+        // channel is registered; both would share the same single-camera relay.
+        await stopBridgeInternal(http: session, cleanDid: cleanDid, names: Self.allStreamNames(cleanDid: cleanDid))
 
         let relayPort = try ensureRelayPort(
             cleanDid: cleanDid,
@@ -196,7 +199,8 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
             vendor: vendor,
             model: model,
             quality: quality,
-            uid: uid
+            uid: uid,
+            channel: channel
         )
         let xiaomiURL = "xiaomi://127.0.0.1:\(relayPort)?\(query)"
 
@@ -217,12 +221,22 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
 
     public func stopBridge(did: String) async {
         let cleanDid = Self.sanitizeDid(did)
-        let rawName = "cam_raw_\(cleanDid)"
-        let h264Name = "cam_h264_\(cleanDid)"
-        let mjpegName = "cam_mjpeg_\(cleanDid)"
         let http = Self.makeLocalHTTPClient(timeout: 3.0)
         defer { http.invalidateAndCancel() }
-        await stopBridgeInternal(http: http, cleanDid: cleanDid, names: [rawName, h264Name, mjpegName])
+        await stopBridgeInternal(http: http, cleanDid: cleanDid, names: Self.allStreamNames(cleanDid: cleanDid))
+    }
+
+    /// Every stream name a bridge build may have registered for one camera. Older builds used
+    /// only the unsuffixed names, so stop removes those as well.
+    static func allStreamNames(cleanDid: String) -> [String] {
+        var names: [String] = []
+        for channel in 0...3 {
+            let suffix = channel == 0 ? "" : "_c\(channel)"
+            names.append("cam_raw_\(cleanDid)\(suffix)")
+            names.append("cam_h264_\(cleanDid)\(suffix)")
+            names.append("cam_mjpeg_\(cleanDid)\(suffix)")
+        }
+        return names
     }
 
     public func probeRegisteredStream(candidates: [String]) async -> URL? {
@@ -957,7 +971,8 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         vendor: String,
         model: String,
         quality: XiaomiCameraStreamQuality,
-        uid: String?
+        uid: String?,
+        channel: Int
     ) -> String {
         let subtype = quality.subtypeQueryValue
         var query = [
@@ -973,6 +988,9 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         ].joined(separator: "&")
         if let uid, !uid.isEmpty {
             query += "&uid=\(urlEncode(uid))"
+        }
+        if channel > 0 {
+            query += "&channel=\(channel)"
         }
         return query
     }

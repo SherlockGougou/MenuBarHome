@@ -1181,6 +1181,34 @@ struct SnapshotTests {
         )
     }
 
+    @Test("The expanded live panel shows the camera switcher and dual-lens picker")
+    func cameraSwitcherAndDualLensSnapshot() async throws {
+        let fixture = try await SnapshotFixture(includeCamera: true, includeDualLensCamera: true)
+        defer { fixture.restore() }
+        let camera = try #require(fixture.store.devices.first { device in
+            guard case .camera(let spec) = device.kind else { return false }
+            return spec.lenses.count > 1
+        })
+        let controller = CameraLivePanelController.shared
+        controller.isExpandedSize = true
+        controller.configurePTZPreview(
+            store: fixture.store,
+            deviceId: camera.id,
+            binding: nil,
+            stream: .demo(deviceId: camera.id),
+            notice: nil,
+            ready: false
+        )
+        defer { controller.configurePTZPreview(deviceId: nil, binding: nil, stream: nil, notice: nil, ready: false) }
+
+        assertRendered(
+            snapshotReady(CameraLivePanelView(controller: controller, store: fixture.store), scheme: .dark),
+            size: CGSize(width: CameraLivePanelController.expandedSize.width, height: CameraLivePanelController.expandedSize.height),
+            named: "camera-switcher-dual-lens-dark",
+            scheme: .dark
+        )
+    }
+
     // MARK: - Rendering switches
 
     private func snapshotReady<V: View>(_ view: V, scheme: ColorScheme = .light) -> some View {
@@ -1298,7 +1326,8 @@ private struct SnapshotFixture {
         miSession: MiSession? = nil,
         roomCount: Int? = nil,
         editMode: PanelEditMode = .none,
-        includeCamera: Bool = false
+        includeCamera: Bool = false,
+        includeDualLensCamera: Bool = false
     ) async throws {
         previousLanguage = L10n.currentLanguage
         L10n.currentLanguage = .zhHans
@@ -1336,7 +1365,11 @@ private struct SnapshotFixture {
         }
 
         store = HomeStore(
-            provider: MockHomeProvider(snapshot: Self.home(roomCount: roomCount, includeCamera: includeCamera)),
+            provider: MockHomeProvider(snapshot: Self.home(
+                roomCount: roomCount,
+                includeCamera: includeCamera,
+                includeDualLensCamera: includeDualLensCamera
+            )),
             defaultsSuiteName: suiteName
         )
 
@@ -1358,8 +1391,35 @@ private struct SnapshotFixture {
 
     /// The demo home with its three rooms replaced by `roomCount` rooms; devices are spread over
     /// them so the list shows more than "0 台" on every row.
-    private static func home(roomCount: Int?, includeCamera: Bool = false) -> SynthesizedHome {
+    private static func home(
+        roomCount: Int?,
+        includeCamera: Bool = false,
+        includeDualLensCamera: Bool = false
+    ) -> SynthesizedHome {
         var home = DemoHomeProvider.defaultHome(includeCamera: includeCamera)
+        if includeDualLensCamera {
+            let room = home.rooms.first
+            let roomName = room?.name ?? "书房"
+            home.devices.append(
+                SmartDevice(
+                    id: "demo_study_camera",
+                    name: "书房双摄",
+                    roomId: room?.id ?? "study",
+                    roomName: roomName,
+                    model: "isa.camera.500dh",
+                    isOnline: true,
+                    kind: .camera(CameraSpec(
+                        entityId: "camera.demo_study_camera",
+                        isOn: true,
+                        streamEntityId: "camera.demo_study_camera",
+                        lenses: [
+                            CameraLens(role: .main, channel: 0),
+                            CameraLens(role: .secondary, channel: 1),
+                        ]
+                    ))
+                )
+            )
+        }
         guard let roomCount, roomCount > 0 else { return home }
         let names = [
             "客厅", "主卧", "书房", "儿童房", "厨房", "餐厅", "阳台", "玄关",
