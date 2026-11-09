@@ -12,7 +12,7 @@ import { SKINS } from "../src/ui/panelPrefs.js";
 import { cloudFixture } from "./cloudFixture.js";
 import { MiCloudClient, MiotSynthesizer, inferFallbackSpec, parseMiotDeviceSpec } from "../src/core/miCloudClient.js";
 import { MiCloudCrypto } from "../src/core/miCloudCrypto.js";
-import type { FacetControl, GenericSpec, SmartDevice } from "../src/core/models.js";
+import type { DeviceCommand, FacetControl, GenericSpec, SmartDevice } from "../src/core/models.js";
 
 let dom: Window;
 
@@ -2372,6 +2372,9 @@ describe("Smart camera support and live view (#97)", () => {
 
     await click('.cc-camera-live-sheet .cc-segmented-pills [data-toggle-device="camera.living_cam"]');
     assert.match(document.body.textContent ?? "", /摄像机处于物理休眠状态/);
+    // Waking a camera is a hazard-table power-on, so the first tap only arms the confirmation.
+    await click('.cc-camera-stage.is-sleeping [data-toggle-device="camera.living_cam"]');
+    assert.match(document.body.textContent ?? "", /属于高风险设备，再点一次确认执行/);
     await click('.cc-camera-stage.is-sleeping [data-toggle-device="camera.living_cam"]');
     assert.equal(
       (element("#cc-camera-video") as HTMLVideoElement).getAttribute("src"),
@@ -3966,6 +3969,9 @@ describe("Home Assistant source", () => {
     localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({ connectionMode: "homeAssistant", haBaseURL: "http://localhost:8123", hasCompletedOnboarding: true }));
     new MenuMijiaWindowsApp(element("#app"));
     await waitFor(() => !!document.querySelector('[data-toggle-device="heat-only"]'));
+    // A heat-only climate is a heater card: its first power-on tap only arms the confirmation.
+    await click('[data-toggle-device="heat-only"]');
+    assert.deepEqual(modes, []);
     await click('[data-toggle-device="heat-only"]');
     assert.deepEqual(modes, ["heat"]);
     await click('[data-toggle-device="heat-only"]');
@@ -4159,6 +4165,9 @@ describe("Home Assistant source", () => {
     }));
     new MenuMijiaWindowsApp(element("#app"));
     await waitFor(() => !!document.querySelector('[data-toggle-device="wol-pc"]'));
+    await click('[data-toggle-device="wol-pc"]');
+    assert.equal(executed.length, 0);
+    assert.match(document.body.textContent ?? "", /属于高风险设备，再点一次确认执行/);
     await click('[data-toggle-device="wol-pc"]');
     assert.equal(executed.length, 1);
     assert.equal((executed[0]?.command as { service?: string })?.service, "press");
@@ -4930,6 +4939,28 @@ describe("Appliance and generic cards (#9)", () => {
     assert.match(document.body.textContent ?? "", /已执行鱼缸/, "the same write twice runs it");
   });
 
+  it("asks before a 更多设置 action even when the profile marks it low risk", async () => {
+    const reset = facet({
+      id: "2.9",
+      kind: "button",
+      name: "reset-filter",
+      value: null,
+      writesByDefault: true,
+      target: { kind: "action", entityId: "miot-action:did_tank:2:9" },
+    });
+    mount([tank], { [tank.id]: [reset] });
+    await click('[data-body-device="miot:did_tank"]');
+
+    element('[data-facet-action="miot:did_tank|2.9"]').click();
+    await setImmediate();
+    assert.match(document.body.textContent ?? "", /再点一次确认执行/, "a physical action always asks");
+    assert.doesNotMatch(document.body.textContent ?? "", /已执行鱼缸/);
+
+    element('[data-facet-action="miot:did_tank|2.9"]').click();
+    await setImmediate();
+    assert.match(document.body.textContent ?? "", /已执行鱼缸/);
+  });
+
   it("writes a plug's sibling-service 更多设置 row through the cloud", async () => {
     const plugSpec = {
       type: "urn:miot-spec-v2:device:outlet:0000A002:cuco-plug:1",
@@ -5032,5 +5063,519 @@ describe("Appliance and generic cards (#9)", () => {
     mount([{ ...tank, kind: readOnly }]);
     assert.match(tile("miot:did_tank"), /只读 · 鱼缸/);
     assert.match(element('[data-tile-id="miot:did_tank"]').textContent ?? "", /只读/);
+  });
+});
+
+describe("Manual control parity with macOS (#143)", () => {
+  const common = { roomId: "study", roomName: "书房", isOnline: true };
+
+  const heater = (): SmartDevice => ({
+    ...common,
+    id: "heater",
+    name: "书房电暖器",
+    model: "zhimi.heater.za2",
+    kind: {
+      kind: "climate",
+      entityId: "climate.heater",
+      isOn: false,
+      hvacMode: "off",
+      availableModes: ["off", "heat"],
+      targetTemperature: 20,
+      currentTemperature: 18,
+      minTemp: 18,
+      maxTemp: 28,
+      step: 1,
+      fanMode: "Low",
+      availableFanModes: ["Low", "High"],
+    },
+  });
+
+  const secondHeater = (): SmartDevice => {
+    const dev = heater();
+    const kind = dev.kind as Extract<SmartDevice["kind"], { kind: "climate" }>;
+    return {
+      ...dev,
+      id: "heater-2",
+      name: "客厅电暖器",
+      kind: { ...kind, entityId: "climate.heater2" },
+    };
+  };
+
+  const plug = (): SmartDevice => ({
+    ...common,
+    id: "plug",
+    name: "书房插座",
+    model: "cuco.plug.v3",
+    kind: {
+      kind: "plug",
+      switchEntityId: "switch.plug",
+      isOn: false,
+      powerWatts: null,
+      energyKwh: null,
+      childLockEntityId: null,
+      isChildLocked: false,
+    },
+  });
+
+  const garage = (): SmartDevice => ({
+    ...common,
+    id: "garage",
+    name: "车库门",
+    model: "hmpace.wallswitch.v1",
+    kind: {
+      kind: "cover",
+      entityId: "cover.garage",
+      subtype: "garage-door",
+      positionPercent: 100,
+      positionWritable: true,
+      openDescription: "Open",
+      closeDescription: "Close",
+      pauseDescription: "Pause",
+      batteryPercent: null,
+      faultText: null,
+      motion: "stopped",
+    },
+  });
+
+  const vacuumWithStatus = (status: string): SmartDevice => ({
+    ...common,
+    id: "vac",
+    name: "扫地机",
+    model: "roborock.vacuum.a10",
+    kind: {
+      kind: "vacuum",
+      entityId: "vacuum.robot",
+      status,
+      battery: 90,
+      modeEntityId: null,
+      currentMode: null,
+      availableModes: [],
+    },
+  });
+
+  const vacuum = (): SmartDevice => vacuumWithStatus("docked");
+
+  const momentaryPlug = (): SmartDevice => ({
+    ...common,
+    id: "momentary",
+    name: "书房按钮",
+    model: "cuco.plug.v3",
+    kind: {
+      kind: "plug",
+      switchEntityId: "button.wake",
+      isOn: true,
+      powerWatts: null,
+      energyKwh: null,
+      childLockEntityId: null,
+      isChildLocked: false,
+    },
+  });
+
+  const fanOnlyClimate = (): SmartDevice => ({
+    ...common,
+    id: "fan-climate",
+    name: "客厅空调",
+    model: "xiaomi.aircondition.mc5",
+    kind: {
+      kind: "climate",
+      entityId: "miot:fan-climate:2",
+      isOn: true,
+      hvacMode: "fan_only",
+      availableModes: [],
+      targetTemperature: 25,
+      currentTemperature: null,
+      minTemp: 16,
+      maxTemp: 30,
+      step: 1,
+      fanMode: "Low",
+      availableFanModes: ["Low", "High"],
+      temperatureWritable: false,
+    },
+  });
+
+  const facetControl = (deviceId: string): FacetControl => ({
+    id: "9.1",
+    kind: "toggle",
+    name: "on",
+    title: null,
+    serviceName: "switch",
+    unit: null,
+    scale: null,
+    value: true,
+    options: [],
+    range: null,
+    isWritable: true,
+    writesByDefault: true,
+    isHighValue: false,
+    target: { kind: "property", entityId: `miot:${deviceId}:9`, piid: 1 },
+  });
+
+  const bareFan = (): SmartDevice => ({
+    ...common,
+    id: "fan-bare",
+    name: "旧风扇",
+    model: "zhimi.fan.za4",
+    kind: {
+      kind: "fan",
+      entityId: "fan.old",
+      isOn: false,
+      percentage: null,
+      presetMode: null,
+      availablePresetModes: [],
+      isOscillating: null,
+      speedWritable: false,
+      swingWritable: false,
+    },
+  });
+
+  const lightWithFacets = (): SmartDevice => ({
+    ...common,
+    id: "light-facets",
+    name: "书房灯带",
+    model: "yeelink.light.strip",
+    kind: {
+      kind: "light",
+      entityId: "light.strip",
+      isOn: true,
+      brightnessPercent: 50,
+      colorTempKelvin: 4000,
+      minKelvin: 2700,
+      maxKelvin: 6500,
+      currentEffect: null,
+      availableEffects: [],
+      brightnessWritable: false,
+      colorWritable: false,
+    },
+  });
+
+  async function startWithDevices(devices: SmartDevice[]): Promise<MenuMijiaWindowsApp> {
+    localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
+      connectionMode: "demo",
+      hasCompletedOnboarding: true,
+    }));
+    const app = new MenuMijiaWindowsApp(element("#app"));
+    await setImmediate();
+    app.devices = devices;
+    app.render();
+    return app;
+  }
+
+  const coverPosition = (app: MenuMijiaWindowsApp): number | null => {
+    const kind = app.devices.find((device) => device.id === "garage")?.kind;
+    return kind?.kind === "cover" ? kind.positionPercent : null;
+  };
+
+  const vacuumStatus = (app: MenuMijiaWindowsApp): string | null => {
+    const kind = app.devices.find((device) => device.id === "vac")?.kind;
+    return kind?.kind === "vacuum" ? kind.status : null;
+  };
+
+  it("closing a garage door asks for a second tap instead of treating close as safe", async () => {
+    const app = await startWithDevices([garage()]);
+    await click('[data-toggle-device="garage"]');
+    assert.equal(app.pendingHighRisk?.deviceId, "garage");
+    assert.equal(coverPosition(app), 100, "the refused close must not move the optimistic position");
+    assert.match(document.body.textContent ?? "", /属于高风险设备，再点一次确认执行/);
+
+    await click('[data-toggle-device="garage"]');
+    assert.equal(coverPosition(app), 0);
+  });
+
+  it("heater and plug toggles ask like a garage door", async () => {
+    const app = await startWithDevices([heater(), plug()]);
+
+    await click('[data-toggle-device="heater"]');
+    assert.equal(app.pendingHighRisk?.deviceId, "heater");
+    const heaterKind = app.devices.find((device) => device.id === "heater")?.kind;
+    assert.ok(heaterKind?.kind === "climate" && !heaterKind.isOn);
+    await click('[data-toggle-device="heater"]');
+    assert.ok(heaterKind?.kind === "climate" && heaterKind.isOn);
+
+    await click('[data-toggle-device="plug"]');
+    assert.equal(app.pendingHighRisk?.deviceId, "plug");
+    const plugKind = app.devices.find((device) => device.id === "plug")?.kind;
+    assert.ok(plugKind?.kind === "plug" && !plugKind.isOn);
+    await click('[data-toggle-device="plug"]');
+    assert.ok(plugKind?.kind === "plug" && plugKind.isOn);
+  });
+
+  it("heater temperature, mode and fan writes each wait for a second tap", async () => {
+    const app = await startWithDevices([heater()]);
+    const heaterKind = () => app.devices.find((device) => device.id === "heater")!.kind as Extract<SmartDevice["kind"], { kind: "climate" }>;
+
+    await click('[data-acstep="heater:1"]');
+    assert.equal(app.pendingHighRisk?.deviceId, "heater");
+    assert.equal(heaterKind().targetTemperature, 20);
+    await click('[data-acstep="heater:1"]');
+    assert.equal(heaterKind().targetTemperature, 21);
+
+    await click('[data-expand-device="heater"]');
+    await click('[data-acmode="heater:heat"]');
+    assert.equal(app.pendingHighRisk?.deviceId, "heater");
+    await click('[data-acmode="heater:heat"]');
+    assert.equal(heaterKind().hvacMode, "heat");
+
+    await click('[data-acfan="heater:High"]');
+    assert.equal(app.pendingHighRisk?.deviceId, "heater");
+    assert.equal(heaterKind().fanMode, "Low");
+    await click('[data-acfan="heater:High"]');
+    assert.equal(heaterKind().fanMode, "High");
+  });
+
+  it("renders the vacuum drawer and asks before starting a clean", async () => {
+    const app = await startWithDevices([vacuum()]);
+    assert.ok(document.querySelector('[data-expand-device="vac"]'), "the vacuum card must advertise a drawer");
+    await click('[data-expand-device="vac"]');
+    assert.equal(document.querySelectorAll("[data-vacuumaction]").length, 3);
+    assert.ok(document.querySelector('[data-vacuumaction="vac|pause"]'));
+    assert.ok(document.querySelector('[data-vacuumaction="vac|returnToBase"]'));
+
+    await click('[data-vacuumaction="vac|start"]');
+    assert.equal(app.pendingHighRisk?.deviceId, "vac");
+    assert.equal(vacuumStatus(app), "docked");
+    await click('[data-vacuumaction="vac|start"]');
+    assert.equal(vacuumStatus(app), "cleaning");
+
+    await click('[data-vacuumaction="vac|pause"]');
+    assert.equal(vacuumStatus(app), "paused");
+    await click('[data-vacuumaction="vac|returnToBase"]');
+    assert.equal(vacuumStatus(app), "returning");
+  });
+
+  it("opens the drawer from the body before falling back to the switch", async () => {
+    const app = await startWithDevices([vacuum(), garage(), plug()]);
+    app.deviceFacets = { garage: [facetControl("garage")], plug: [facetControl("plug")] };
+    app.render();
+
+    await click('[data-body-device="vac"]');
+    assert.equal(app.expandedDeviceId, "vac", "a vacuum body tap opens its drawer");
+    assert.equal(vacuumStatus(app), "docked", "and never starts a clean");
+
+    await click('[data-body-device="garage"]');
+    assert.equal(app.expandedDeviceId, "garage", "a cover with 更多设置 rows opens the drawer");
+    assert.equal(coverPosition(app), 100, "and never moves the curtain");
+
+    await click('[data-body-device="plug"]');
+    assert.equal(app.expandedDeviceId, "plug", "a plug with 更多设置 rows opens the drawer");
+    const plugKind = app.devices.find((device) => device.id === "plug")!.kind;
+    assert.ok(plugKind.kind === "plug" && !plugKind.isOn, "and never flips the plug");
+  });
+
+  it("activates a momentary plug that reports on instead of dropping the tap", async () => {
+    const app = await startWithDevices([momentaryPlug()]);
+    await click('[data-toggle-device="momentary"]');
+    assert.equal(app.pendingHighRisk?.deviceId, "momentary", "a plug power-on asks first");
+    await click('[data-toggle-device="momentary"]');
+    assert.match(document.body.textContent ?? "", /已打开书房按钮/);
+    assert.equal(document.querySelector("#btn-undo"), null, "a momentary button has no undo");
+  });
+
+  it("docks a vacuum that Home Assistant reports as on", async () => {
+    const app = await startWithDevices([vacuumWithStatus("on")]);
+    await click('[data-toggle-device="vac"]');
+    assert.equal(vacuumStatus(app), "returning");
+    assert.equal(app.pendingHighRisk, null, "docking is a de-escalation, not a hazard opt-in");
+  });
+
+  it("renders the fan row in a half-size climate drawer with no temperatures", async () => {
+    const app = await startWithDevices([fanOnlyClimate()]);
+    app.layout.tileSizes["fan-climate"] = "half";
+    app.render();
+    await click('[data-expand-device="fan-climate"]');
+    assert.ok(document.querySelector('[data-acfan="fan-climate:Low"]'), "the fan row is the drawer's content");
+    assert.ok(document.querySelector('[data-acfan="fan-climate:High"]'));
+  });
+
+  it("puts the slider confirmation in the owning drawer and sends the captured value", async () => {
+    const app = await startWithDevices([heater()]);
+    app.layout.tileSizes["heater"] = "half";
+    app.render();
+    await click('[data-expand-device="heater"]');
+    const target = () =>
+      (app.devices.find((device) => device.id === "heater")!.kind as Extract<SmartDevice["kind"], { kind: "climate" }>).targetTemperature;
+
+    await setRange('[data-actemp="heater"]', "27");
+    assert.equal(target(), 20, "the refused write sends nothing");
+    assert.ok(document.querySelector("#btn-high-risk-confirm") === null, "no banner button");
+    assert.ok(document.querySelector(".cc-feedback-card [data-high-risk-confirm]") === null, "nothing under the feedback");
+    const row = element('[data-tile-id="heater"] [data-high-risk-confirm="heater"]');
+    assert.match(row.parentElement?.textContent ?? "", /设为 27°C？/);
+    assert.equal(row.textContent?.trim(), "确认执行");
+
+    row.click();
+    assert.ok(document.querySelector('[data-high-risk-confirm="heater"]') === null, "the row disappears before the send resolves");
+    await setImmediate();
+    assert.equal(target(), 27);
+    assert.equal(app.pendingHighRisk, null);
+  });
+
+  it("keeps the confirmation out of another device's feedback and visible without the assistant bar", async () => {
+    const app = await startWithDevices([heater(), lightWithFacets()]);
+    app.layout.tileSizes["heater"] = "half";
+    app.render();
+    await click('[data-expand-device="heater"]');
+    await setRange('[data-actemp="heater"]', "27");
+
+    app.replyBanner = { text: "已打开书房灯带", source: "实时控制" };
+    app.isShowingAssistantBar = false;
+    app.render();
+    assert.ok(document.querySelector('[data-tile-id="heater"] [data-high-risk-confirm="heater"]'));
+    assert.ok(document.querySelector(".cc-feedback-card [data-high-risk-confirm]") === null);
+    assert.ok(document.querySelector('[data-tile-id="light-facets"] [data-high-risk-confirm]') === null);
+  });
+
+  it("clears a pending slider confirmation when the backend is invalidated", async () => {
+    const app = await startWithDevices([heater()]);
+    app.layout.tileSizes["heater"] = "half";
+    app.render();
+    await click('[data-expand-device="heater"]');
+    await setRange('[data-actemp="heater"]', "27");
+    assert.ok(app.pendingHighRisk);
+
+    app.invalidateSourceControl();
+    app.render();
+    assert.equal(app.pendingHighRisk, null);
+    assert.ok(document.querySelector('[data-high-risk-confirm="heater"]') === null);
+  });
+
+  it("sends nothing when the pending confirmation belongs to another backend revision", async () => {
+    const app = await startWithDevices([heater()]);
+    app.layout.tileSizes["heater"] = "half";
+    app.render();
+    await click('[data-expand-device="heater"]');
+    await setRange('[data-actemp="heater"]', "27");
+    const target = () =>
+      (app.devices.find((device) => device.id === "heater")!.kind as Extract<SmartDevice["kind"], { kind: "climate" }>).targetTemperature;
+
+    app.sourceRevision += 1;
+    element('[data-high-risk-confirm="heater"]').click();
+    await setImmediate();
+    assert.equal(target(), 20, "a stale revision must not run the captured command");
+    assert.equal(app.pendingHighRisk, null);
+  });
+
+  it("removes the slider confirmation row when its window expires", async () => {
+    const app = await startWithDevices([heater()]);
+    app.layout.tileSizes["heater"] = "half";
+    app.render();
+    await click('[data-expand-device="heater"]');
+    await setRange('[data-actemp="heater"]', "26");
+    const armed = app.pendingHighRisk;
+    assert.ok(armed);
+
+    // Re-arm the same prompt with a short window so the production timer can be observed without
+    // sleeping through the shipped eight seconds (Coding Standard #9: wait on the real signal).
+    app.setPendingHighRisk({ ...armed, expiresAtMs: Date.now() + 20 });
+    await waitFor(() => app.pendingHighRisk === null);
+    assert.ok(document.querySelector('[data-high-risk-confirm="heater"]') === null);
+    const target = () =>
+      (app.devices.find((device) => device.id === "heater")!.kind as Extract<SmartDevice["kind"], { kind: "climate" }>).targetTemperature;
+    assert.equal(target(), 20);
+  });
+
+  it("queues the expired row removal while a panel gesture is active", async () => {
+    const app = await startWithDevices([heater()]);
+    app.layout.tileSizes["heater"] = "half";
+    app.render();
+    await click('[data-expand-device="heater"]');
+    await setRange('[data-actemp="heater"]', "26");
+    const armed = app.pendingHighRisk;
+    assert.ok(armed);
+
+    app.setPendingHighRisk({ ...armed, expiresAtMs: Date.now() + 20 });
+    app.pointerIsDown = true;
+    let renders = 0;
+    const render = app.render.bind(app);
+    app.render = () => {
+      renders += 1;
+      render();
+    };
+    await waitFor(() => app.pendingHighRisk === null);
+    assert.equal(renders, 0, "expiry must not rebuild the panel mid-gesture");
+    assert.ok(document.querySelector('[data-high-risk-confirm="heater"]'), "the row waits for the gesture to end");
+
+    app.pointerIsDown = false;
+    app.queueBackgroundRender();
+    assert.equal(renders, 1);
+    assert.ok(document.querySelector('[data-high-risk-confirm="heater"]') === null);
+  });
+
+  it("hides the row with the drawer and replaces it when another device arms one", async () => {
+    const app = await startWithDevices([heater(), secondHeater()]);
+    app.layout.tileSizes["heater"] = "half";
+    app.layout.tileSizes["heater-2"] = "half";
+    app.render();
+    await click('[data-expand-device="heater"]');
+    await setRange('[data-actemp="heater"]', "27");
+    assert.ok(document.querySelector('[data-high-risk-confirm="heater"]'));
+
+    await click('[data-expand-device="heater"]');
+    assert.ok(document.querySelector('[data-high-risk-confirm="heater"]') === null, "a collapsed drawer shows no row");
+
+    await click('[data-expand-device="heater"]');
+    assert.ok(document.querySelector('[data-high-risk-confirm="heater"]'), "reopening within the window shows it again");
+
+    await click('[data-expand-device="heater"]');
+    await click('[data-expand-device="heater-2"]');
+    await setRange('[data-actemp="heater-2"]', "22");
+    assert.equal(app.pendingHighRisk?.deviceId, "heater-2");
+    assert.equal(document.querySelectorAll("[data-high-risk-confirm]").length, 1);
+    assert.ok(document.querySelector('[data-tile-id="heater-2"] [data-high-risk-confirm="heater-2"]'));
+
+    app.devices = app.devices.filter((device) => device.id !== "heater-2");
+    app.render();
+    assert.equal(document.querySelectorAll("[data-high-risk-confirm]").length, 0, "a removed device leaves no row");
+  });
+
+  it("sends once when the drawer confirmation is double-clicked", async () => {
+    const app = await startWithDevices([heater()]);
+    app.layout.tileSizes["heater"] = "half";
+    app.render();
+    await click('[data-expand-device="heater"]');
+    await setRange('[data-actemp="heater"]', "27");
+    const commands: DeviceCommand[] = [];
+    app.executeSingleCommand = async (_device, command) => {
+      commands.push(command);
+    };
+
+    const button = element('[data-high-risk-confirm="heater"]');
+    button.click();
+    button.click();
+    await setImmediate();
+    assert.equal(commands.length, 1);
+    assert.equal(commands[0]?.kind, "setClimateTemperature");
+  });
+
+  it("never opens an empty drawer, and opens one for a card whose only control is 更多设置", async () => {
+    const app = await startWithDevices([bareFan(), lightWithFacets()]);
+    assert.equal(document.querySelector('[data-expand-device="fan-bare"]'), null);
+    await click('[data-body-device="fan-bare"]');
+    assert.equal(app.expandedDeviceId, null);
+    const fanKind = app.devices.find((device) => device.id === "fan-bare")!.kind;
+    assert.ok(fanKind.kind === "fan" && fanKind.isOn, "a card without a drawer falls back to its switch");
+
+    app.deviceFacets = {
+      "light-facets": [{
+        id: "2.1",
+        kind: "toggle",
+        name: "on",
+        title: null,
+        serviceName: "switch",
+        unit: null,
+        scale: null,
+        value: true,
+        options: [],
+        range: null,
+        isWritable: true,
+        writesByDefault: true,
+        isHighValue: false,
+        target: { kind: "property", entityId: "miot:light-facets:2", piid: 1 },
+      }],
+    };
+    app.render();
+    assert.ok(document.querySelector('[data-expand-device="light-facets"]'));
+    await click('[data-body-device="light-facets"]');
+    assert.equal(app.expandedDeviceId, "light-facets");
+    assert.ok(document.querySelector('[data-facet-toggle="light-facets|2.1"]'));
   });
 });

@@ -2,10 +2,10 @@ import { t } from "../core/i18n.js";
 import { IntentReply } from "../core/assistant.js";
 import { renderMoreSettings } from "./facetViews.js";
 import {
-  deviceAcceptsControlWrites,
   deviceCanTogglePower,
   deviceReadout,
   deviceStatusSummary,
+  hasDetailDrawer,
   isDeviceActiveOn,
   localizeAirQuality,
   localizeFanPreset,
@@ -33,6 +33,7 @@ import {
   temperatureSymbol,
 } from "../core/temperature.js";
 import { SF_ICONS } from "./appConstants.js";
+import type { PendingHighRiskConfirmation } from "./appTypes.js";
 
   export function renderSensorCard(
     dev: SmartDevice,
@@ -117,8 +118,7 @@ import { SF_ICONS } from "./appConstants.js";
     const running = readout !== "possiblyStale" && dev.isOnline && k.isOn && k.hvacMode !== "off";
     const powerWritable = k.powerWritable !== false;
     const temperatureWritable = k.temperatureWritable !== false;
-    const canExpand =
-      temperatureWritable || k.availableModes.length > 0 || k.availableFanModes.length > 0 || facets.length > 0;
+    const canExpand = hasDetailDrawer(dev, facets);
     const open = canExpand && (forceOpen || expandedDeviceId === dev.id);
     const id = escapeHtml(dev.id);
     const modeLabel: Record<string, string> = { cool: t("制冷"), heat: t("制热"), dry: t("除湿"), fan_only: t("送风"), auto: t("自动") };
@@ -193,7 +193,11 @@ import { SF_ICONS } from "./appConstants.js";
   }
 
 /** The card's own detailed controls; 更多设置 is appended by `renderDeviceDrawer` (#5). */
-function renderPrimaryDrawer(dev: SmartDevice, escapeHtml: (value: string) => string): string {
+function renderPrimaryDrawer(
+  dev: SmartDevice,
+  escapeHtml: (value: string) => string,
+  pendingHighRisk: PendingHighRiskConfirmation | null = null,
+): string {
     const k = dev.kind;
     if (k.kind === "light") {
       const showBrightness = k.brightnessWritable !== false;
@@ -234,7 +238,17 @@ function renderPrimaryDrawer(dev: SmartDevice, escapeHtml: (value: string) => st
     if (k.kind === "climate") {
       const showTemp = k.temperatureWritable !== false;
       const showModes = k.availableModes.some((mode) => mode !== "off") || (!k.entityId.startsWith("miot:") && k.powerWritable !== false);
-      if (!showTemp && !showModes) return "";
+      const showFan = k.availableFanModes.length > 0;
+      if (!showTemp && !showModes && !showFan) return "";
+      // The confirmation belongs to this card and to the captured command, never to the current
+      // slider value; the timer removes the state when its window closes.
+      const confirmTemperature =
+        pendingHighRisk &&
+        pendingHighRisk.deviceId === dev.id &&
+        pendingHighRisk.expiresAtMs > Date.now() &&
+        pendingHighRisk.confirm?.command.kind === "setClimateTemperature"
+          ? pendingHighRisk.confirm.command.temperature
+          : null;
       const modes: ReadonlyArray<{ readonly code: string; readonly label: string }> = [
         { code: "cool", label: t("制冷") },
         { code: "heat", label: t("制热") },
@@ -251,6 +265,10 @@ function renderPrimaryDrawer(dev: SmartDevice, escapeHtml: (value: string) => st
             </div>
             <input class="cc-range is-blue" type="range" min="${formatTemperatureValue(k.minTemp)}" max="${formatTemperatureValue(k.maxTemp)}" step="${displayStep(k.step)}" value="${formatTemperatureValue(k.targetTemperature)}" data-actemp="${escapeHtml(dev.id)}" aria-label="${t("目标温度")}" aria-valuemin="${formatTemperatureValue(k.minTemp)}" aria-valuemax="${formatTemperatureValue(k.maxTemp)}" aria-valuetext="${formatTemperature(k.targetTemperature)}" />
           </div>` : ""}
+          ${confirmTemperature !== null ? `<div class="cc-slider-label">
+            <span>${t("设为 {temp}？", { temp: formatTemperature(confirmTemperature) })}</span>
+            <button class="cc-inline-pill" data-high-risk-confirm="${escapeHtml(dev.id)}">${t("确认执行")}</button>
+          </div>` : ""}
           ${showModes ? `<div class="cc-segmented-pills">
             ${modes
               .map(
@@ -259,6 +277,14 @@ function renderPrimaryDrawer(dev: SmartDevice, escapeHtml: (value: string) => st
                 ${m.label}
               </button>
             `,
+              )
+              .join("")}
+          </div>` : ""}
+          ${showFan ? `<div class="cc-segmented-pills">
+            <span class="cc-pill-label">${t("风速")}</span>
+            ${k.availableFanModes
+              .map(
+                (fanMode) => `<button class="cc-seg-pill ${k.fanMode === fanMode ? "is-active" : ""}" data-acfan="${escapeHtml(dev.id)}:${escapeHtml(fanMode)}" aria-pressed="${k.fanMode === fanMode}">${escapeHtml(localizeFanMode(fanMode))}</button>`,
               )
               .join("")}
           </div>` : ""}
@@ -465,6 +491,29 @@ function renderPrimaryDrawer(dev: SmartDevice, escapeHtml: (value: string) => st
       if (rows.length === 0) return "";
       return `<div class="cc-tile-drawer">${rows.join("")}</div>`;
     }
+    if (k.kind === "vacuum") {
+      // macOS vacuumDrawer: start / pause / dock, with the reported status picked.
+      if (k.actionsWritable === false) return "";
+      const id = escapeHtml(dev.id);
+      const status = k.status.toLowerCase();
+      const actions = [
+        ["start", t("开始清扫"), status === "cleaning"],
+        ["pause", t("暂停"), status === "paused"],
+        ["returnToBase", t("回充"), status === "returning"],
+      ] as const;
+      return `
+        <div class="cc-tile-drawer">
+          <div class="cc-segmented-pills">
+            ${actions
+              .map(
+                ([action, label, selected]) =>
+                  `<button class="cc-seg-pill ${selected ? "is-active" : ""}" data-vacuumaction="${id}|${action}" aria-pressed="${selected}">${label}</button>`,
+              )
+              .join("")}
+          </div>
+        </div>
+      `;
+    }
     if (k.kind === "fridge") {
       const id = escapeHtml(dev.id);
       const fridgeStep = k.fridgeTargetEntityId
@@ -510,9 +559,10 @@ export function renderDeviceDrawer(
   escapeHtml: (value: string) => string,
   facets: readonly FacetControl[] = [],
   allowAdvanced = false,
+  pendingHighRisk: PendingHighRiskConfirmation | null = null,
 ): string {
   return (
-    renderPrimaryDrawer(dev, escapeHtml) +
+    renderPrimaryDrawer(dev, escapeHtml, pendingHighRisk) +
     renderMoreSettings({ deviceId: dev.id, facets, allowAdvanced, escapeHtml })
   );
 }
@@ -585,6 +635,7 @@ export interface DeviceTileViewState {
   readonly selectedRoom: string;
   readonly valuesAreStale: boolean;
   readonly expandedDeviceId: string | null;
+  readonly pendingHighRisk: PendingHighRiskConfirmation | null;
   readonly waitingDeviceIds: ReadonlySet<string>;
   readonly compactGrid: boolean;
   readonly dimPreview: { readonly id: string; readonly percent: number } | null;
@@ -615,30 +666,7 @@ export function renderDeviceTile(dev: SmartDevice, state: DeviceTileViewState): 
   const palette = devicePaletteClass(dev);
   const svg = deviceSvgIcon(dev);
   const writable = deviceCanTogglePower(dev);
-  const fanReadings =
-    dev.kind.kind === "fan" &&
-    (dev.kind.pm25Density != null ||
-      dev.kind.airQuality != null ||
-      dev.kind.temperature != null ||
-      dev.kind.humidity != null ||
-      dev.kind.filterLifePercent != null);
-  const hasDrawer =
-    kind === "fridge" ||
-    (dev.kind.kind === "light" &&
-      (dev.kind.brightnessWritable !== false || dev.kind.colorWritable !== false || dev.kind.availableEffects.length > 0)) ||
-    (dev.kind.kind === "climate" &&
-      (dev.kind.temperatureWritable !== false || dev.kind.availableModes.length > 0 || dev.kind.availableFanModes.length > 0)) ||
-    (dev.kind.kind === "fan" &&
-      (fanReadings ||
-        dev.kind.availablePresetModes.length > 0 ||
-        (dev.kind.speedWritable !== false && dev.kind.percentage !== null) ||
-        (dev.kind.swingWritable !== false && dev.kind.isOscillating !== null))) ||
-    (dev.kind.kind === "camera" &&
-      (writable || dev.kind.availableNightShots.length > 0 || dev.kind.motionDetectionEntityId !== null)) ||
-    (dev.kind.kind === "vacuum" && dev.kind.actionsWritable !== false) ||
-    (dev.kind.kind === "speaker" && deviceAcceptsControlWrites(dev)) ||
-    (dev.kind.kind === "appliance" && deviceAcceptsControlWrites(dev)) ||
-    (state.deviceFacets[dev.id]?.length ?? 0) > 0;
+  const hasDrawer = hasDetailDrawer(dev, state.deviceFacets[dev.id] ?? []);
   const subtitle =
     state.selectedRoom === "全部"
       ? `${dev.roomName} · ${deviceStatusSummary(dev)}`
@@ -707,7 +735,7 @@ export function renderDeviceTile(dev: SmartDevice, state: DeviceTileViewState): 
         </div>
         ${
           isExpanded && hasDrawer
-            ? renderDeviceDrawer(dev, escape, state.deviceFacets[dev.id] ?? [], state.allowAdvancedFacetWrites)
+            ? renderDeviceDrawer(dev, escape, state.deviceFacets[dev.id] ?? [], state.allowAdvancedFacetWrites, state.pendingHighRisk)
             : ""
         }
       </div>

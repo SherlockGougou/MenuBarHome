@@ -98,11 +98,13 @@ import {
   readMiotPower,
   deviceStatusSummary,
   environmentReadingPriority,
+  hasDetailDrawer,
   isDeviceActiveOn,
   joinsAllOff,
   joinsAllOffByDefault,
   localizeApplianceFanLevel,
   localizeApplianceMode,
+  localizeHvacMode,
   localizeNightShot,
   localizeAirQuality,
   localizeFanPreset,
@@ -351,11 +353,21 @@ import { bindPanelInput } from "./panelKeyboard.js";
         // Round to the thermostat's own step so repeated °F taps do not drift off the °C grid.
         const snapped = Math.round(next / step) * step;
         const temperature = Math.min(k.maxTemp, Math.max(k.minTemp, Number(snapped.toFixed(2))));
+        const command: DeviceCommand = { kind: "setClimateTemperature", entityId: k.entityId, temperature };
+        const intent: DeviceIntent = { targetId: dev.id, operation: { kind: "targetTemperature", celsius: temperature } };
+        // macOS gates every climate write through `allowManualControl`: a heater's new target is
+        // hazardous in both directions (#4, #143).
+        if (
+          ManualControlPolicy.requiresConfirmation(intent, host.devices) &&
+          !confirmHighRisk(dev.id, command, t("设为 {temp}", { temp: formatTemperature(temperature) }))
+        ) {
+          return;
+        }
         void host.executeSingleCommand(
           dev,
-          { kind: "setClimateTemperature", entityId: k.entityId, temperature },
+          command,
           t("已将{name}设为 {temp}", { name: dev.name, temp: formatTemperature(temperature) }),
-          { targetId: dev.id, operation: { kind: "targetTemperature", celsius: temperature } },
+          intent,
         );
       });
     });
@@ -366,11 +378,19 @@ import { bindPanelInput } from "./panelKeyboard.js";
         const dev = host.devices.find((d) => d.id === raw.slice(0, i));
         if (!dev || dev.kind.kind !== "climate") return;
         const fanMode = raw.slice(i + 1);
+        const command: DeviceCommand = { kind: "setClimateFanMode", entityId: dev.kind.entityId, fanMode };
+        const intent: DeviceIntent = { targetId: dev.id, operation: { kind: "fanSpeed", speed: fanMode } };
+        if (
+          ManualControlPolicy.requiresConfirmation(intent, host.devices) &&
+          !confirmHighRisk(dev.id, command, `${t("风速")} ${localizeFanMode(fanMode)}`)
+        ) {
+          return;
+        }
         void host.executeSingleCommand(
           dev,
-          { kind: "setClimateFanMode", entityId: dev.kind.entityId, fanMode },
+          command,
           t("已将{name}风速设为 {speed}", { name: dev.name, speed: localizeFanMode(fanMode) }),
-          { targetId: dev.id, operation: { kind: "fanSpeed", speed: fanMode } },
+          intent,
         );
       });
     });
@@ -679,28 +699,65 @@ import { bindPanelInput } from "./panelKeyboard.js";
      * A high-risk manual write asks for one more tap on the same card within a few seconds, and
      * the arm is bound to that exact command: a different high-risk write on the same device
      * re-arms instead of spending the previous tap. The window expires so an old tap can never
-     * authorise a later write (macOS 再点一次确认).
+     * authorise a later write (macOS 再点一次确认). A control that cannot repeat its value (the
+     * climate slider) passes `explicit`, which renders one confirm button for the captured command.
      */
-    const confirmHighRisk = (deviceId: string, command: DeviceCommand, label: string): boolean => {
+    const confirmHighRisk = (
+      deviceId: string,
+      command: DeviceCommand,
+      label: string,
+      explicit?: { readonly summary: string; readonly intent: DeviceIntent },
+    ): boolean => {
       const actionKey = JSON.stringify(command);
       const armed = host.pendingHighRisk;
       if (
         armed &&
         armed.deviceId === deviceId &&
         armed.actionKey === actionKey &&
+        armed.sourceRevision === host.sourceRevision &&
         armed.expiresAtMs > Date.now()
       ) {
-        host.pendingHighRisk = null;
+        host.clearPendingHighRisk();
         return true;
       }
-      host.pendingHighRisk = { deviceId, actionKey, expiresAtMs: Date.now() + 8000 };
+      host.setPendingHighRisk({
+        deviceId,
+        actionKey,
+        expiresAtMs: Date.now() + 8000,
+        sourceRevision: host.sourceRevision,
+        ...(explicit
+          ? { confirm: { command, summary: explicit.summary, intent: explicit.intent } }
+          : {}),
+      });
       host.replyBanner = {
-        text: t("「{action}」属于高风险设备，再点一次确认执行", { action: label }),
+        text: explicit
+          ? t("「{action}」属于高风险设备，确认后执行", { action: label })
+          : t("「{action}」属于高风险设备，再点一次确认执行", { action: label }),
         source: t("需要确认"),
       };
       host.render();
       return false;
     };
+
+    host.root.querySelectorAll<HTMLElement>("[data-high-risk-confirm]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.highRiskConfirm;
+        const armed = host.pendingHighRisk;
+        if (!id || !armed?.confirm || armed.deviceId !== id) return;
+        const expired = armed.expiresAtMs <= Date.now();
+        const stale = armed.sourceRevision !== host.sourceRevision;
+        // Consume before sending: the row must disappear before the network call finishes.
+        host.clearPendingHighRisk();
+        if (expired) {
+          host.replyBanner = { text: t("确认已过期，请重新操作"), source: t("需要确认") };
+        }
+        host.render();
+        if (expired || stale) return;
+        const dev = host.devices.find((device) => device.id === id);
+        if (!dev) return;
+        void host.executeSingleCommand(dev, armed.confirm.command, armed.confirm.summary, armed.confirm.intent);
+      });
+    });
 
     /** Three `|`-separated parts, for rows whose value is itself a segment (`id|control|value`). */
     const splitChoice = (raw: string | undefined): [string, string, string] | null => {
@@ -720,21 +777,27 @@ import { bindPanelInput } from "./panelKeyboard.js";
         return;
       }
       if (host.waitingDeviceIds.has(id)) return;
-      const nextOn = !isDeviceActiveOn(dev);
-      const cmds = IntentValidator.commandsForIntent(
-        { targetId: dev.id, operation: { kind: "power", isOn: nextOn } },
-        dev,
-      );
+      // A momentary plug button only fires an activation; macOS always sends `.power(true)`,
+      // even when Home Assistant still reports the button as on (#9).
+      const isMomentaryPlug =
+        dev.kind.kind === "plug" && dev.kind.switchEntityId.startsWith("button.");
+      const nextOn = isMomentaryPlug || !isDeviceActiveOn(dev);
+      const powerIntent: DeviceIntent = { targetId: dev.id, operation: { kind: "power", isOn: nextOn } };
+      const cmds = IntentValidator.commandsForIntent(powerIntent, dev);
       const firstCmd = cmds[0];
       if (!firstCmd) return;
-      // A window opener, an airer, a garage door, a heater or a water heater asks first (#9).
-      const groupHazard =
-        (dev.kind.kind === "cover" || dev.kind.kind === "appliance") &&
-        ManualControlPolicy.requiresConfirmation(
-          { targetId: dev.id, operation: { kind: "power", isOn: nextOn } },
-          host.devices,
-        );
-      if (groupHazard && !confirmHighRisk(dev.id, firstCmd, `${nextOn ? t("打开") : t("关闭")}${dev.name}`)) return;
+      // Every manual toggle goes through the hazard table: a heater, plug, camera, vacuum or
+      // generic card asks exactly like macOS `togglePrimary`. Stopping a moving cover is the one
+      // cover de-escalation and never asks (#298, #143).
+      const stopsMovingCover =
+        dev.kind.kind === "cover" &&
+        dev.kind.motion !== "stopped" &&
+        dev.kind.pauseDescription !== null &&
+        firstCmd.kind === "setSelectOption" &&
+        firstCmd.option === dev.kind.pauseDescription;
+      const hazard =
+        !stopsMovingCover && ManualControlPolicy.requiresConfirmation(powerIntent, host.devices);
+      if (hazard && !confirmHighRisk(dev.id, firstCmd, `${nextOn ? t("打开") : t("关闭")}${dev.name}`)) return;
       host.poppedDeviceId = dev.id;
       const waitsForCloud = host.settings.connectionMode !== "demo";
       if (waitsForCloud) {
@@ -775,23 +838,9 @@ import { bindPanelInput } from "./panelKeyboard.js";
             toggleDeviceById(id);
           }
           host.cameraLive.openCameraLiveView(id);
-        } else if (k === "light" || k === "climate" || k === "fan" || k === "fridge" || k === "speaker") {
-          const canExpand =
-            k === "fridge" ||
-            (k === "speaker" && deviceAcceptsControlWrites(dev)) ||
-            k === "fan" ||
-            (dev.kind.kind === "light" &&
-              (dev.kind.brightnessWritable !== false || dev.kind.colorWritable !== false || dev.kind.availableEffects.length > 0)) ||
-            (dev.kind.kind === "climate" &&
-              (dev.kind.temperatureWritable !== false || dev.kind.availableModes.length > 0 || dev.kind.availableFanModes.length > 0));
-          if (!canExpand) return;
-          host.expandedDeviceId = host.expandedDeviceId === id ? null : id;
-          host.render();
-        } else if (
-          (k === "appliance" || k === "generic") &&
-          (deviceAcceptsControlWrites(dev) || (host.deviceFacets[id]?.length ?? 0) > 0)
-        ) {
-          // An appliance or a generic card opens its drawer from the body; its orb is the switch.
+        } else if (hasDetailDrawer(dev, host.deviceFacets[id] ?? [])) {
+          // macOS card body: after the camera special case the drawer wins, so a vacuum, plug or
+          // cover with 更多设置 rows expands instead of running its switch.
           host.expandedDeviceId = host.expandedDeviceId === id ? null : id;
           host.render();
         } else if (writable) {
@@ -861,14 +910,19 @@ import { bindPanelInput } from "./panelKeyboard.js";
         if (!id) return;
         const dev = host.devices.find((d) => d.id === id);
         if (!dev || dev.kind.kind !== "climate") return;
-        // The slider works in display units; the command carries Celsius (#52).
+        // The slider works in display units; the command carries Celsius (#52). A refusal loses
+        // the slider position on the next render, so this prompt carries the exact command.
         const temperature = Number(toCelsius(Number(slider.value)).toFixed(2));
-        void host.executeSingleCommand(
-          dev,
-          { kind: "setClimateTemperature", entityId: dev.kind.entityId, temperature },
-          t("已将{name}设为 {temp}", { name: dev.name, temp: formatTemperature(temperature) }),
-          { targetId: dev.id, operation: { kind: "targetTemperature", celsius: temperature } },
-        );
+        const command: DeviceCommand = { kind: "setClimateTemperature", entityId: dev.kind.entityId, temperature };
+        const intent: DeviceIntent = { targetId: dev.id, operation: { kind: "targetTemperature", celsius: temperature } };
+        const summary = t("已将{name}设为 {temp}", { name: dev.name, temp: formatTemperature(temperature) });
+        if (
+          ManualControlPolicy.requiresConfirmation(intent, host.devices) &&
+          !confirmHighRisk(dev.id, command, t("设为 {temp}", { temp: formatTemperature(temperature) }), { summary, intent })
+        ) {
+          return;
+        }
+        void host.executeSingleCommand(dev, command, summary, intent);
       });
     });
 
@@ -880,11 +934,19 @@ import { bindPanelInput } from "./panelKeyboard.js";
         if (!id || !hvacMode) return;
         const dev = host.devices.find((d) => d.id === id);
         if (!dev || dev.kind.kind !== "climate") return;
+        const command: DeviceCommand = { kind: "setClimateMode", entityId: dev.kind.entityId, hvacMode };
+        const intent: DeviceIntent = { targetId: dev.id, operation: { kind: "hvacMode", mode: hvacMode } };
+        if (
+          ManualControlPolicy.requiresConfirmation(intent, host.devices) &&
+          !confirmHighRisk(dev.id, command, t("切换到{mode}", { mode: localizeHvacMode(hvacMode) }))
+        ) {
+          return;
+        }
         void host.executeSingleCommand(
           dev,
-          { kind: "setClimateMode", entityId: dev.kind.entityId, hvacMode },
+          command,
           t("已切换{name}模式", { name: dev.name }),
-          { targetId: dev.id, operation: { kind: "hvacMode", mode: hvacMode } },
+          intent,
         );
       });
     });
@@ -1181,6 +1243,39 @@ import { bindPanelInput } from "./panelKeyboard.js";
             : action.kind === "pause"
               ? t("已暂停{name}", { name: dev.name })
               : t("已停止{name}", { name: dev.name }),
+        );
+      });
+    });
+
+    host.root.querySelectorAll<HTMLElement>("[data-vacuumaction]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const pair = splitControlId(btn.dataset.vacuumaction);
+        if (!pair) return;
+        const [id, action] = pair;
+        if (action !== "start" && action !== "pause" && action !== "returnToBase") return;
+        const dev = host.devices.find((d) => d.id === id);
+        if (!dev || dev.kind.kind !== "vacuum") return;
+        const command: DeviceCommand = { kind: "vacuumAction", entityId: dev.kind.entityId, action };
+        // macOS `performVacuumAction`: starting is the hazardous direction, pausing and docking
+        // wind it down. Stopping a moving vacuum never fights a dialog.
+        const intent: DeviceIntent = {
+          targetId: dev.id,
+          operation: { kind: "power", isOn: action === "start" },
+        };
+        if (
+          ManualControlPolicy.requiresConfirmation(intent, host.devices) &&
+          !confirmHighRisk(dev.id, command, t("开始清扫"))
+        ) {
+          return;
+        }
+        void host.executeSingleCommand(
+          dev,
+          command,
+          action === "start"
+            ? t("已开始清扫{name}", { name: dev.name })
+            : action === "pause"
+              ? t("已暂停{name}", { name: dev.name })
+              : t("已回充{name}", { name: dev.name }),
         );
       });
     });

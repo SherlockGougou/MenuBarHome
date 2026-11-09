@@ -12,7 +12,7 @@ import { homeAssistantIdentity } from "../core/homeAssistant.js";
 import { normalizeMiCloudRegion } from "../core/miCloudClient.js";
 import { joinsAllOffByDefault, type AssistantSuggestion, type EnvironmentReading, type FacetControl, type HomeScene, type SmartDevice } from "../core/models.js";
 import { withAliases, type HomeOption, type LayoutPrefs } from "./panelPrefs.js";
-import type { ConnectionMode, PersistedSettings, ReplyBannerState } from "./appTypes.js";
+import type { ConnectionMode, PendingHighRiskConfirmation, PersistedSettings, ReplyBannerState } from "./appTypes.js";
 import { demoDevices, demoScenes } from "./demo.js";
 import { invokeTauriVoid } from "./transport.js";
 
@@ -31,11 +31,8 @@ export interface SettingsEventsHost {
   /** 更多设置 rows from the latest snapshot; a backend switch drops them (#5). */
   deviceFacets: Readonly<Record<string, readonly FacetControl[]>>;
   /** A high-risk write armed by its first tap; a backend switch disarms it. */
-  pendingHighRisk: {
-    readonly deviceId: string;
-    readonly actionKey: string;
-    readonly expiresAtMs: number;
-  } | null;
+  pendingHighRisk: PendingHighRiskConfirmation | null;
+  clearPendingHighRisk(): void;
   groupOwnerByMemberDid: Map<string, string>;
   hotkeyNeedsHint: boolean;
   isRecordingHotkey: boolean;
@@ -168,7 +165,7 @@ export function bindSettingsEvents(host: SettingsEventsHost): void {
         host.groupOwnerByMemberDid = new Map();
         host.deviceFacets = {};
         // An armed high-risk write belongs to the backend it was armed on.
-        host.pendingHighRisk = null;
+        host.clearPendingHighRisk();
         host.replyBanner = null;
         host.settings.connectionMode = mode;
         if (mode !== "xiaomiCloud") host.cloudValuesStale = false;
