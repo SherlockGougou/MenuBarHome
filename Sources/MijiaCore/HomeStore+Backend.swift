@@ -1108,4 +1108,154 @@ extension HomeStore {
     public func dismissMiReauth() {
         isShowingMiReauth = false
     }
+
+    /// The one connection verdict the footer, the settings badge and the menu-bar tooltip share.
+    public var panelHealth: PanelHealth {
+        PanelHealthResolver.resolve(PanelHealthInput(
+            isDemo: homeBackend == .demo,
+            hasHASource: hasHASource,
+            hasMiSource: hasMiSource,
+            miSessionBlocksControl: miSessionBlocksControl,
+            miSessionShowsExpired: miSessionShowsExpired,
+            haPlaintextDeclined: {
+                if case .declined = haPlaintextPrompt { return true }
+                return false
+            }(),
+            haStatus: sourceStatuses[.homeAssistant]
+                ?? (connectedBackends.contains(.homeAssistant) ? .connected : .connecting),
+            anotherMiAccountSignedIn: miAccounts.contains { account in
+                account.session.expiryState(at: Date()) != .expired
+            },
+            deviceValuesAreStale: deviceValuesAreStale,
+            connectionStatus: connectionStatus
+        ))
+    }
+}
+
+/// What the user can do from a blocked connection label or an error toast.
+public enum PanelHealthAction: Equatable, Sendable {
+    case presentMiReauth
+    case openConnectionSettings
+}
+
+/// Connection health for every status surface. Derived, never stored.
+public enum PanelHealth: Equatable, Sendable {
+    case ok
+    case connecting
+    case degraded(reason: String)
+    case blocked(reason: String, action: PanelHealthAction)
+    case notConfigured
+}
+
+struct PanelHealthInput: Equatable, Sendable {
+    var isDemo: Bool
+    var hasHASource: Bool
+    var hasMiSource: Bool
+    var miSessionBlocksControl: Bool
+    var miSessionShowsExpired: Bool
+    var haPlaintextDeclined: Bool
+    /// Home Assistant's own connection state, not the merged aggregate: one healthy Mi account can
+    /// keep the aggregate `.connected` while HA is offline.
+    var haStatus: ConnectionStatus
+    var anotherMiAccountSignedIn: Bool
+    var deviceValuesAreStale: Bool
+    var connectionStatus: ConnectionStatus
+}
+
+/// Priority is the thing the user must deal with first.
+/// A blocked Mi login hides a declined Home Assistant address, and a declined address hides
+/// "nothing configured", because each of those has its own recovery.
+enum PanelHealthResolver {
+    static func resolve(_ input: PanelHealthInput) -> PanelHealth {
+        if input.miSessionBlocksControl {
+            return .blocked(
+                reason: L10n.tr("米家登录已过期 · 点此扫码", "Xiaomi Home session expired · Scan to sign in"),
+                action: .presentMiReauth
+            )
+        }
+        if input.haPlaintextDeclined {
+            let reason = L10n.tr(
+                "Home Assistant 未连接（已拒绝明文）",
+                "Home Assistant is not connected (plaintext declined)"
+            )
+            // Another signed-in Mi account is a working source even when one account expired;
+            // `miSessionShowsExpired` covers any account, so it must not stand in for "all dead".
+            let miStillWorks = input.hasMiSource && input.anotherMiAccountSignedIn && !input.isDemo
+            if miStillWorks {
+                return .degraded(reason: reason)
+            }
+            return .blocked(reason: reason, action: .openConnectionSettings)
+        }
+        if input.isDemo {
+            return .ok
+        }
+        if !input.hasHASource && !input.hasMiSource {
+            return .notConfigured
+        }
+        if input.miSessionShowsExpired, input.hasHASource,
+           case .connected = input.connectionStatus, case .connected = input.haStatus {
+            return .degraded(reason: L10n.tr(
+                "米家登录已过期，Home Assistant 仍可用",
+                "Xiaomi Home session expired. Home Assistant still works"
+            ))
+        }
+        if input.miSessionShowsExpired, input.anotherMiAccountSignedIn {
+            return .degraded(reason: L10n.tr(
+                "有米家账号已过期，其他账号仍保持登录",
+                "A Xiaomi Home account expired. Another account is still signed in."
+            ))
+        }
+        if input.deviceValuesAreStale, case .connected = input.connectionStatus {
+            return .degraded(reason: L10n.tr("设备状态可能过期", "Device states may be out of date"))
+        }
+        switch input.connectionStatus {
+        case .connecting:
+            return .connecting
+        case .disconnected(let reason):
+            let text = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+            let label = text.isEmpty
+                ? L10n.tr("未连接", "Disconnected")
+                : L10n.tr("未连接：\(text)", "Disconnected: \(text)")
+            return .blocked(reason: label, action: .openConnectionSettings)
+        case .connected:
+            return .ok
+        }
+    }
+}
+
+public struct AllOffHeaderCopy: Equatable, Sendable {
+    public var title: String
+    public var helper: String?
+    public var tooltip: String
+
+    public static func make(
+        activeDeviceCount: Int,
+        targetNames: [String],
+        scopeName: String?,
+        excludedIncludesPlug: Bool
+    ) -> AllOffHeaderCopy {
+        let count = targetNames.count
+        let title: String
+        if let scopeName, !scopeName.isEmpty {
+            title = L10n.tr("全关 \(scopeName) \(count) 台", "All Off \(count) in \(scopeName)")
+        } else {
+            title = L10n.tr("全关 \(count) 台", "All Off \(count)")
+        }
+        let excluded = activeDeviceCount - count
+        let helper: String?
+        if excluded > 0, excludedIncludesPlug {
+            helper = L10n.tr("全关不含插座等 \(excluded) 台", "All Off leaves out \(excluded), including plugs")
+        } else if excluded > 0 {
+            helper = L10n.tr("全关不含这 \(excluded) 台", "All Off leaves out \(excluded)")
+        } else {
+            helper = nil
+        }
+        let shown = targetNames.prefix(5)
+        let list = shown.joined(separator: L10n.tr("、", ", "))
+        let more = targetNames.count > 5 ? L10n.tr(" 等", "…") : ""
+        let tooltip = list.isEmpty
+            ? L10n.tr("按住 0.6 秒关闭这 \(count) 台", "Hold 0.6s to turn off these \(count)")
+            : L10n.tr("按住 0.6 秒关闭：\(list)\(more)", "Hold 0.6s to turn off: \(list)\(more)")
+        return AllOffHeaderCopy(title: title, helper: helper, tooltip: tooltip)
+    }
 }

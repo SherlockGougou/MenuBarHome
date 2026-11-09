@@ -17,8 +17,50 @@ extension HomeStore {
 
     // MARK: - Primary Toggle & Manual Light Memory
 
+    /// Copy for the persistent expired-session toast and for external callers reporting it.
+    public nonisolated static var miSessionBlockedMessage: String {
+        L10n.tr("米家登录已过期", "Xiaomi Home session expired")
+    }
+
+    /// Shows the persistent expiry toast and returns true when the write must be refused.
+    /// `needsMi` is false for a command the LAN LG client answers, which needs no Mi session.
+    @discardableResult
+    func rejectWritesBlockedByMiSession(needsMi: Bool = true) -> Bool {
+        guard needsMi, miSessionBlocksControl else { return false }
+        showSessionExpiryToast()
+        return true
+    }
+
+    /// True when a primary toggle of this row would be sent over the Mi provider, so the expired
+    /// session refuses it. Mirrors the gate at the top of `togglePrimary`.
+    public func primaryToggleNeedsMiSession(_ device: SmartDevice) -> Bool {
+        !lgClientServes(device)
+    }
+
+    /// The external error for a failed toggle. The session refusal is decided by the session and
+    /// the command's route, not by which toast happens to be on screen: the prompt can be suspended
+    /// behind an earlier result, and a second blocked tap creates no new toast.
+    public func primaryToggleFailureMessage(_ fallback: String, for device: SmartDevice) -> String {
+        if miSessionBlocksControl, primaryToggleNeedsMiSession(device) {
+            return Self.miSessionBlockedMessage
+        }
+        return fallback
+    }
+
+    /// The persistent prompt that carries the only way back into the blocked account.
+    func showSessionExpiryToast() {
+        showToast(
+            Self.miSessionBlockedMessage,
+            isError: true,
+            action: ToastAction(title: L10n.tr("扫码", "Scan"), kind: .presentMiReauth),
+            persistent: true
+        )
+    }
+
     @discardableResult
     public func togglePrimary(_ device: SmartDevice) -> Task<Bool, Never>? {
+        // A tap on an LG TV is answered over the LAN, so the expired Mi session does not refuse it.
+        guard !rejectWritesBlockedByMiSession(needsMi: !lgClientServes(device)) else { return nil }
         guard device.isOnline else {
             showToast(L10n.tr("\(device.name) 当前离线（可能断电）", "\(device.name) is offline (unplugged)"), isError: true)
             return nil
@@ -1058,6 +1100,7 @@ extension HomeStore {
     }
 
     public func sendSpeakerText(_ deviceId: String, text: String, asDirective: Bool) {
+        guard !rejectWritesBlockedByMiSession() else { return }
         guard !rejectControlWhileLocked() else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
@@ -1085,6 +1128,7 @@ extension HomeStore {
     }
 
     public func pressDeviceButton(_ buttonEntityId: String, label: String) {
+        guard !rejectWritesBlockedByMiSession() else { return }
         guard !rejectControlWhileLocked() else { return }
         Task {
             do {

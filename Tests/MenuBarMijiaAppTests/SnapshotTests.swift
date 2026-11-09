@@ -15,6 +15,21 @@ import AppKit
 /// against them; on a mismatch the new bitmap is written under `$SNAPSHOT_ARTIFACTS`/SnapshotTests
 /// (or `$TMPDIR/SnapshotTests`) and the diff command is printed in the failure message.
 ///
+/// Snapshot-only PTZ client: the stop-warning banner's retry button is driven by an unresolved
+/// stop attempt, so the rendering must not depend on a network bridge.
+private struct SnapshotPTZClient: CameraPTZControlling {
+    func begin() async throws -> (token: CameraPTZSessionToken, mode: CameraPTZMotionMode?) {
+        throw CameraPTZClientError.notConfigured
+    }
+
+    func move(direction: CameraPTZDirection, token: CameraPTZSessionToken, seq: UInt64) async throws {}
+    func heartbeat(token: CameraPTZSessionToken, seq: UInt64) async throws {}
+
+    func stop(token: CameraPTZSessionToken) async throws -> CameraPTZStopResult {
+        CameraPTZStopResult(sent: true)
+    }
+}
+
 /// The renderer is fed fixed demo data and the accessibility "reduce motion" / "reduce transparency"
 /// switches, so animations and materials cannot make two runs differ. The suite is serialized
 /// because it changes `UserDefaults.standard` (the panel reads skin/appearance through
@@ -35,10 +50,26 @@ struct SnapshotTests {
 
         UserDefaults.standard.set(AppAppearance.system.rawValue, forKey: AppAppearance.storageKey)
 
+        #expect(fixture.store.panelHealth == .ok)
         assertRendered(
             snapshotReady(ControlCenterPanel(store: fixture.store)),
             size: CGSize(width: 376, height: 560),
             named: "panel-zh-light"
+        )
+    }
+
+    @Test("A panel with no configured source names that instead of connected")
+    func panelNoSourceSnapshot() async throws {
+        let fixture = try await SnapshotFixture(configuredHASource: false)
+        defer { fixture.restore() }
+
+        UserDefaults.standard.set(AppAppearance.system.rawValue, forKey: AppAppearance.storageKey)
+        #expect(fixture.store.panelHealth == .notConfigured)
+
+        assertRendered(
+            snapshotReady(ControlCenterPanel(store: fixture.store)),
+            size: CGSize(width: 376, height: 560),
+            named: "panel-no-source-zh-light"
         )
     }
 
@@ -51,7 +82,8 @@ struct SnapshotTests {
                 ssecurity: "c2VjcmV0",
                 serviceToken: "tok",
                 expiresAt: Date(timeIntervalSince1970: 1_700_000_000)
-            )
+            ),
+            configuredHASource: false
         )
         defer { fixture.restore() }
 
@@ -61,6 +93,34 @@ struct SnapshotTests {
             snapshotReady(ControlCenterPanel(store: fixture.store)),
             size: CGSize(width: 376, height: 560),
             named: "panel-mi-session-expired-zh-light"
+        )
+    }
+
+    @Test("Panel shows the persistent expired-session toast with its Scan action and close button")
+    func panelExpiredMiSessionToastSnapshot() async throws {
+        let fixture = try await SnapshotFixture(
+            miSession: MiSession(
+                userId: "42",
+                cUserId: "c",
+                ssecurity: "c2VjcmV0",
+                serviceToken: "tok",
+                expiresAt: Date(timeIntervalSince1970: 1_700_000_000)
+            ),
+            configuredHASource: false
+        )
+        defer { fixture.restore() }
+
+        UserDefaults.standard.set(AppAppearance.system.rawValue, forKey: AppAppearance.storageKey)
+        #expect(fixture.store.miSessionBlocksControl)
+        let device = try #require(fixture.store.devices.first { $0.isPrimaryToggleable })
+        #expect(fixture.store.togglePrimary(device) == nil)
+        #expect(fixture.store.toastNotice?.persistent == true)
+        #expect(fixture.store.toastNotice?.action == ToastAction(title: "扫码", kind: .presentMiReauth))
+
+        assertRendered(
+            snapshotReady(ControlCenterPanel(store: fixture.store)),
+            size: CGSize(width: 376, height: 560),
+            named: "panel-mi-session-expired-toast-zh-light"
         )
     }
 
@@ -970,7 +1030,7 @@ struct SnapshotTests {
 
     @Test("Settings remain readable in light and dark appearances")
     func settingsSnapshots() async throws {
-        let fixture = try await SnapshotFixture()
+        let fixture = try await SnapshotFixture(configuredHASource: false)
         defer { fixture.restore() }
         for tab in [SettingsTab.general, .connection, .assistant, .appearance, .privacy, .about] {
             for scheme in [ColorScheme.light, .dark] {
@@ -989,7 +1049,7 @@ struct SnapshotTests {
 
     @Test("Settings capsule fits English at minimum window size with glass enabled")
     func settingsCapsuleVariants() async throws {
-        let fixture = try await SnapshotFixture()
+        let fixture = try await SnapshotFixture(configuredHASource: false)
         defer { fixture.restore() }
         for language in [AppLanguage.zhHans, .en] {
             L10n.currentLanguage = language
@@ -1010,7 +1070,7 @@ struct SnapshotTests {
 
     @Test("Settings stay proportional in wide windows and with motion enabled")
     func settingsWideWindows() async throws {
-        let fixture = try await SnapshotFixture()
+        let fixture = try await SnapshotFixture(configuredHASource: false)
         defer { fixture.restore() }
         for width: CGFloat in [900, 1200] {
             for scheme in [ColorScheme.light, .dark] {
@@ -1050,6 +1110,46 @@ struct SnapshotTests {
                 scheme: scheme
             )
         }
+    }
+
+    @Test("Expanded plug shows the child-lock label")
+    func expandedPlugChildLockSnapshot() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+        let spec = PlugSpec(
+            switchEntityId: "miot:snapshot-plug:2", isOn: true, powerWatts: 12,
+            childLockEntityId: "miot:snapshot-plug:7", isChildLocked: true
+        )
+        let device = SmartDevice(
+            id: "snapshot-plug-lock", name: "客厅插座", roomId: "living", roomName: "客厅",
+            model: "cuco.plug.v3", isOnline: true, kind: .plug(spec)
+        )
+        fixture.store.expandedDeviceId = device.id
+        assertRendered(
+            snapshotReady(DeviceCardView(device: device, store: fixture.store, showRoomBadge: true).padding(8).frame(width: 360)),
+            size: CGSize(width: 376, height: 260),
+            named: "expanded-plug-childlock-zh-light"
+        )
+    }
+
+    @Test("About shows rendered release notes instead of raw markdown")
+    func settingsAboutNotesSnapshot() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+        let notes = "### 亮点\n- **bold** [#9](https://github.com/jryang2026-code/MenuBarHome/issues/9)：说明\n- **two**"
+        fixture.store.updateState = .available(AppRelease(
+            version: "9.9.9",
+            pageURL: URL(string: "https://github.com/jryang2026-code/MenuBarHome/releases/tag/v9.9.9")!,
+            notes: notes
+        ))
+        assertRendered(
+            SettingsWindowView(store: fixture.store, selectedTab: .about)
+                .environment(\.colorScheme, .light)
+                .environment(\.reduceMotionOverride, true)
+                .environment(\.reduceTransparencyOverride, true),
+            size: CGSize(width: 780, height: 680),
+            named: "settings-about-notes-zh-light"
+        )
     }
 
     // MARK: - Non-visual guards for the appearance work (#51) and tooltip (#54)
@@ -1171,6 +1271,12 @@ struct SnapshotTests {
             notice: "停止指令写入失败，云台可能仍在转动",
             ready: true
         )
+        controller.ptzUnresolvedStops = [CameraPTZStopAttempt(
+            token: CameraPTZSessionToken(epoch: "snapshot", session: 1),
+            deviceId: camera.id,
+            lifecycleID: controller.ptzLifecycleID,
+            client: SnapshotPTZClient()
+        )]
         defer { controller.configurePTZPreview(deviceId: nil, binding: nil, stream: nil, notice: nil, ready: false) }
 
         assertRendered(
@@ -1209,21 +1315,34 @@ struct SnapshotTests {
         )
     }
 
-    @Test("Camera control dropdown shows the selected option")
-    func cameraControlMenuSnapshot() async throws {
-        let options = [
-            CameraControlMenuOption(id: "main", title: "主镜头", isSelected: true),
-            CameraControlMenuOption(id: "secondary", title: "第二镜头", isSelected: false),
-        ]
+    @Test("The video-only explanation appears inside the live picture")
+    func cameraVideoOnlyNoticeSnapshot() async throws {
+        let fixture = try await SnapshotFixture(includeCamera: true)
+        defer { fixture.restore() }
+        let camera = try #require(fixture.store.devices.first { device in
+            if case .camera = device.kind { return true } else { return false }
+        })
+        let controller = CameraLivePanelController.shared
+        controller.isExpandedSize = true
+        controller.configurePTZPreview(
+            store: fixture.store,
+            deviceId: camera.id,
+            binding: nil,
+            stream: .demo(deviceId: camera.id),
+            notice: nil,
+            ready: false
+        )
+        controller.showVideoOnlyNotice()
+        defer {
+            controller.videoOnlyNoticeTask?.cancel()
+            controller.videoOnlyNotice = nil
+            controller.configurePTZPreview(deviceId: nil, binding: nil, stream: nil, notice: nil, ready: false)
+        }
+
         assertRendered(
-            snapshotReady(
-                CameraControlMenuList(options: options) { _ in }
-                    .padding(10)
-                    .background(Color(red: 0.05, green: 0.07, blue: 0.11)),
-                scheme: .dark
-            ),
-            size: CGSize(width: 180, height: 100),
-            named: "camera-control-menu-dark",
+            snapshotReady(CameraLivePanelView(controller: controller, store: fixture.store), scheme: .dark),
+            size: CGSize(width: CameraLivePanelController.expandedSize.width, height: CameraLivePanelController.expandedSize.height),
+            named: "camera-video-only-notice-dark",
             scheme: .dark
         )
     }
@@ -1346,7 +1465,8 @@ private struct SnapshotFixture {
         roomCount: Int? = nil,
         editMode: PanelEditMode = .none,
         includeCamera: Bool = false,
-        includeDualLensCamera: Bool = false
+        includeDualLensCamera: Bool = false,
+        configuredHASource: Bool = true
     ) async throws {
         previousLanguage = L10n.currentLanguage
         L10n.currentLanguage = .zhHans
@@ -1398,6 +1518,9 @@ private struct SnapshotFixture {
             attempts += 1
         }
         #expect(!store.devices.isEmpty, "MockHomeProvider should deliver a snapshot right away")
+        if configuredHASource {
+            store.hasHASource = true
+        }
 
         if editMode == .roomOrder {
             LayoutUIState.shared.beginRoomOrder(

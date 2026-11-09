@@ -1046,6 +1046,30 @@ struct MenuBarPanelControllerTests {
         #expect(controller.panelWindow === panel, "the window is reused, not recreated")
     }
 
+    @Test("Scanning from the Settings toast opens the panel that owns the QR view")
+    func settingsToastScanRevealsPanel() async throws {
+        let (store, suite) = try await makeExpiredMiSessionStore()
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let controller = makeController(store: store)
+        defer { controller.uninstall() }
+
+        let previousReveal = ToastNoticeActions.revealPanel
+        ToastNoticeActions.revealPanel = { controller.showPanel() }
+        defer { ToastNoticeActions.revealPanel = previousReveal }
+
+        store.dismissMiReauth()
+        ToastNoticeActions.perform(
+            ToastAction(title: "扫码", kind: .presentMiReauth),
+            store: store
+        )
+
+        #expect(store.isShowingMiReauth)
+        #expect(controller.isPanelVisible)
+        let panel = try #require(controller.panelWindow)
+        let hosting = try #require(panel.contentView as? NSHostingView<ControlCenterPanel>)
+        #expect(hosting.rootView.store.isShowingMiReauth)
+    }
+
     @Test("Toggle switches between visible and hidden while preserving the same SwiftUI tree")
     func toggleCyclesVisibility() async throws {
         let (store, suite) = try await makeStore()
@@ -1971,8 +1995,40 @@ struct MenuBarPanelControllerTests {
 
         store.openCameraLiveView(camera.id)
         cameraController.showVideoOnlyNotice()
-        let notice = try #require(store.toastNotice)
-        #expect(notice.message.contains("没有音轨"))
+        let notice = try #require(cameraController.videoOnlyNotice)
+        #expect(notice.contains("没有音轨"))
+    }
+
+    @Test("Camera maximize fills the screen and restores the previous frame")
+    func cameraLivePanelMaximizeAndRestore() async throws {
+        _ = NSApplication.shared
+        let (store, suite) = try await makeStore()
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let camera = try #require(store.devices.first(where: {
+            if case .camera = $0.kind { return true }
+            return false
+        }))
+
+        let cameraController = CameraLivePanelController.shared
+        cameraController.presentsActively = false
+        cameraController.install(with: store)
+        defer {
+            cameraController.closePanel()
+            cameraController.presentsActively = true
+        }
+
+        store.openCameraLiveView(camera.id)
+        let panel = try #require(cameraController.panelWindow)
+        let screen = try #require(panel.screen ?? NSScreen.main)
+        let original = panel.frame
+
+        cameraController.toggleMaximized()
+        #expect(cameraController.isMaximized)
+        #expect(panel.frame == screen.visibleFrame)
+
+        cameraController.toggleMaximized()
+        #expect(!cameraController.isMaximized)
+        #expect(panel.frame == original)
     }
 
     @Test("Closing the camera mini-window hides it at once and releases the stream")
