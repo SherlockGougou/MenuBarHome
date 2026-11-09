@@ -116,6 +116,10 @@ extension HomeStore {
             }
         }
         pushPollingContext()
+        // The provider swap has taken effect here, which is the only point where the new connection
+        // scope is final. `invalidateUndoContext()` runs before `homeBackend` and the sessions change,
+        // so it cannot decide which source now owns the timers.
+        syncScheduledCommandScopeIfNeeded()
     }
 
     public func waitForInitialSnapshot(timeout: Duration = .seconds(4)) async throws {
@@ -403,29 +407,32 @@ extension HomeStore {
         rawDeviceNames[deviceId] ?? devices.first(where: { $0.id == deviceId })?.name
     }
 
+    /// Identifies the connected home source: `demo`, `ha:<url>` or `mi:<scope>`. Sensor history and
+    /// scheduled commands are partitioned by it so one home's data never lands in another's. Nil while
+    /// a live source has no resolved session (signed out), so nothing may be armed or adopted on it.
+    /// Dual-source and multi-account setups share one scope (Home Assistant wins, Mi uses its session):
+    /// a timer set there is held back through the missed flow when its target is absent, never sent to
+    /// another home's device (ADR-0019).
+    public var connectionScopeIdentifier: String? {
+        if homeBackend == .demo { return "demo" }
+        if hasHASource {
+            return "ha:\(HAWebSocketProvider.canonicalHistoryScopeURL(serverURLString))"
+        }
+        if hasMiSource { return miSessionScopeIdentifier }
+        switch homeBackend {
+        case .demo:
+            return "demo"
+        case .homeAssistant:
+            return "ha:\(HAWebSocketProvider.canonicalHistoryScopeURL(serverURLString))"
+        case .xiaomiCloud:
+            return miSessionScopeIdentifier
+        }
+    }
+
     /// Updates `sensorHistory.connectionScope` so sensors on different Home Assistant servers,
     /// Xiaomi Cloud accounts, or Demo mode never share or overwrite each other's time series.
     func syncSensorHistoryScope() {
-        let scope: String
-        if homeBackend == .demo {
-            scope = "demo"
-        } else if hasHASource {
-            let normalized = HAWebSocketProvider.canonicalHistoryScopeURL(serverURLString)
-            scope = "ha:\(normalized)"
-        } else if hasMiSource {
-            scope = miSessionScopeIdentifier ?? "mi:signed-out"
-        } else {
-            switch homeBackend {
-            case .demo:
-                scope = "demo"
-            case .homeAssistant:
-                let normalized = HAWebSocketProvider.canonicalHistoryScopeURL(serverURLString)
-                scope = "ha:\(normalized)"
-            case .xiaomiCloud:
-                scope = miSessionScopeIdentifier ?? "mi:signed-out"
-            }
-        }
-        sensorHistory.setConnectionScope(scope)
+        sensorHistory.setConnectionScope(connectionScopeIdentifier ?? "mi:signed-out")
     }
 
     /// Triggers an on-demand provider fetch for `deviceId`'s historical readings when due.

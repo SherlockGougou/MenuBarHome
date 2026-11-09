@@ -514,7 +514,7 @@ extension HomeStore {
                 reply: last.reply,
                 restore: outcome.failedCommands,
                 previous: last.previous.filter { outcome.failedDeviceIds.contains($0.id) },
-                at: Date(),
+                at: assistantNow(),
                 habitReceipt: outcome.habitReceipt
             )
         }
@@ -526,12 +526,22 @@ extension HomeStore {
     // MARK: - Scheduled Commands
 
     private func schedule(_ plan: IntentPlan, after delay: TimeInterval) -> IntentPlan {
+        guard let scope = connectionScopeIdentifier else {
+            let message = L10n.tr(
+                "数据源尚未就绪，定时任务未创建",
+                "The home source is not ready; the timer was not created"
+            )
+            showToast(message, isError: true)
+            setAssistantState(.failed(message))
+            return plan
+        }
         var action = IntentReply.describe(plan.intents, devices: devices, scenes: scenes)
         if action.hasPrefix("已") { action.removeFirst() }
         let entry = ScheduledCommand(
             reply: DelayPhrase.describe(delay) + action,
-            fireDate: Date().addingTimeInterval(delay),
-            plan: plan
+            fireDate: assistantNow().addingTimeInterval(delay),
+            plan: plan,
+            sourceScope: scope
         )
         scheduledCommands.append(entry)
         scheduledCommands.sort { $0.fireDate < $1.fireDate }
@@ -543,34 +553,92 @@ extension HomeStore {
         return reply
     }
 
+    /// Saves every source's timers. Only the current source's arrays are shown, so writing just those
+    /// would delete the other source's timers on the next save (ADR-0019).
     private func persistAllScheduledCommands() {
-        ScheduledCommand.save(scheduledCommands + missedScheduledCommands, to: userDefaults)
+        let all = scheduledCommands + missedScheduledCommands + foreignScheduledCommands
+        ScheduledCommand.save(all.sorted { $0.fireDate < $1.fireDate }, to: userDefaults)
+    }
+
+    /// Re-partitions timers after the connected source changed. Called from `startListening()`, where
+    /// the new provider is already in place; re-arming from persisted data is the existing restore path.
+    func syncScheduledCommandScopeIfNeeded() {
+        guard scheduledCommandsScope != connectionScopeIdentifier else { return }
+        restoreScheduledCommands()
     }
 
     private func startScheduledTask(for entry: ScheduledCommand, delay: TimeInterval) {
         scheduledTasks[entry.id]?.cancel()
         let sleep = assistantSleep
         let waitSeconds = max(0, delay)
+        // Identifies this run so a task re-armed for the same entry (source A → B → A) keeps its handle.
+        let token = UUID()
+        scheduledTaskTokens[entry.id] = token
         scheduledTasks[entry.id] = Task { [weak self] in
             do { try await sleep(.seconds(waitSeconds)) } catch { return }
             guard let self, !Task.isCancelled else { return }
+            // A source switch while this timer slept re-partitions the lists elsewhere; the timer must
+            // not run against whatever home happens to be connected now.
+            guard self.timerScopeMatches(entry) else {
+                self.finishScheduledTask(entry.id, token: token)
+                return
+            }
             // Task.sleep keeps counting while the Mac sleeps, so after a closed lid it returns the moment
             // the Mac wakes. A timer that is more than a minute late is not run silently (#22).
             if self.assistantNow().timeIntervalSince(entry.fireDate) > Self.lateTimerGrace {
-                self.moveToMissed(entry)
+                self.moveToMissed(entry, taskToken: token)
                 return
             }
             await self.waitForInitialSnapshotIfNeeded()
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                self.finishScheduledTask(entry.id, token: token)
+                return
+            }
+            guard self.timerScopeMatches(entry) else {
+                self.finishScheduledTask(entry.id, token: token)
+                return
+            }
+            // Selecting another Mi Home keeps the connection scope but swaps the device list; a target
+            // that is no longer here must wait for confirmation instead of running into nothing.
+            guard self.missingPlanTargets(entry.plan).isEmpty else {
+                self.moveToMissed(entry, taskToken: token)
+                return
+            }
             _ = await self.executeIntentPlan(entry.plan, recordedUtterance: nil, origin: .scheduled)
+            // A switch during execution may have moved the entry to another partition; drop it from
+            // all of them so a consumed timer cannot reappear after switching back.
             self.scheduledCommands.removeAll { $0.id == entry.id }
-            self.scheduledTasks[entry.id] = nil
+            self.missedScheduledCommands.removeAll { $0.id == entry.id }
+            self.foreignScheduledCommands.removeAll { $0.id == entry.id }
+            self.finishScheduledTask(entry.id, token: token)
             self.persistAllScheduledCommands()
         }
     }
 
-    private func moveToMissed(_ entry: ScheduledCommand) {
-        scheduledTasks[entry.id] = nil
+    private func timerScopeMatches(_ entry: ScheduledCommand) -> Bool {
+        guard let entryScope = entry.sourceScope, let scope = connectionScopeIdentifier else { return false }
+        return entryScope == scope
+    }
+
+    /// Plan targets that are in neither the current device list nor the current scenes. A plan with no
+    /// device targets (empty intents) has none, so it is never misrouted into the missed flow.
+    private func missingPlanTargets(_ plan: IntentPlan) -> [String] {
+        plan.intents.compactMap { intent in
+            if devices.contains(where: { $0.id == intent.targetId }) { return nil }
+            if scenes.contains(where: { $0.id == intent.targetId }) { return nil }
+            return intent.targetId
+        }
+    }
+
+    /// Clears the task handle only when it still belongs to the run that just finished.
+    private func finishScheduledTask(_ id: UUID, token: UUID) {
+        guard scheduledTaskTokens[id] == token else { return }
+        scheduledTasks[id] = nil
+        scheduledTaskTokens[id] = nil
+    }
+
+    private func moveToMissed(_ entry: ScheduledCommand, taskToken: UUID) {
+        finishScheduledTask(entry.id, token: taskToken)
         scheduledCommands.removeAll { $0.id == entry.id }
         if !missedScheduledCommands.contains(where: { $0.id == entry.id }) {
             missedScheduledCommands.append(entry)
@@ -589,22 +657,41 @@ extension HomeStore {
     /// Restores persisted timers on launch. Future timers resume their countdown; expired timers move to
     /// `missedScheduledCommands` so an overdue heater or light timer never fires silently hours later.
     /// Timers the Mac sleeps through take the same path when they wake up late (see `startScheduledTask`).
-    public func restoreScheduledCommands(now: Date = Date()) {
+    /// Only the current connection scope's timers are armed or shown; the other sources' entries stay
+    /// persisted (ADR-0019). Legacy entries with no scope are adopted here, once, when a source is known.
+    public func restoreScheduledCommands(now: Date? = nil) {
         for task in scheduledTasks.values {
             task.cancel()
         }
         scheduledTasks.removeAll()
+        scheduledTaskTokens.removeAll()
+        let now = now ?? assistantNow()
+
+        let scope = connectionScopeIdentifier
+        scheduledCommandsScope = scope
 
         let persisted = ScheduledCommand.load(from: userDefaults)
         guard !persisted.isEmpty else {
             scheduledCommands = []
             missedScheduledCommands = []
+            foreignScheduledCommands = []
             return
         }
 
         var upcoming: [ScheduledCommand] = []
         var missed: [ScheduledCommand] = []
-        for entry in persisted {
+        var foreign: [ScheduledCommand] = []
+        for stored in persisted {
+            let entry: ScheduledCommand
+            if stored.sourceScope == nil, let scope {
+                entry = stored.adoptingScope(scope)
+            } else {
+                entry = stored
+            }
+            guard let entryScope = entry.sourceScope, entryScope == scope else {
+                foreign.append(entry)
+                continue
+            }
             if entry.fireDate > now {
                 upcoming.append(entry)
             } else {
@@ -617,10 +704,10 @@ extension HomeStore {
             startScheduledTask(for: entry, delay: entry.fireDate.timeIntervalSince(now))
         }
 
-        if !missed.isEmpty {
-            for entry in missed where !missedScheduledCommands.contains(where: { $0.id == entry.id }) {
-                missedScheduledCommands.append(entry)
-            }
+        missedScheduledCommands = missed.sorted { $0.fireDate < $1.fireDate }
+        foreignScheduledCommands = foreign.sorted { $0.fireDate < $1.fireDate }
+
+        if !missedScheduledCommands.isEmpty {
             isShowingAssistantBar = true
             notifyMissedScheduledCommandsIfNeeded()
         }
@@ -637,12 +724,34 @@ extension HomeStore {
 
     @discardableResult
     public func runMissedScheduledCommand(id: UUID) async -> IntentPlan? {
-        guard let idx = missedScheduledCommands.firstIndex(where: { $0.id == id }) else { return nil }
-        let entry = missedScheduledCommands.remove(at: idx)
+        // 立即补执行 is a person acting now, so the lock-screen preference applies (#143). Checked
+        // before anything else: a refused run stays in the list and can be retried after unlocking.
+        if rejectControlWhileLocked() { return nil }
+        guard let entry = missedScheduledCommands.first(where: { $0.id == id }) else { return nil }
+        guard let entryScope = entry.sourceScope, entryScope == connectionScopeIdentifier else { return nil }
+        await waitForInitialSnapshotIfNeeded()
+        // A switch or a lock can land while we wait for the snapshot. Re-check before consuming the
+        // entry: it is removed and persisted only once the run is actually going ahead.
+        if rejectControlWhileLocked() { return nil }
+        guard entryScope == connectionScopeIdentifier else { return nil }
+        guard missingPlanTargets(entry.plan).isEmpty else {
+            showToast(
+                L10n.tr(
+                    "定时的目标设备不在当前家庭，未执行",
+                    "The timer's devices are not in the current home; it did not run"
+                ),
+                isError: true
+            )
+            return nil
+        }
+        // The user may have dismissed or cancelled it during the wait, and a second tap may already
+        // have taken it. Existence check, removal and persistence run in one stretch without an await
+        // so exactly one waiter can win.
+        guard let current = missedScheduledCommands.first(where: { $0.id == id }) else { return nil }
+        missedScheduledCommands.removeAll { $0.id == id }
         notifiedMissedTimerIds.remove(id)
         persistAllScheduledCommands()
-        await waitForInitialSnapshotIfNeeded()
-        return await executeIntentPlan(entry.plan, recordedUtterance: nil, origin: .scheduled)
+        return await executeIntentPlan(current.plan, recordedUtterance: nil, origin: .scheduled)
     }
 
     public func dismissMissedScheduledCommand(id: UUID) {
@@ -657,6 +766,7 @@ extension HomeStore {
         let targets = scheduledCommands.filter { id == nil || $0.id == id }
         for entry in targets {
             scheduledTasks.removeValue(forKey: entry.id)?.cancel()
+            scheduledTaskTokens.removeValue(forKey: entry.id)
         }
         scheduledCommands.removeAll { entry in targets.contains { $0.id == entry.id } }
 
