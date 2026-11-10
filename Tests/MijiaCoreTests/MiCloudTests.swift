@@ -1510,6 +1510,19 @@ struct MiCloudProviderTests {
         #expect(MiCloudProvider.hubRecord(for: camera, devices: [secondHub, offlineOwn, camera], rooms: twoHubRooms) == nil)
     }
 
+    @Test("An earlier room that lists the camera does not hide the room that holds the hub")
+    func hubRecordUsesTheRoomThatContainsTheHub() {
+        let hubLiving = MiDeviceRecord(did: "hub-living", name: "客厅室内机", model: "mxiang.camera.mwc10", isOnline: true)
+        let hubKids = MiDeviceRecord(did: "hub-kids", name: "儿童房室内机", model: "mxiang.camera.mwc10", isOnline: true)
+        let camera = MiDeviceRecord(did: "cam", name: "儿童房摄像机", model: "mxiang.camera.mwc11", isOnline: true)
+        let rooms = [
+            MiRoom(id: "living", name: "客厅", dids: ["cam"], homeId: "home", homeName: "家"),
+            MiRoom(id: "kids", name: "儿童房", dids: ["cam", "hub-kids"], homeId: "home", homeName: "家"),
+            MiRoom(id: "hall", name: "大厅", dids: ["hub-living"], homeId: "home", homeName: "家"),
+        ]
+        #expect(MiCloudProvider.hubRecord(for: camera, devices: [hubLiving, hubKids, camera], rooms: rooms)?.did == "hub-kids")
+    }
+
     @Test("Two mwc11 cameras on one online mwc10 keep the second relay port")
     func twoBatteryCamerasKeepTheHubRelay() async throws {
         let hub = MiDeviceRecord(did: "hub123", name: "室内机", model: "mxiang.camera.mwc10", isOnline: true, localIp: "192.168.50.60")

@@ -17,6 +17,18 @@ struct CameraLiveHandoffTests {
         #expect(!parked.matches(sameCard))
     }
 
+    @Test("A warm playback is not reused after one dead read once a frame was shown")
+    func deadReadAfterAFrameRejectsWarmReuse() {
+        #expect(!CameraPlaybackReconnect.ended(framesDecoded: 4, alreadyHadFrame: true))
+        #expect(!CameraPlaybackReconnect.ended(framesDecoded: 0, alreadyHadFrame: false))
+        #expect(CameraPlaybackReconnect.ended(framesDecoded: 0, alreadyHadFrame: true))
+
+        let dead = CameraPlaybackTerminalFailure.reason(detail: nil)
+        #expect(!CameraWarmReuse.accepts(failure: dead, identityMatches: true))
+        #expect(CameraWarmReuse.accepts(failure: nil, identityMatches: true))
+        #expect(!CameraWarmReuse.accepts(failure: nil, identityMatches: false))
+    }
+
     @Test("A stream that ends without an error detail is still a terminal failure")
     func nilDetailIsATerminalFailure() {
         #expect(CameraPlaybackTerminalFailure.reason(detail: nil) == CameraPlaybackTerminalFailure.unnamed)

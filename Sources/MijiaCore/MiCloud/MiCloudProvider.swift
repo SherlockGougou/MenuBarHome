@@ -910,7 +910,13 @@ public actor MiCloudProvider: HomeProvider {
         guard let hubModel = CameraHubCatalog.hubModel(for: record.model) else { return nil }
         let hubs = devices.filter { $0.model.lowercased().hasPrefix(hubModel) }
         guard !hubs.isEmpty else { return nil }
-        let cameraRoom = rooms.first { $0.dids.contains(record.did) }
+        let hubDids = Set(hubs.map(\.did))
+        let cameraRooms = rooms.filter { $0.dids.contains(record.did) }
+        // A camera can sit in an earlier room that has no hub. That room must not hide
+        // the later room that actually contains the indoor base.
+        let cameraRoom = cameraRooms.first { room in
+            room.dids.contains { hubDids.contains($0) }
+        } ?? cameraRooms.first
 
         let scoped: [MiDeviceRecord]
         if let cameraRoom, !cameraRoom.homeId.isEmpty {

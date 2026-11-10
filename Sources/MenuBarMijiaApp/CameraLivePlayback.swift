@@ -57,6 +57,14 @@ final class CameraLivePlayback {
                     continue
                 }
 
+                if CameraPlaybackReconnect.ended(
+                    framesDecoded: outcome.framesDecoded,
+                    alreadyHadFrame: self.hasFrame
+                ) {
+                    self.pauseAfterFailure(outcome.failure)
+                    return
+                }
+
                 failedAttempts += 1
                 if failedAttempts >= 2, !self.hasFrame, let mjpegFallback = self.mjpegFallback {
                     self.player.stop()

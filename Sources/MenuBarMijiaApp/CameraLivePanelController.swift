@@ -347,7 +347,10 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         if !canReuseHotStream {
             if let warm = reservedWarm {
                 let currentIdentity = warmIdentity(for: device.id, entityID: Self.cameraEntityID(for: device))
-                if warm.identity.matches(currentIdentity), warm.playback.failure == nil {
+                if CameraWarmReuse.accepts(
+                    failure: warm.playback.failure,
+                    identityMatches: warm.identity.matches(currentIdentity)
+                ) {
                     tearDownPictureInPicture()
                     activePlayback = warm.playback
                     streamSource = warm.playback.source

@@ -18,6 +18,25 @@ public struct CameraWarmIdentity: Equatable, Sendable {
     }
 }
 
+/// Whether a parked live session can be attached again. A nil failure is the
+/// only healthy state. One dead read after a frame has to set that failure,
+/// or the window paints the frozen last frame for the rest of the warm period.
+public enum CameraWarmReuse {
+    public static func accepts(failure: String?, identityMatches: Bool) -> Bool {
+        identityMatches && failure == nil
+    }
+}
+
+/// What one fMP4 read means for the reconnect loop.
+public enum CameraPlaybackReconnect {
+    /// After a picture has been shown, a read that decodes nothing is the end
+    /// of the session. The relay is gone, and another retry would leave
+    /// `failure` nil while the last frame stays on screen.
+    public static func ended(framesDecoded: Int, alreadyHadFrame: Bool) -> Bool {
+        framesDecoded == 0 && alreadyHadFrame
+    }
+}
+
 /// A playback that ran out of frames is finished even when the player reports no detail.
 public enum CameraPlaybackTerminalFailure {
     public static let unnamed = "stream ended"
