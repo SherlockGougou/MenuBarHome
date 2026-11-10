@@ -114,6 +114,17 @@ struct XiaomiCameraStreamQualityTests {
         #expect(streamKey == "hub123_sub_camera123")
     }
 
+    @Test("A hub relay lease survives while a sibling camera is still using it")
+    func hubRelayLeaseIsSharedBySubcameras() {
+        var lease = XiaomiCameraBridge.CameraRelayLease()
+        lease.acquire("hub123_sub_cameraA")
+        lease.acquire("hub123_sub_cameraB")
+        let releasedA = lease.release("hub123_sub_cameraA")
+        #expect(!releasedA)
+        let releasedB = lease.release("hub123_sub_cameraB")
+        #expect(releasedB)
+    }
+
     @MainActor
     @Test("HomeStore saves the chosen camera quality and passes it when resolving the stream")
     func homeStorePassesSavedQuality() async throws {

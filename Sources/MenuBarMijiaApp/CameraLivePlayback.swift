@@ -86,7 +86,17 @@ final class CameraLivePlayback {
         task = nil
         player.stop()
         hasFrame = false
-        failure = detail
-        onFailure?(detail)
+        let reason = Self.terminalFailureReason(detail)
+        failure = reason
+        onFailure?(reason)
+    }
+
+    static func terminalFailureReason(_ detail: String?) -> String {
+        let trimmed = detail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard trimmed.isEmpty else { return trimmed }
+        return L10n.tr(
+            "连续多次未收到画面，请重试",
+            "No frames received after repeated attempts; try again"
+        )
     }
 }

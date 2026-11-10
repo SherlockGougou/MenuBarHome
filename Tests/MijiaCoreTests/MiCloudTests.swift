@@ -871,6 +871,8 @@ actor StubMiCloudAPI: MiCloudAPI {
 
     func removeValue(_ key: MiotPropKey) { values.removeValue(forKey: key) }
 
+    func setDevices(_ records: [MiDeviceRecord]) { devices = records }
+
     private(set) var deviceListCalls = 0
 
     func deviceList() async throws -> [MiDeviceRecord] {
@@ -1446,12 +1448,83 @@ struct MiCloudProviderTests {
         #expect(starts.first?.subdid == "camera456")
         #expect(await api.vendorRequestedDid == "hub123")
 
+        var offlineHub = hub
+        offlineHub.isOnline = false
+        await api.setDevices([offlineHub, camera])
+        await provider.refreshNow()
         await provider.stopCameraStream(for: cameraDevice)
         let stops = await bridge.stopSubdidCalls
         #expect(stops.count == 1)
         #expect(stops.first?.did == "hub123")
         #expect(stops.first?.subdid == "camera456")
         await provider.shutdown()
+    }
+
+    @Test("Hub selection stays inside the camera's Mi Home")
+    func hubRecordFiltersByHome() {
+        let camera = MiDeviceRecord(
+            did: "camera-home-a",
+            name: "Camera A",
+            model: "mxiang.camera.mwc11",
+            isOnline: true
+        )
+        let hubA = MiDeviceRecord(
+            did: "hub-home-a",
+            name: "Hub A",
+            model: "mxiang.camera.mwc10",
+            isOnline: true
+        )
+        let hubB = MiDeviceRecord(
+            did: "hub-home-b",
+            name: "Hub B",
+            model: "mxiang.camera.mwc10",
+            isOnline: true
+        )
+        let rooms = [
+            MiRoom(id: "camera-room", name: "Camera", dids: ["camera-home-a"], homeId: "home-a"),
+            MiRoom(id: "hub-a-room", name: "Hub A", dids: ["hub-home-a"], homeId: "home-a"),
+            MiRoom(id: "hub-b-room", name: "Hub B", dids: ["hub-home-b"], homeId: "home-b"),
+        ]
+
+        let matched = MiCloudProvider.hubRecord(
+            for: camera,
+            devices: [hubA, hubB, camera],
+            rooms: rooms
+        )
+        #expect(matched?.did == "hub-home-a")
+    }
+
+    @Test("Hub selection rejects two candidate hubs in the same home")
+    func hubRecordRejectsAmbiguousHubs() {
+        let camera = MiDeviceRecord(
+            did: "camera-ambiguous",
+            name: "Camera",
+            model: "mxiang.camera.mwc11",
+            isOnline: true
+        )
+        let hubA = MiDeviceRecord(
+            did: "hub-one",
+            name: "Hub One",
+            model: "mxiang.camera.mwc10",
+            isOnline: true
+        )
+        let hubB = MiDeviceRecord(
+            did: "hub-two",
+            name: "Hub Two",
+            model: "mxiang.camera.mwc10",
+            isOnline: true
+        )
+        let rooms = [
+            MiRoom(id: "camera-room", name: "Camera", dids: ["camera-ambiguous"], homeId: "home-a"),
+            MiRoom(id: "hub-one-room", name: "One", dids: ["hub-one"], homeId: "home-a"),
+            MiRoom(id: "hub-two-room", name: "Two", dids: ["hub-two"], homeId: "home-a"),
+        ]
+
+        #expect(MiCloudProvider.hubRecord(
+            for: camera,
+            devices: [hubA, hubB, camera],
+            rooms: rooms
+        ) == nil)
     }
 
     @Test("Cancelling resolveCameraStream while startBridge is negotiating tears down the bridge and releases the P2P session")

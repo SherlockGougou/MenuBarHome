@@ -29,16 +29,22 @@ final class CameraFloatingPanel: NSPanel {
 }
 
 @MainActor
-private final class WarmCameraPlayback {
+final class WarmCameraPlayback {
     let playback: CameraLivePlayback
     let deviceID: String
     let lensID: String
+    let entityID: String?
     var expiryTask: Task<Void, Never>?
 
-    init(playback: CameraLivePlayback, deviceID: String, lensID: String) {
+    init(playback: CameraLivePlayback, deviceID: String, lensID: String, entityID: String?) {
         self.playback = playback
         self.deviceID = deviceID
         self.lensID = lensID
+        self.entityID = entityID
+    }
+
+    func isCompatible(entityID: String?) -> Bool {
+        self.entityID == entityID
     }
 }
 
@@ -271,6 +277,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         let previousLensID = activeLensID
         let targetLens = selectedLens(for: device)
         let targetLensID = targetLens?.id ?? "main"
+        let targetEntityID = Self.cameraEntityID(for: device)
         let canReuseHotStream = (
             previousDeviceId == device.id
             && previousLensID == targetLensID
@@ -279,7 +286,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         )
         let reservedWarm = canReuseHotStream
             ? nil
-            : takeWarmPlayback(deviceID: device.id, lensID: targetLensID)
+            : takeWarmPlayback(deviceID: device.id, lensID: targetLensID, entityID: targetEntityID)
         if let previousDeviceId, !canReuseHotStream {
             let oldId = previousDeviceId
             if previousDeviceId != device.id,
@@ -290,7 +297,8 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
                 warmActivePlayback(
                     playback,
                     deviceID: previousDeviceId,
-                    lensID: previousLensID ?? "main"
+                    lensID: previousLensID ?? "main",
+                    entityID: activeCameraEntityID
                 )
             } else {
                 stopStreamTasks()
@@ -301,7 +309,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
 
         activeDeviceId = device.id
         activeLensID = targetLensID
-        activeCameraEntityID = Self.cameraEntityID(for: device)
+        activeCameraEntityID = targetEntityID
         customURLInput = store.cameraCustomStreamURL(for: device.id) ?? ""
         isShowingURLConfig = false
 
@@ -387,13 +395,29 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
             var deviceIDs = Set(activePlaybackIDs)
             if let closingDeviceId { deviceIDs.insert(closingDeviceId) }
             for deviceID in deviceIDs {
-                guard !Task.isCancelled,
-                      let self,
-                      self.closeReleaseGeneration == releaseGeneration else { return }
-                await store.stopCameraStream(for: deviceID)
+                guard !Task.isCancelled, let self else { return }
+                let warmDeviceIDs = Set(self.warmPlaybacks.map(\.deviceID))
+                if self.closeReleaseGeneration == releaseGeneration
+                    || Self.shouldReleaseClosedCamera(
+                        deviceID: deviceID,
+                        activeDeviceID: self.activeDeviceId,
+                        warmDeviceIDs: warmDeviceIDs
+                    ) {
+                    await store.stopCameraStream(for: deviceID)
+                }
             }
-            self?.closeReleaseTask = nil
+            if let self, self.closeReleaseGeneration == releaseGeneration {
+                self.closeReleaseTask = nil
+            }
         }
+    }
+
+    static func shouldReleaseClosedCamera(
+        deviceID: String,
+        activeDeviceID: String?,
+        warmDeviceIDs: Set<String>
+    ) -> Bool {
+        activeDeviceID != deviceID && !warmDeviceIDs.contains(deviceID)
     }
 
     private func stopStreamTasks() {
@@ -417,7 +441,12 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         isLoadingStream = false
     }
 
-    private func warmActivePlayback(_ playback: CameraLivePlayback, deviceID: String, lensID: String) {
+    private func warmActivePlayback(
+        _ playback: CameraLivePlayback,
+        deviceID: String,
+        lensID: String,
+        entityID: String?
+    ) {
         tearDownPictureInPicture()
         activePlayback = nil
         videoPlayer = nil
@@ -427,7 +456,12 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         errorMessage = nil
         clearPTZ()
 
-        let warm = WarmCameraPlayback(playback: playback, deviceID: deviceID, lensID: lensID)
+        let warm = WarmCameraPlayback(
+            playback: playback,
+            deviceID: deviceID,
+            lensID: lensID,
+            entityID: entityID
+        )
         warmPlaybacks.append(warm)
         while warmPlaybacks.count > Self.maxWarmPlaybacks {
             releaseWarmPlayback(warmPlaybacks.removeFirst())
@@ -439,13 +473,17 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         }
     }
 
-    private func takeWarmPlayback(deviceID: String, lensID: String) -> WarmCameraPlayback? {
+    private func takeWarmPlayback(deviceID: String, lensID: String, entityID: String?) -> WarmCameraPlayback? {
         guard let index = warmPlaybacks.firstIndex(where: {
             $0.deviceID == deviceID && $0.lensID == lensID
         }) else {
             return nil
         }
         let warm = warmPlaybacks.remove(at: index)
+        guard warm.isCompatible(entityID: entityID) else {
+            releaseWarmPlayback(warm)
+            return nil
+        }
         warm.expiryTask?.cancel()
         warm.expiryTask = nil
         return warm

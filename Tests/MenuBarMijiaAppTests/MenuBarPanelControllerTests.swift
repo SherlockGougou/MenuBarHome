@@ -1999,6 +1999,58 @@ struct MenuBarPanelControllerTests {
         #expect(notice.contains("没有音轨"))
     }
 
+    @Test("Warm playback is rejected when the camera entity changes")
+    func warmPlaybackRejectsBackendHandoff() throws {
+        let source = CameraStreamSource.liveMP4(
+            URL(string: "http://127.0.0.1:1/stream.mp4")!,
+            mjpegFallback: nil,
+            ptz: nil
+        )
+        let playback = try #require(CameraLivePlayback(
+            deviceID: "camera-a",
+            lensID: "main",
+            source: source
+        ))
+        let warm = WarmCameraPlayback(
+            playback: playback,
+            deviceID: "camera-a",
+            lensID: "main",
+            entityID: "miot:camera-a:2"
+        )
+        #expect(warm.isCompatible(entityID: "miot:camera-a:2"))
+        #expect(!warm.isCompatible(entityID: "camera.camera_a"))
+    }
+
+    @Test("Playback records a fallback reason when the failure detail is nil")
+    func playbackTerminalFailureReason() {
+        let previous = L10n.currentLanguage
+        L10n.currentLanguage = .zhHans
+        defer { L10n.currentLanguage = previous }
+
+        #expect(CameraLivePlayback.terminalFailureReason("network") == "network")
+        #expect(!CameraLivePlayback.terminalFailureReason(nil).isEmpty)
+        #expect(!CameraLivePlayback.terminalFailureReason("  ").isEmpty)
+    }
+
+    @Test("Close cleanup skips only the camera reused by the new session")
+    func closeCleanupKeepsReusedCamera() {
+        #expect(!CameraLivePanelController.shouldReleaseClosedCamera(
+            deviceID: "camera-a",
+            activeDeviceID: "camera-a",
+            warmDeviceIDs: []
+        ))
+        #expect(CameraLivePanelController.shouldReleaseClosedCamera(
+            deviceID: "camera-a",
+            activeDeviceID: "camera-b",
+            warmDeviceIDs: []
+        ))
+        #expect(!CameraLivePanelController.shouldReleaseClosedCamera(
+            deviceID: "camera-a",
+            activeDeviceID: "camera-b",
+            warmDeviceIDs: ["camera-a"]
+        ))
+    }
+
     @Test("Camera maximize fills the screen and restores the previous frame")
     func cameraLivePanelMaximizeAndRestore() async throws {
         _ = NSApplication.shared
