@@ -532,6 +532,7 @@ private final class CameraPlaybackPause: @unchecked Sendable {
     func isPaused() -> Bool { lock.withLock { paused } }
     func setPaused(_ value: Bool) { lock.withLock { paused = value } }
     func setRestoreRequested(_ value: Bool) { lock.withLock { restoreRequested = value } }
+    func isRestoreRequested() -> Bool { lock.withLock { restoreRequested } }
     func consumeRestoreRequested() -> Bool {
         lock.withLock {
             let value = restoreRequested
@@ -622,7 +623,12 @@ final class CameraPictureInPicture: NSObject {
         possibleObservation?.invalidate()
         possibleObservation = nil
         if controller?.isPictureInPictureActive == true {
-            playbackPause.setRestoreRequested(false)
+            let clearRestore = PictureInPictureCloseDecision.clearRestoreOnInvalidate(
+                restoreAlreadyRequested: playbackPause.isRestoreRequested()
+            )
+            if clearRestore {
+                playbackPause.setRestoreRequested(false)
+            }
             controller?.stopPictureInPicture()
         }
         controller?.delegate = nil
@@ -800,7 +806,11 @@ extension CameraPictureInPicture: AVPictureInPictureControllerDelegate {
             }
             self.setActive(false)
             self.restoreHostLayerBounds()
-            if restore { self.onRestore?() } else { self.onClosed?() }
+            if PictureInPictureCloseDecision.shouldClosePanel(restoreRequested: restore) {
+                self.onClosed?()
+            } else {
+                self.onRestore?()
+            }
         }
     }
 }

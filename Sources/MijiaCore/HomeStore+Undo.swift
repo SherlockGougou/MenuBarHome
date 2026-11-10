@@ -726,6 +726,9 @@ extension HomeStore {
         lastAssistantUndo = nil
         undoTimerTask?.cancel()
         self.undoBanner = nil
+        // A rehearsal banner has nothing to restore. Dismissing it must not claim the home came back,
+        // and a rehearsal never starts a batch, so the batch bookkeeping below does not concern it.
+        if banner.restoreCommands.isEmpty { return nil }
         // A bulk action that is still sending must stop before its next command, and the restore
         // below waits for the command already in flight, so a late batch write cannot land after
         // the undo. The rows go back synchronously, so the card still answers at once.

@@ -334,6 +334,50 @@ struct CameraPTZDriverTests {
         #expect(controller.offersPTZStopRetry == false)
     }
 
+    @Test("Stop again does not clear a failed write when the old session reports a step no-op")
+    func oldSessionRetryDoesNotClearAFailedStop() async throws {
+        let controller = CameraLivePanelController.shared
+        let client = FakePTZClient()
+        let failed = CameraPTZStopResult(
+            sent: false,
+            confirmed: false,
+            mode: .continuous,
+            errorReason: "write_failed"
+        )
+        let oldSession = CameraPTZStopResult(sent: false, confirmed: false, mode: .step)
+        await client.setStopScript([failed, failed, oldSession])
+        let previousLanguage = L10n.currentLanguage
+        L10n.currentLanguage = .zhHans
+        configure(controller, deviceId: "cam-a", client: client)
+        let gate = PTZRetryGate()
+        controller.ptzStopRetryHold = { await gate.wait() }
+        defer {
+            gate.release()
+            controller.configurePTZPreview(deviceId: nil, binding: nil, stream: nil, notice: nil, ready: false)
+            L10n.currentLanguage = previousLanguage
+        }
+
+        controller.ptzToken = CameraPTZSessionToken(epoch: "e1", session: 4)
+        controller.ptzDeviceId = "cam-a"
+        controller.finishPTZMove(notify: false)
+        _ = try #require(await client.waitForStops(), "the first stop was never written")
+        gate.release()
+        _ = try #require(await client.waitForStops(minimum: 2), "the automatic retry was never written")
+        for _ in 0..<5000 where controller.offersPTZStopRetry == false {
+            await Task.yield()
+        }
+        #expect(controller.offersPTZStopRetry == true)
+
+        controller.retryFailedPTZStop()
+        _ = try #require(await client.waitForStops(minimum: 3), "the stop-again button wrote nothing")
+        for _ in 0..<5000 where controller.ptzManualStopInFlight {
+            await Task.yield()
+        }
+        #expect(controller.ptzManualStopInFlight == false)
+        #expect(controller.ptzNotice == "停止指令写入失败，云台可能仍在转动")
+        #expect(controller.offersPTZStopRetry == true)
+    }
+
     @Test("A thrown stop retries once and clears the warning when the retry succeeds")
     func thrownStopRetriesOnceAndSuccessClearsTheWarning() async throws {
         let controller = CameraLivePanelController.shared

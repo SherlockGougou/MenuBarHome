@@ -160,7 +160,7 @@ new file mode 100644
 index 0000000..e1479c2
 --- /dev/null
 +++ b/internal/xiaomi/ptz.go
-@@ -0,0 +1,639 @@
+@@ -0,0 +1,686 @@
 +package xiaomi
 +
 +import (
@@ -488,11 +488,7 @@ index 0000000..e1479c2
 +	mode := ptzStep
 +	current := stream.current
 +	if current == nil || current.session != session {
-+		if session > stream.stoppedThrough {
-+			stream.stoppedThrough = session
-+		}
-+		m.mu.Unlock()
-+		return false, mode, nil
++		return m.stopFormerSession(stream, current, session)
 +	}
 +	mode = current.mode
 +	if current.ended {
@@ -546,6 +542,57 @@ index 0000000..e1479c2
 +		return false, mode, err
 +	}
 +	return sent, mode, nil
++}
++
++func (m *ptzManager) stopFormerSession(stream *ptzStream, current *ptzSession, session uint64) (bool, ptzMode, error) {
++	if session > stream.stoppedThrough {
++		stream.stoppedThrough = session
++	}
++	// An old session whose last motor write failed must not look like a successful stop.
++	// A newer session that has already started moving is left alone. Otherwise this retry
++	// is the stop that still has to write -1001.
++	if stream.lastStopSession != session || stream.lastStopErr == nil {
++		m.mu.Unlock()
++		return false, ptzStep, nil
++	}
++	if current != nil && !current.ended && !current.started.IsZero() {
++		err := stream.lastStopErr
++		m.mu.Unlock()
++		return false, ptzContinuous, fmt.Errorf("%w: %v", errPTZStopWrite, err)
++	}
++	var motor motorControl
++	if current != nil {
++		motor = current.motor
++	}
++	if motor == nil {
++		err := stream.lastStopErr
++		m.mu.Unlock()
++		return false, ptzContinuous, fmt.Errorf("%w: %v", errPTZStopWrite, err)
++	}
++	if stream.stopsInFlight == 0 {
++		stream.stopBarrier = make(chan struct{})
++	}
++	stream.stopsInFlight++
++	m.mu.Unlock()
++
++	stream.motorLock.Lock()
++	err := motor.Motor(-1001)
++	stream.motorLock.Unlock()
++
++	m.mu.Lock()
++	stream.lastStopSession = session
++	stream.lastStopSent = err == nil
++	stream.lastStopErr = err
++	stream.stopsInFlight--
++	if stream.stopsInFlight == 0 && stream.stopBarrier != nil {
++		close(stream.stopBarrier)
++		stream.stopBarrier = nil
++	}
++	m.mu.Unlock()
++	if err != nil {
++		return false, ptzContinuous, fmt.Errorf("%w: %v", errPTZStopWrite, err)
++	}
++	return true, ptzContinuous, nil
 +}
 +
 +func storedStopLocked(stream *ptzStream, session uint64) (bool, error) {
@@ -805,7 +852,7 @@ new file mode 100644
 index 0000000..a9ff824
 --- /dev/null
 +++ b/internal/xiaomi/ptz_test.go
-@@ -0,0 +1,587 @@
+@@ -0,0 +1,617 @@
 +package xiaomi
 +
 +import (
@@ -1380,8 +1427,8 @@ index 0000000..a9ff824
 +	if _, err := ptz.move("cam", ptz.epoch, second, 1, "right", now.Add(time.Millisecond)); err != nil {
 +		t.Fatal(err)
 +	}
-+	if _, _, err := ptz.stop("cam", ptz.epoch, first); err != nil {
-+		t.Fatalf("late stop of the ended session: %v", err)
++	if _, _, err := ptz.stop("cam", ptz.epoch, first); err == nil {
++		t.Fatal("late stop of a failed session reported success without writing -1001")
 +	}
 +	if got := countOps(motor.callSnapshot(), -1001); got != 1 {
 +		t.Fatalf("a stop for a session that no longer owns the stream moved the motor: calls = %d", got)
@@ -1391,6 +1438,36 @@ index 0000000..a9ff824
 +	}
 +	if got := countOps(motor.callSnapshot(), -1001); got != 2 {
 +		t.Fatalf("new session stop calls = %d, want 2", got)
++	}
++}
++
++func TestOldStopRetryAfterNewerIdleSessionWritesStop(t *testing.T) {
++	motor := &fakeMotor{model: "xiaomi.camera.c01a01", fail: map[int]bool{-1001: true}}
++	withPTZFixture(t, motor, ptzDefaultTiming)
++	now := time.Unix(19000, 0)
++
++	first, _, _ := ptz.begin("cam", now)
++	if _, err := ptz.move("cam", ptz.epoch, first, 1, "left", now); err != nil {
++		t.Fatal(err)
++	}
++	if _, _, err := ptz.stop("cam", ptz.epoch, first); err == nil {
++		t.Fatal("first stop lost the write error")
++	}
++	motor.setFail(-1001, false)
++
++	second, _, err := ptz.begin("cam", now.Add(time.Millisecond))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if sent, _, err := ptz.stop("cam", ptz.epoch, second); err != nil || sent {
++		t.Fatalf("idle session stop: sent=%v err=%v", sent, err)
++	}
++	sent, _, err := ptz.stop("cam", ptz.epoch, first)
++	if err != nil || !sent {
++		t.Fatalf("retry of the failed session: sent=%v err=%v", sent, err)
++	}
++	if got := countOps(motor.callSnapshot(), -1001); got != 2 {
++		t.Fatalf("motor stop calls = %d, want 2", got)
 +	}
 +}
 diff --git a/internal/xiaomi/round2_repro_test.go b/internal/xiaomi/round2_repro_test.go

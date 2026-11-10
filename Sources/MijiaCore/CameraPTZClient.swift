@@ -22,6 +22,12 @@ public struct CameraPTZStopResult: Equatable, Sendable {
     /// The bridge accepted the request but the write to the camera failed.
     public var errorReason: String?
 
+    /// A later retry may clear a failed write only when this stop actually sent `-1001`.
+    /// A missing `stopError` with `sent == false` is how an old session reports a no-op.
+    public var clearsFailedWrite: Bool {
+        errorReason == nil && sent
+    }
+
     public init(
         sent: Bool,
         confirmed: Bool = false,
@@ -32,6 +38,22 @@ public struct CameraPTZStopResult: Equatable, Sendable {
         self.confirmed = confirmed
         self.mode = mode
         self.errorReason = errorReason
+    }
+}
+
+/// Which failed-stop attempts remain after a later stop on the same camera.
+public enum CameraPTZFailureResolution {
+    /// A stop that sent `-1001` proves the motor stopped, so older failures for
+    /// that camera are finished. A not-sent reply leaves every attempt in place.
+    public static func remainingDeviceIds(
+        unresolvedDeviceIds: [String],
+        stoppedDeviceId: String?,
+        result: CameraPTZStopResult
+    ) -> [String] {
+        guard result.clearsFailedWrite, let stoppedDeviceId else {
+            return unresolvedDeviceIds
+        }
+        return unresolvedDeviceIds.filter { $0 != stoppedDeviceId }
     }
 }
 
