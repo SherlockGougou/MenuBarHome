@@ -81,13 +81,13 @@ if [ ! -d "$RESOURCE_BUNDLE" ]; then
 fi
 cp -R "$RESOURCE_BUNDLE" "$APP_DIR/Contents/Resources/MenuBarMijia_MijiaCore.bundle"
 
-if [ "${PTZ_BRIDGE:-0}" = "1" ]; then
+if [ "${PTZ_BRIDGE:-1}" = "1" ]; then
     PATCHED_GO2RTC="$ROOT/scripts/go2rtc-ptz/out/go2rtc-universal"
     PATCH_SHA="$(shasum -a 256 "$ROOT/scripts/go2rtc-ptz/patches/0001-xiaomi-ptz.patch" | awk '{print $1}')"
     MANIFEST="$ROOT/scripts/go2rtc-ptz/out/go2rtc-ptz.manifest"
     MANIFEST_SHA="$(sed -n 's/^patch_sha256=//p' "$MANIFEST" 2>/dev/null || true)"
     if [ ! -x "$PATCHED_GO2RTC" ] || [ "$MANIFEST_SHA" != "$PATCH_SHA" ]; then
-        echo "▶ PTZ_BRIDGE=1：构建或更新带云台补丁的 go2rtc（patch $PATCH_SHA）"
+        echo "▶ PTZ_BRIDGE=1：构建或更新带云台补丁的 go2rtc（patch ${PATCH_SHA}）"
         rm -f "$PATCHED_GO2RTC"
         bash "$ROOT/scripts/go2rtc-ptz/build.sh" || {
             echo "❌ PTZ_BRIDGE=1 但补丁桥构建失败，拒绝打出没有云台能力的包" >&2
@@ -112,7 +112,7 @@ if [ "${PTZ_BRIDGE:-0}" = "1" ]; then
     echo "▶ 使用带云台补丁的 go2rtc ($PATCHED_ARCHS)"
     GO2RTC_CACHED="$PATCHED_GO2RTC"
 else
-    echo "ℹ️ 未设置 PTZ_BRIDGE=1：打进官方 go2rtc，不包含云台补丁"
+    echo "ℹ️ PTZ_BRIDGE=0：打进官方 go2rtc，不包含云台补丁"
     GO2RTC_CACHED="$HOME/Library/Application Support/MenuBarMijia/bin/go2rtc"
 fi
 GO2RTC_ARCHS="$(lipo -archs "$GO2RTC_CACHED" 2>/dev/null || true)"
