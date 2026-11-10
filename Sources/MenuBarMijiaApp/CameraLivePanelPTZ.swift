@@ -206,7 +206,7 @@ extension CameraLivePanelController {
         // session was opened by this attempt, so it is still the one that needs stopping.
         do {
             let second = try await client.stop(token: attempt.token)
-            if second.errorReason == nil {
+            if second.clearsFailedWrite {
                 finishSuccessfulPTZStop(second, attempt: attempt, notify: notify)
                 return
             }
@@ -228,7 +228,22 @@ extension CameraLivePanelController {
         attempt: CameraPTZStopAttempt,
         notify: Bool
     ) {
-        resolveUnresolvedStop(attempt)
+        let kept = Set(CameraPTZFailureResolution.remainingDeviceIds(
+            unresolvedDeviceIds: ptzUnresolvedStops.compactMap(\.deviceId),
+            stoppedDeviceId: attempt.deviceId,
+            result: result
+        ))
+        if result.clearsFailedWrite {
+            ptzUnresolvedStops.removeAll { stop in
+                guard let id = stop.deviceId else { return false }
+                return !kept.contains(id)
+            }
+            if ptzUnresolvedStops.isEmpty {
+                clearStopWriteFailureNotice()
+            }
+        } else {
+            resolveUnresolvedStop(attempt)
+        }
         guard stillOwns(attempt) else { return }
         reportStopThatWasNotSent(result, notify: notify)
     }
@@ -279,7 +294,7 @@ extension CameraLivePanelController {
             defer { self?.ptzManualStopInFlight = false }
             for attempt in attempts {
                 let result = try? await attempt.client.stop(token: attempt.token)
-                guard let self, let result, result.errorReason == nil else { continue }
+                guard let self, let result, result.clearsFailedWrite else { continue }
                 self.resolveUnresolvedStop(attempt)
             }
         }
@@ -469,17 +484,26 @@ struct CameraControlBar: Equatable {
     }
 
     enum Action: Equatable {
+        case selectLens(String)
         case setQuality(XiaomiCameraStreamQuality)
         case toggleMotion
         case setNightShot(String)
     }
 
     var power: Power?
+    var lensMenuTitle: String?
+    var lensItems: [Item]
     var qualityMenuTitle: String?
     var qualityItems: [Item]
     var moreItems: [Item]
 
-    init(spec: CameraSpec, showsQuality: Bool, currentQuality: XiaomiCameraStreamQuality) {
+    init(
+        spec: CameraSpec,
+        showsQuality: Bool,
+        currentQuality: XiaomiCameraStreamQuality,
+        showsLens: Bool = true,
+        selectedLens: CameraLens? = nil
+    ) {
         if spec.powerWritable {
             power = Power(
                 title: spec.isOn ? L10n.tr("镜头 开", "Lens on") : L10n.tr("镜头 关", "Lens off"),
@@ -488,6 +512,21 @@ struct CameraControlBar: Equatable {
             )
         } else {
             power = nil
+        }
+        if showsLens, spec.lenses.count > 1 {
+            let current = selectedLens ?? spec.lenses[0]
+            lensMenuTitle = "\(Self.lensTitle(current)) ▾"
+            lensItems = spec.lenses.map { lens in
+                Item(
+                    id: "lens.\(lens.id)",
+                    title: Self.lensTitle(lens),
+                    isSelected: lens.id == current.id,
+                    action: .selectLens(lens.id)
+                )
+            }
+        } else {
+            lensMenuTitle = nil
+            lensItems = []
         }
         if showsQuality {
             qualityMenuTitle = "\(Self.qualityTitle(currentQuality)) ▾"
@@ -531,6 +570,13 @@ struct CameraControlBar: Equatable {
         case .max: return L10n.tr("超清", "Ultra")
         }
     }
+
+    static func lensTitle(_ lens: CameraLens) -> String {
+        switch lens.role {
+        case .main: return L10n.tr("主镜头", "Main")
+        case .secondary: return L10n.tr("第二镜头", "Second")
+        }
+    }
 }
 
 struct CameraControlBarView: View {
@@ -541,13 +587,16 @@ struct CameraControlBarView: View {
 
     private var model: CameraControlBar {
         let deviceId = device?.id ?? ""
+        let hasCustomURL = !(store.cameraCustomStreamURL(for: deviceId) ?? "").isEmpty
         let showsQuality = device != nil
             && store.deviceBackend(for: deviceId) == .xiaomiCloud
-            && (store.cameraCustomStreamURL(for: deviceId) ?? "").isEmpty
+            && !hasCustomURL
         return CameraControlBar(
             spec: spec,
             showsQuality: showsQuality,
-            currentQuality: store.cameraStreamQuality(for: deviceId)
+            currentQuality: store.cameraStreamQuality(for: deviceId),
+            showsLens: !hasCustomURL,
+            selectedLens: device.flatMap { controller.selectedLens(for: $0) }
         )
     }
 
@@ -573,6 +622,19 @@ struct CameraControlBarView: View {
                     .buttonStyle(PillActionButtonStyle(isSelected: power.isSelected, tintColor: .cyan))
                     .accessibilityAddTraits(power.isSelected ? AccessibilityTraits.isSelected : AccessibilityTraits())
                     .accessibilityRemoveTraits(power.isSelected ? AccessibilityTraits() : AccessibilityTraits.isSelected)
+                }
+
+                if let lensMenuTitle = bar.lensMenuTitle {
+                    Menu {
+                        ForEach(bar.lensItems) { item in
+                            menuButton(item)
+                        }
+                    } label: {
+                        CameraMenuPillLabel(title: lensMenuTitle)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
                 }
 
                 if let qualityMenuTitle = bar.qualityMenuTitle {
@@ -631,6 +693,9 @@ struct CameraControlBarView: View {
     private func perform(_ item: CameraControlBar.Item) {
         guard let device else { return }
         switch item.action {
+        case .selectLens(let id):
+            guard let lens = spec.lenses.first(where: { $0.id == id }) else { return }
+            controller.selectLens(lens, for: device)
         case .setQuality(let quality):
             store.setCameraStreamQuality(quality, for: device.id)
             controller.reloadStream()

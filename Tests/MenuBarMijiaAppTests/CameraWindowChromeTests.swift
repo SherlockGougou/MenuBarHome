@@ -45,6 +45,26 @@ struct CameraWindowChromeTests {
         #expect(bar.moreItems.allSatisfy { !$0.title.contains("：") })
     }
 
+    @Test("Dual-lens cameras expose a lens menu instead of a flat row")
+    func lensMenuExposesBothLenses() {
+        let previous = L10n.currentLanguage
+        L10n.currentLanguage = .zhHans
+        defer { L10n.currentLanguage = previous }
+
+        let spec = CameraSpec(
+            entityId: "cam",
+            isOn: true,
+            lenses: [
+                CameraLens(role: .main, channel: 0),
+                CameraLens(role: .secondary, channel: 1),
+            ]
+        )
+        let bar = CameraControlBar(spec: spec, showsQuality: false, currentQuality: .sd)
+        #expect(bar.lensMenuTitle == "主镜头 ▾")
+        #expect(bar.lensItems.map(\.title) == ["主镜头", "第二镜头"])
+        #expect(bar.lensItems.filter(\.isSelected).map(\.id) == ["lens.main"])
+    }
+
     @Test("The camera name keeps at least half the toolbar")
     func titleKeepsHalfTheToolbar() {
         let crowded = CameraTitleBarSplit.split(barWidth: 360, trailingIdeal: 500, spacing: 6)
@@ -67,10 +87,12 @@ struct CameraWindowChromeTests {
         for language in [AppLanguage.zhHans, AppLanguage.en] {
             L10n.currentLanguage = language
             // Same order and spacing as CameraLivePanelView.toolbarTrailing: audio badge, pin,
-            // overflow menu, close.
+            // rotate, maximize, overflow menu, close.
             let bar = HStack(spacing: 4) {
-                CameraLiveAudioStatusView(status: .videoOnly, onToggleMute: {})
+                CameraLiveAudioStatusView(status: .videoOnly, isCompact: true, onToggleMute: {})
                 CameraHUDGlyph(symbol: "pin.slash")
+                CameraHUDGlyph(symbol: "rotate.right")
+                CameraHUDGlyph(symbol: "arrow.up.left.and.arrow.down.right")
                 Menu {
                     Button("Reconnect") {}
                 } label: {

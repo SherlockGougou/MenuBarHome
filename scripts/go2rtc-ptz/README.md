@@ -11,7 +11,7 @@
 | 基座 tag | `v1.9.15` |
 | 基座 commit | `7c05066c90ab6ad1fccb506d5f0408aa31ebe60f` |
 | 补丁文件 | `patches/0001-xiaomi-ptz.patch` |
-| 补丁 SHA-256 | `17ebb3c71ffe2e9c0c3ce391d8aabc8165b3513d1ea03dac7d60558b184af8a3` |
+| 补丁 SHA-256 | `ac02a179c47adf5f26bab689d6a2aa432dbbf8517c38e8319308b088b5102420` |
 | 许可 | MIT（保留 go2rtc 版权声明；补丁本身同样以 MIT 提供） |
 
 补丁的思路来自社区真机报告与上游 PR #2531（`bcamarneiro`，commit `1a056d7c29` / `e23a21b9ee`），但这里只保留单会话电机命令与租约端点，没有引入 ONVIF 相关代码。
@@ -44,6 +44,7 @@
      松手/到期必发停止。
    - 响应里 `stopConfirmed` 恒为 false：协议没有可信的停止回执。
 5. **能力表是证据表，不是品牌表**：未收录型号返回 409，不产生任何设备动作。
+6. **hub 中继电池机**：合并上游 PR #2588 的 `subdid` 支持，`mxiang.camera.mwc10` 室内机可以中继 `mwc11` 电池摄像机；同时保留 hub 音频 channel 3 的复用和未知通道跳过。
 
 ## 构建
 

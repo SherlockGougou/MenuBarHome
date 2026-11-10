@@ -1929,6 +1929,196 @@ struct MenuBarPanelControllerTests {
         #expect(cameraController.isMuted, "closing the live window returns the next open to muted")
     }
 
+    @Test("Camera pin toggle changes the window level and rotation cycles in quarter turns")
+    func cameraLivePanelPinAndRotation() async throws {
+        _ = NSApplication.shared
+        let (store, suite) = try await makeStore()
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let camera = try #require(store.devices.first(where: {
+            if case .camera = $0.kind { return true }
+            return false
+        }))
+
+        let cameraController = CameraLivePanelController.shared
+        cameraController.presentsActively = false
+        cameraController.install(with: store)
+        defer {
+            cameraController.closePanel()
+            cameraController.presentsActively = true
+        }
+
+        store.openCameraLiveView(camera.id)
+        let panel = try #require(cameraController.panelWindow)
+
+        cameraController.isPinnedOnTop = false
+        #expect(panel.level == .normal)
+        #expect(panel.isFloatingPanel == false)
+        #expect(!panel.collectionBehavior.contains(.fullScreenAuxiliary))
+
+        cameraController.isPinnedOnTop = true
+        #expect(panel.level.rawValue > NSWindow.Level.statusBar.rawValue)
+        #expect(panel.isFloatingPanel == true)
+        #expect(panel.collectionBehavior.contains(.fullScreenAuxiliary))
+
+        for expected in [90, 180, 270, 0] {
+            cameraController.rotateVideo()
+            #expect(cameraController.videoRotation(for: camera.id) == expected)
+        }
+    }
+
+    @Test("Camera rotation keeps a quarter turn inside the viewport")
+    func cameraRotationMath() {
+        #expect(CameraVideoRotation.next(270) == 0)
+        #expect(CameraVideoRotation.fitScale(degrees: 0, in: CGSize(width: 640, height: 420)) == 1)
+        #expect(CameraVideoRotation.fitScale(degrees: 180, in: CGSize(width: 640, height: 420)) == 1)
+        let quarterTurn = CameraVideoRotation.fitScale(degrees: 90, in: CGSize(width: 640, height: 420))
+        #expect(abs(quarterTurn - 420.0 / 640.0) < 0.0001)
+    }
+
+    @Test("The video-only HUD explains the missing audio track")
+    func cameraVideoOnlyHUDExplainsAudio() async throws {
+        _ = NSApplication.shared
+        let (store, suite) = try await makeStore()
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let camera = try #require(store.devices.first(where: {
+            if case .camera = $0.kind { return true }
+            return false
+        }))
+
+        let cameraController = CameraLivePanelController.shared
+        cameraController.presentsActively = false
+        cameraController.install(with: store)
+        defer {
+            cameraController.closePanel()
+            cameraController.presentsActively = true
+        }
+
+        store.openCameraLiveView(camera.id)
+        cameraController.showVideoOnlyNotice()
+        let notice = try #require(cameraController.videoOnlyNotice)
+        #expect(notice.contains("没有音轨"))
+    }
+
+    @Test("Camera maximize fills the screen and restores the previous frame")
+    func cameraLivePanelMaximizeAndRestore() async throws {
+        _ = NSApplication.shared
+        let (store, suite) = try await makeStore()
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let camera = try #require(store.devices.first(where: {
+            if case .camera = $0.kind { return true }
+            return false
+        }))
+
+        let cameraController = CameraLivePanelController.shared
+        cameraController.presentsActively = false
+        cameraController.install(with: store)
+        defer {
+            cameraController.closePanel()
+            cameraController.presentsActively = true
+        }
+
+        store.openCameraLiveView(camera.id)
+        let panel = try #require(cameraController.panelWindow)
+        let screen = try #require(panel.screen ?? NSScreen.main)
+        let original = panel.frame
+
+        cameraController.toggleMaximized()
+        #expect(cameraController.isMaximized)
+        #expect(panel.frame == screen.visibleFrame)
+
+        cameraController.toggleMaximized()
+        #expect(!cameraController.isMaximized)
+        #expect(panel.frame == original)
+
+        cameraController.toggleMaximized()
+        cameraController.storePanelFrame()
+        let stored = UserDefaults.standard.string(forKey: "camera_live_panel_frame_v1")
+        #expect(stored == NSStringFromRect(original))
+
+        cameraController.toggleExpandedSize()
+        #expect(!cameraController.isMaximized)
+        #expect(abs(panel.frame.maxX - original.maxX) < 1)
+        #expect(abs(panel.frame.maxY - original.maxY) < 1)
+        #expect(panel.frame.size != screen.visibleFrame.size)
+    }
+
+    @Test("Picture in Picture keeps the maximized frame, so one click restores the small window")
+    func pictureInPictureRestoreThenMaximizeReturnsTheSmallFrame() async throws {
+        _ = NSApplication.shared
+        let (store, suite) = try await makeStore()
+        defer {
+            UserDefaults.standard.removeObject(forKey: "camera_live_panel_frame_v1")
+            UserDefaults.standard.removePersistentDomain(forName: suite)
+        }
+        let camera = try #require(store.devices.first(where: {
+            if case .camera = $0.kind { return true }
+            return false
+        }))
+        let cameraController = CameraLivePanelController.shared
+        cameraController.presentsActively = false
+        cameraController.install(with: store)
+        defer {
+            cameraController.closePanel()
+            cameraController.presentsActively = true
+        }
+
+        store.openCameraLiveView(camera.id)
+        let panel = try #require(cameraController.panelWindow)
+        let screen = try #require(panel.screen ?? NSScreen.main)
+        let small = panel.frame
+
+        cameraController.toggleMaximized()
+        #expect(cameraController.isMaximized)
+        #expect(panel.frame == screen.visibleFrame)
+
+        cameraController.suspendPanelForPictureInPicture()
+        #expect(cameraController.isMaximized)
+        #expect(panel.frame == screen.visibleFrame)
+        panel.orderFrontRegardless()
+
+        cameraController.toggleMaximized()
+        #expect(!cameraController.isMaximized)
+        #expect(panel.frame == small)
+    }
+
+    @Test("Reopening a hidden maximized window replaces the frame, so the next maximize fills the screen")
+    func hiddenMaximizedWindowPresentsThenMaximizeFillsTheScreen() async throws {
+        _ = NSApplication.shared
+        UserDefaults.standard.removeObject(forKey: "camera_live_panel_frame_v1")
+        let (store, suite) = try await makeStore()
+        defer {
+            UserDefaults.standard.removeObject(forKey: "camera_live_panel_frame_v1")
+            UserDefaults.standard.removePersistentDomain(forName: suite)
+        }
+        let camera = try #require(store.devices.first(where: {
+            if case .camera = $0.kind { return true }
+            return false
+        }))
+        let cameraController = CameraLivePanelController.shared
+        cameraController.presentsActively = false
+        cameraController.install(with: store)
+        defer {
+            cameraController.closePanel()
+            cameraController.presentsActively = true
+        }
+
+        store.openCameraLiveView(camera.id)
+        let panel = try #require(cameraController.panelWindow)
+        let screen = try #require(panel.screen ?? NSScreen.main)
+        cameraController.toggleMaximized()
+        #expect(panel.frame == screen.visibleFrame)
+
+        panel.orderOut(nil)
+        #expect(cameraController.isMaximized)
+        store.openCameraLiveView(camera.id)
+        #expect(!cameraController.isMaximized)
+        #expect(panel.frame != screen.visibleFrame)
+
+        cameraController.toggleMaximized()
+        #expect(cameraController.isMaximized)
+        #expect(panel.frame == screen.visibleFrame)
+    }
+
     @Test("Closing the camera mini-window hides it at once and releases the stream")
     func cameraLivePanelCloseReleasesStreamImmediately() async throws {
         _ = NSApplication.shared

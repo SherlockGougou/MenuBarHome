@@ -152,5 +152,39 @@ struct CameraPTZClientTests {
         #expect(result.sent)
         #expect(result.confirmed == false)
         #expect(result.mode == .continuous)
+        #expect(result.clearsFailedWrite)
+    }
+
+    @Test("A not-sent stop does not clear a failed write when the bridge omits stopError")
+    func notSentStopDoesNotClearAFailedWrite() async throws {
+        PTZStubProtocol.reset(.init(
+            status: 200,
+            body: #"{"ok":true,"mode":"step","stopSent":false,"stopConfirmed":false}"#
+        ))
+        let result = try await makeClient().stop(
+            token: CameraPTZSessionToken(epoch: "epoch-1", session: 4)
+        )
+        #expect(result.sent == false)
+        #expect(result.errorReason == nil)
+        #expect(result.mode == .step)
+        #expect(result.clearsFailedWrite == false)
+    }
+
+    @Test("A newer session's sent stop clears an older failure, and a not-sent reply does not")
+    func newerCleanStopClearsOlderFailureForTheSameCamera() {
+        let unresolved = ["cam-a", "cam-b"]
+        let clean = CameraPTZStopResult(sent: true, mode: .continuous)
+        #expect(CameraPTZFailureResolution.remainingDeviceIds(
+            unresolvedDeviceIds: unresolved,
+            stoppedDeviceId: "cam-a",
+            result: clean
+        ) == ["cam-b"])
+
+        let notSent = CameraPTZStopResult(sent: false, mode: .step)
+        #expect(CameraPTZFailureResolution.remainingDeviceIds(
+            unresolvedDeviceIds: unresolved,
+            stoppedDeviceId: "cam-a",
+            result: notSent
+        ) == unresolved)
     }
 }

@@ -24,6 +24,23 @@ index 984c73e..f192817 100644
  func (s *Stream) Sources() []string {
  	sources := make([]string, 0, len(s.producers))
  	for _, prod := range s.producers {
+diff --git a/internal/xiaomi/README.md b/internal/xiaomi/README.md
+index 330183e..3edfc66 100644
+--- a/internal/xiaomi/README.md
++++ b/internal/xiaomi/README.md
+@@ -62,3 +62,12 @@ You can use a second channel for dual cameras: `channel=2`.
+ streams:
+   xiaomi1: xiaomi://***&channel=2
+ ```
++
++Battery cameras that connect through a hub (e.g. `mxiang.camera.mwc11` cameras with the `mxiang.camera.mwc10` hub) have no IP of their own. Use the hub's IP, DID and model, and select the camera with `subdid=<camera DID>`:
++
++```yaml
++streams:
++  xiaomi1: xiaomi://1234567890:de@192.168.1.123?did=1111111111&model=mxiang.camera.mwc10&subdid=2222222222
++```
++
++These cameras sleep most of the time; the hub wakes them on request, so the first frame can take a few seconds.
 diff --git a/internal/xiaomi/audit_repro_test.go b/internal/xiaomi/audit_repro_test.go
 new file mode 100644
 index 0000000..3ffd76c
@@ -143,7 +160,7 @@ new file mode 100644
 index 0000000..e1479c2
 --- /dev/null
 +++ b/internal/xiaomi/ptz.go
-@@ -0,0 +1,639 @@
+@@ -0,0 +1,686 @@
 +package xiaomi
 +
 +import (
@@ -471,11 +488,7 @@ index 0000000..e1479c2
 +	mode := ptzStep
 +	current := stream.current
 +	if current == nil || current.session != session {
-+		if session > stream.stoppedThrough {
-+			stream.stoppedThrough = session
-+		}
-+		m.mu.Unlock()
-+		return false, mode, nil
++		return m.stopFormerSession(stream, current, session)
 +	}
 +	mode = current.mode
 +	if current.ended {
@@ -529,6 +542,57 @@ index 0000000..e1479c2
 +		return false, mode, err
 +	}
 +	return sent, mode, nil
++}
++
++func (m *ptzManager) stopFormerSession(stream *ptzStream, current *ptzSession, session uint64) (bool, ptzMode, error) {
++	if session > stream.stoppedThrough {
++		stream.stoppedThrough = session
++	}
++	// An old session whose last motor write failed must not look like a successful stop.
++	// A newer session that has already started moving is left alone. Otherwise this retry
++	// is the stop that still has to write -1001.
++	if stream.lastStopSession != session || stream.lastStopErr == nil {
++		m.mu.Unlock()
++		return false, ptzStep, nil
++	}
++	if current != nil && !current.ended && !current.started.IsZero() {
++		err := stream.lastStopErr
++		m.mu.Unlock()
++		return false, ptzContinuous, fmt.Errorf("%w: %v", errPTZStopWrite, err)
++	}
++	var motor motorControl
++	if current != nil {
++		motor = current.motor
++	}
++	if motor == nil {
++		err := stream.lastStopErr
++		m.mu.Unlock()
++		return false, ptzContinuous, fmt.Errorf("%w: %v", errPTZStopWrite, err)
++	}
++	if stream.stopsInFlight == 0 {
++		stream.stopBarrier = make(chan struct{})
++	}
++	stream.stopsInFlight++
++	m.mu.Unlock()
++
++	stream.motorLock.Lock()
++	err := motor.Motor(-1001)
++	stream.motorLock.Unlock()
++
++	m.mu.Lock()
++	stream.lastStopSession = session
++	stream.lastStopSent = err == nil
++	stream.lastStopErr = err
++	stream.stopsInFlight--
++	if stream.stopsInFlight == 0 && stream.stopBarrier != nil {
++		close(stream.stopBarrier)
++		stream.stopBarrier = nil
++	}
++	m.mu.Unlock()
++	if err != nil {
++		return false, ptzContinuous, fmt.Errorf("%w: %v", errPTZStopWrite, err)
++	}
++	return true, ptzContinuous, nil
 +}
 +
 +func storedStopLocked(stream *ptzStream, session uint64) (bool, error) {
@@ -788,7 +852,7 @@ new file mode 100644
 index 0000000..a9ff824
 --- /dev/null
 +++ b/internal/xiaomi/ptz_test.go
-@@ -0,0 +1,587 @@
+@@ -0,0 +1,617 @@
 +package xiaomi
 +
 +import (
@@ -1363,8 +1427,8 @@ index 0000000..a9ff824
 +	if _, err := ptz.move("cam", ptz.epoch, second, 1, "right", now.Add(time.Millisecond)); err != nil {
 +		t.Fatal(err)
 +	}
-+	if _, _, err := ptz.stop("cam", ptz.epoch, first); err != nil {
-+		t.Fatalf("late stop of the ended session: %v", err)
++	if _, _, err := ptz.stop("cam", ptz.epoch, first); err == nil {
++		t.Fatal("late stop of a failed session reported success without writing -1001")
 +	}
 +	if got := countOps(motor.callSnapshot(), -1001); got != 1 {
 +		t.Fatalf("a stop for a session that no longer owns the stream moved the motor: calls = %d", got)
@@ -1374,6 +1438,36 @@ index 0000000..a9ff824
 +	}
 +	if got := countOps(motor.callSnapshot(), -1001); got != 2 {
 +		t.Fatalf("new session stop calls = %d, want 2", got)
++	}
++}
++
++func TestOldStopRetryAfterNewerIdleSessionWritesStop(t *testing.T) {
++	motor := &fakeMotor{model: "xiaomi.camera.c01a01", fail: map[int]bool{-1001: true}}
++	withPTZFixture(t, motor, ptzDefaultTiming)
++	now := time.Unix(19000, 0)
++
++	first, _, _ := ptz.begin("cam", now)
++	if _, err := ptz.move("cam", ptz.epoch, first, 1, "left", now); err != nil {
++		t.Fatal(err)
++	}
++	if _, _, err := ptz.stop("cam", ptz.epoch, first); err == nil {
++		t.Fatal("first stop lost the write error")
++	}
++	motor.setFail(-1001, false)
++
++	second, _, err := ptz.begin("cam", now.Add(time.Millisecond))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if sent, _, err := ptz.stop("cam", ptz.epoch, second); err != nil || sent {
++		t.Fatalf("idle session stop: sent=%v err=%v", sent, err)
++	}
++	sent, _, err := ptz.stop("cam", ptz.epoch, first)
++	if err != nil || !sent {
++		t.Fatalf("retry of the failed session: sent=%v err=%v", sent, err)
++	}
++	if got := countOps(motor.callSnapshot(), -1001); got != 2 {
++		t.Fatalf("motor stop calls = %d, want 2", got)
 +	}
 +}
 diff --git a/internal/xiaomi/round2_repro_test.go b/internal/xiaomi/round2_repro_test.go
@@ -1653,7 +1747,7 @@ index 0000000..bec5e44
 +	}
 +}
 diff --git a/pkg/xiaomi/miss/client.go b/pkg/xiaomi/miss/client.go
-index 3113632..81c17b9 100644
+index 3113632..cd2c7cf 100644
 --- a/pkg/xiaomi/miss/client.go
 +++ b/pkg/xiaomi/miss/client.go
 @@ -4,10 +4,12 @@ import (
@@ -1678,20 +1772,23 @@ index 3113632..81c17b9 100644
  	ReadPacket() (hdr, payload []byte, err error)
  	WritePacket(hdr, payload []byte) error
  	RemoteAddr() net.Addr
-@@ -72,13 +76,32 @@ func NewClient(rawURL string) (*Client, error) {
+@@ -72,13 +76,33 @@ func NewClient(rawURL string) (*Client, error) {
  		return nil, err
  	}
  
 -	return &Client{Conn: conn, key: key, model: model}, nil
-+	client := &Client{Conn: conn, key: key, model: model}
++	client := &Client{Conn: conn, key: key, model: model, subDID: query.Get("subdid")}
 +	go client.commandLoop()
 +	return client, nil
  }
  
  type Client struct {
  	Conn
- 	key   []byte
- 	model string
+-	key   []byte
+-	model string
++	key    []byte
++	model  string
++	subDID string
 +
 +	motorMu sync.Mutex
 +	stateMu sync.Mutex
@@ -1712,7 +1809,7 @@ index 3113632..81c17b9 100644
  }
  
  const (
-@@ -104,6 +127,14 @@ const (
+@@ -104,6 +128,14 @@ const (
  	cmdEncoded           = 0x1001
  )
  
@@ -1727,7 +1824,7 @@ index 3113632..81c17b9 100644
  func login(conn Conn, clientPublic, sign string) error {
  	s := fmt.Sprintf(`{"public_key":"%s","sign":"%s","uuid":"","support_encrypt":0}`, clientPublic, sign)
  	if err := conn.WriteCommand(cmdAuthReq, []byte(s)); err != nil {
-@@ -126,6 +157,136 @@ func (c *Client) Version() string {
+@@ -126,6 +158,136 @@ func (c *Client) Version() string {
  	return fmt.Sprintf("%s (%s)", c.Conn.Version(), c.model)
  }
  
@@ -1864,11 +1961,57 @@ index 3113632..81c17b9 100644
  func (c *Client) WriteCommand(data []byte) error {
  	data, err := crypto.Encode(data, c.key)
  	if err != nil {
+@@ -145,6 +307,16 @@ const (
+ )
+ 
+ func (c *Client) StartMedia(channel, quality, audio string) error {
++	// Battery cameras behind a hub: the hub selects the camera by its DID.
++	if c.subDID != "" {
++		if audio == "" {
++			audio = "1"
++		}
++		data := binary.BigEndian.AppendUint32(nil, cmdVideoStart)
++		data = fmt.Appendf(data, `{"enableaudio":%s,"subdid":"%s"}`, audio, c.subDID)
++		return c.WriteCommand(data)
++	}
++
+ 	switch c.model {
+ 	case ModelDafang, ModelXiaofang:
+ 		var q, a byte
+@@ -195,6 +367,9 @@ func (c *Client) StartMedia(channel, quality, audio string) error {
+ 
+ func (c *Client) StopMedia() error {
+ 	data := binary.BigEndian.AppendUint32(nil, cmdVideoStop)
++	if c.subDID != "" {
++		data = fmt.Appendf(data, `{"videoquality":0,"enableaudio":0,"subdid":"%s"}`, c.subDID)
++	}
+ 	return c.WriteCommand(data)
+ }
+ 
 diff --git a/pkg/xiaomi/miss/cs2/conn.go b/pkg/xiaomi/miss/cs2/conn.go
-index 2c1b395..3fa990d 100644
+index 2c1b395..6652129 100644
 --- a/pkg/xiaomi/miss/cs2/conn.go
 +++ b/pkg/xiaomi/miss/cs2/conn.go
-@@ -43,6 +43,9 @@ type Conn struct {
+@@ -20,11 +20,17 @@ func Dial(host, transport string) (*Conn, error) {
+ 
+ 	_, isTCP := conn.(*tcpConn)
+ 
++	// Channel 2 - media. Some devices (hub mxiang.camera.mwc10) send audio
++	// on channel 3, so it shares the output queue with channel 2.
++	media := newDataChannel(250, 100)
++	audio := newDataChannel(250, -1)
++	audio.popBuf = media.popBuf
++
+ 	c := &Conn{
+ 		Conn:  conn,
+ 		isTCP: isTCP,
+ 		channels: [4]*dataChannel{
+-			newDataChannel(0, 10), nil, newDataChannel(250, 100), nil,
++			newDataChannel(0, 10), nil, media, audio,
+ 		},
+ 	}
+ 	go c.worker()
+@@ -43,6 +49,9 @@ type Conn struct {
  
  	cmdMu  sync.Mutex
  	cmdAck func()
@@ -1878,18 +2021,17 @@ index 2c1b395..3fa990d 100644
  }
  
  const (
-@@ -131,6 +134,10 @@ func (c *Conn) worker() {
+@@ -131,6 +140,9 @@ func (c *Conn) worker() {
  		switch buf[1] {
  		case msgDrw:
  			ch := buf[5]
 +			if int(ch) >= len(c.channels) || c.channels[ch] == nil {
-+				// Channels 1 and 3 are not implemented; cameras still send frames on them.
 +				continue
 +			}
  			channel := c.channels[ch]
  
  			if c.isTCP {
-@@ -197,7 +204,7 @@ func (c *Conn) ReadCommand() (cmd uint32, data []byte, err error) {
+@@ -197,7 +209,7 @@ func (c *Conn) ReadCommand() (cmd uint32, data []byte, err error) {
  	if !ok {
  		return 0, nil, c.Error()
  	}
@@ -1898,7 +2040,7 @@ index 2c1b395..3fa990d 100644
  	data = buf[4:]
  	return
  }
-@@ -225,11 +232,16 @@ func (c *Conn) WriteCommand(cmd uint32, data []byte) error {
+@@ -225,11 +237,16 @@ func (c *Conn) WriteCommand(cmd uint32, data []byte) error {
  		timeout.Reset(1)
  	}
  
@@ -1916,7 +2058,7 @@ index 2c1b395..3fa990d 100644
  		r := repeat.Add(-1)
  		if r < 0 {
  			return nil
-@@ -240,6 +252,38 @@ func (c *Conn) WriteCommand(cmd uint32, data []byte) error {
+@@ -240,6 +257,38 @@ func (c *Conn) WriteCommand(cmd uint32, data []byte) error {
  	}
  }
  
