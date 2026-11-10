@@ -960,30 +960,6 @@ actor StubMiCloudAPI: MiCloudAPI {
     }
 }
 
-final class RelayPortAllocator: @unchecked Sendable {
-    private let lock = NSLock()
-    private var ports: [UInt16]
-    private var issuedPorts: [UInt16] = []
-
-    init(ports: [UInt16]) {
-        self.ports = ports
-    }
-
-    var issued: [UInt16] {
-        lock.lock()
-        defer { lock.unlock() }
-        return issuedPorts
-    }
-
-    func next() -> UInt16 {
-        lock.lock()
-        defer { lock.unlock() }
-        let port = ports.removeFirst()
-        issuedPorts.append(port)
-        return port
-    }
-}
-
 actor StubXiaomiCameraBridge: XiaomiCameraBridging {
     private(set) var startCalls: [(did: String, model: String, localIP: String, vendor: String, uid: String?, quality: XiaomiCameraStreamQuality, channel: Int, subdid: String?)] = []
     private(set) var stopCalls: [String] = []
@@ -1510,8 +1486,8 @@ struct MiCloudProviderTests {
         #expect(MiCloudProvider.hubRecord(for: camera, devices: [secondHub, offlineOwn, camera], rooms: twoHubRooms) == nil)
     }
 
-    @Test("Two mwc11 cameras on one online mwc10 keep the second relay port")
-    func twoBatteryCamerasKeepTheHubRelay() async throws {
+    @Test("Two mwc11 cameras on one mwc10 get isolated relay ports")
+    func twoBatteryCamerasGetIsolatedRelays() async throws {
         let hub = MiDeviceRecord(did: "hub123", name: "室内机", model: "mxiang.camera.mwc10", isOnline: true, localIp: "192.168.50.60")
         let camA = MiDeviceRecord(did: "camA", name: "摄像机 A", model: "mxiang.camera.mwc11", isOnline: true)
         let camB = MiDeviceRecord(did: "camB", name: "摄像机 B", model: "mxiang.camera.mwc11", isOnline: true)
@@ -1524,26 +1500,17 @@ struct MiCloudProviderTests {
         let keyA = XiaomiCameraBridge.streamKey(cleanDid: cleanHub, subdid: camA.did)
         let keyB = XiaomiCameraBridge.streamKey(cleanDid: cleanHub, subdid: camB.did)
         let bridge = XiaomiCameraBridge()
-        let allocator = RelayPortAllocator(ports: [4101, 4102])
-        let portA = try await bridge.beginSharedRelay(cleanDid: cleanHub, streamKey: keyA) {
-            allocator.next()
-        }
-        let portB = try await bridge.beginSharedRelay(cleanDid: cleanHub, streamKey: keyB) {
-            allocator.next()
-        }
-        #expect(portA == 4101)
-        #expect(portB == 4101)
-        #expect(allocator.issued == [4101])
-        await bridge.endSharedRelay(cleanDid: cleanHub, streamKey: keyA)
-        #expect(await bridge.relayPort(for: cleanHub) == 4101)
+        await bridge.installRelayForTesting(streamKey: keyA, port: 4101)
+        await bridge.installRelayForTesting(streamKey: keyB, port: 4102)
+        #expect(await bridge.relayPort(forStreamKey: keyA) == 4101)
+        #expect(await bridge.relayPort(forStreamKey: keyB) == 4102)
 
-        await bridge.endSharedRelay(cleanDid: cleanHub, streamKey: keyB)
-        #expect(await bridge.relayPort(for: cleanHub) == nil)
-        let portAgain = try await bridge.beginSharedRelay(cleanDid: cleanHub, streamKey: keyB) {
-            allocator.next()
-        }
-        #expect(portAgain == 4102)
-        #expect(allocator.issued == [4101, 4102])
+        await bridge.endRelay(streamKey: keyA)
+        #expect(await bridge.relayPort(forStreamKey: keyA) == nil)
+        #expect(await bridge.relayPort(forStreamKey: keyB) == 4102)
+
+        await bridge.endRelay(streamKey: keyB)
+        #expect(await bridge.relayPort(forStreamKey: keyB) == nil)
     }
 
     @Test("Stopping a battery camera keeps the hub binding after the hub goes offline")

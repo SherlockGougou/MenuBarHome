@@ -127,43 +127,14 @@ struct Go2RTCOwnershipProbe: Equatable, Sendable {
     var binaryChanged: Bool = false
 }
 
-/// One UDP relay keyed by hub DID, held by each camera stream that still needs it.
-struct HubRelaySessions {
-    private var ports: [String: UInt16] = [:]
-    private var holders: [String: Set<String>] = [:]
-
-    func port(for cleanDid: String) -> UInt16? {
-        ports[cleanDid]
-    }
-
-    mutating func retain(cleanDid: String, streamKey: String, port: UInt16) {
-        ports[cleanDid] = port
-        holders[cleanDid, default: []].insert(streamKey)
-    }
-
-    /// The port to close when `streamKey` was the last holder. Nil leaves the relay running,
-    /// including when this stream was not a holder.
-    mutating func release(cleanDid: String, streamKey: String) -> UInt16? {
-        guard var held = holders[cleanDid] else { return nil }
-        guard held.remove(streamKey) != nil else { return nil }
-        if held.isEmpty {
-            holders.removeValue(forKey: cleanDid)
-            return ports.removeValue(forKey: cleanDid)
-        }
-        holders[cleanDid] = held
-        return nil
-    }
-}
-
 /// Manages the local CS2 UDP LAN relay and `go2rtc` transcode daemon for Xiaomi P2P cameras (#97).
 public actor XiaomiCameraBridge: XiaomiCameraBridging {
     public static let shared = XiaomiCameraBridge()
 
     private let logger = Logger(subsystem: "com.jryang1997.MenuBarMijia", category: "XiaomiCameraBridge")
+    /// One UDP relay per camera stream. The relay socket forwards a single go2rtc client,
+    /// so two subcameras on one hub must not share it.
     private var relays: [String: RelayHandle] = [:]
-    /// Stream keys that still need the relay for one hub DID. Stopping one camera
-    /// leaves the relay up while a sibling stream is in this set.
-    private var relaySessions = HubRelaySessions()
     private var go2rtcProcess: Process?
     private var activeOwner: Go2RTCOwnerRecord?
     /// True only when the running go2rtc build exposes the PTZ endpoint. The official v1.9.15
@@ -215,17 +186,15 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         let session = Self.makeLocalHTTPClient()
         defer { session.invalidateAndCancel() }
 
-        // A lens switch deletes this camera's previous channel names. The relay stays
-        // while any other camera on the same hub still has a stream.
+        // A lens switch deletes this camera's previous channel names. Each camera stream
+        // gets its own relay port; the hub may serve two subcameras at once.
         await stopBridgeInternal(http: session, names: Self.allStreamNames(cleanDid: streamKey))
 
-        let relayPort = try beginSharedRelay(cleanDid: cleanDid, streamKey: streamKey) {
-            try ensureRelayPort(
-                cleanDid: cleanDid,
-                camIP: ipv4,
-                commandChannelDrained: ptzEndpointAvailable
-            )
-        }
+        let relayPort = try ensureRelayPort(
+            streamKey: streamKey,
+            camIP: ipv4,
+            commandChannelDrained: ptzEndpointAvailable
+        )
 
         let query = Self.xiaomiStreamQuery(
             clientPublic: clientPublic,
@@ -244,8 +213,14 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         guard let owner = activeOwner else {
             throw HomeProviderError.serviceCallFailed(500, "Local streaming service did not start")
         }
-        try await putStream(http: session, owner: owner.session, name: rawName, src: xiaomiURL)
-        try await putStream(http: session, owner: owner.session, name: mjpegName, src: "ffmpeg:\(rawName)#video=mjpeg")
+        do {
+            try await putStream(http: session, owner: owner.session, name: rawName, src: xiaomiURL)
+            try await putStream(http: session, owner: owner.session, name: mjpegName, src: "ffmpeg:\(rawName)#video=mjpeg")
+        } catch {
+            await stopBridgeInternal(http: session, names: Self.allStreamNames(cleanDid: streamKey))
+            endRelay(streamKey: streamKey)
+            throw error
+        }
 
         // `mp4` (empty) selects go2rtc's H.264 + H.265 fMP4 profile, so the camera's own
         // bitstream reaches VideoToolbox without an FFmpeg transcode in between.
@@ -262,7 +237,7 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         let http = Self.makeLocalHTTPClient(timeout: 3.0)
         defer { http.invalidateAndCancel() }
         await stopBridgeInternal(http: http, names: Self.allStreamNames(cleanDid: streamKey))
-        endSharedRelay(cleanDid: cleanDid, streamKey: streamKey)
+        endRelay(streamKey: streamKey)
     }
 
     static func streamKey(cleanDid: String, subdid: String?) -> String {
@@ -325,38 +300,26 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         }
     }
 
-    /// Registers `streamKey` on the hub relay. A sibling that already holds the relay
-    /// keeps its port. The allocator runs only when no stream remains.
-    func beginSharedRelay(
-        cleanDid: String,
-        streamKey: String,
-        allocate: () throws -> UInt16
-    ) throws -> UInt16 {
-        if relaySessions.release(cleanDid: cleanDid, streamKey: streamKey) != nil {
-            relays.removeValue(forKey: cleanDid)?.stopBox.stop()
-            if relays.isEmpty {
-                Self.scrubPersistedStreamsFromConfig()
-            }
-        }
-        if let port = relaySessions.port(for: cleanDid) {
-            relaySessions.retain(cleanDid: cleanDid, streamKey: streamKey, port: port)
-            return port
-        }
-        let port = try allocate()
-        relaySessions.retain(cleanDid: cleanDid, streamKey: streamKey, port: port)
-        return port
-    }
-
-    func endSharedRelay(cleanDid: String, streamKey: String) {
-        guard relaySessions.release(cleanDid: cleanDid, streamKey: streamKey) != nil else { return }
-        relays.removeValue(forKey: cleanDid)?.stopBox.stop()
+    /// Stops the relay belonging to one camera stream, leaving every sibling relay alone.
+    func endRelay(streamKey: String) {
+        guard let existing = relays.removeValue(forKey: streamKey) else { return }
+        existing.stopBox.stop()
         if relays.isEmpty {
             Self.scrubPersistedStreamsFromConfig()
         }
     }
 
-    func relayPort(for cleanDid: String) -> UInt16? {
-        relaySessions.port(for: cleanDid)
+    func relayPort(forStreamKey streamKey: String) -> UInt16? {
+        relays[streamKey]?.port
+    }
+
+    /// Test seam: installs a relay handle without spawning the UDP thread.
+    func installRelayForTesting(streamKey: String, port: UInt16) {
+        relays[streamKey] = RelayHandle(
+            port: port,
+            stopBox: RelayStopBox(),
+            commandChannelDrained: false
+        )
     }
 
     private static func scrubPersistedStreamsFromConfig() {
@@ -419,23 +382,23 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
     }
 
     private func ensureRelayPort(
-        cleanDid: String,
+        streamKey: String,
         camIP: in_addr,
         commandChannelDrained: Bool
     ) throws -> UInt16 {
-        if let existing = relays[cleanDid], !existing.stopBox.isStopped {
+        if let existing = relays[streamKey], !existing.stopBox.isStopped {
             if existing.commandChannelDrained == commandChannelDrained {
                 return existing.port
             }
             // The bridge was replaced by a build with a different command-channel behaviour.
             existing.stopBox.stop()
         }
-        relays.removeValue(forKey: cleanDid)
+        relays.removeValue(forKey: streamKey)
         let (port, stopBox) = try Self.spawnCS2UDPRelay(
             camIP: camIP,
             commandChannelDrained: commandChannelDrained
         )
-        relays[cleanDid] = RelayHandle(
+        relays[streamKey] = RelayHandle(
             port: port,
             stopBox: stopBox,
             commandChannelDrained: commandChannelDrained
