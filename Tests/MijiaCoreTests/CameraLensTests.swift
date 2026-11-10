@@ -17,6 +17,17 @@ struct CameraLensTests {
     @Test("A device name that says dual gets a lens choice before its model is catalogued")
     func namedDualCameraGetsLensChoice() {
         #expect(CameraLensCatalog.lenses(for: "vendor.camera.unknown", name: "客厅双摄").count == 2)
+        #expect(CameraLensCatalog.lenses(for: "vendor.camera.unknown", name: "Front dual-lens").count == 2)
+        #expect(CameraLensCatalog.lenses(for: "vendor.camera.unknown", name: "双镜头摄像机").count == 2)
+    }
+
+    @Test("A name that only contains those letters is still one lens")
+    func substringAndNegationStaySingleLens() {
+        #expect(CameraLensCatalog.lenses(for: "chuangmi.camera.81ac1", name: "客厅摄像机").isEmpty)
+        #expect(CameraLensCatalog.lenses(for: "vendor.camera.unknown", name: "Individual").isEmpty)
+        #expect(CameraLensCatalog.lenses(for: "vendor.camera.unknown", name: "不是双摄").isEmpty)
+        #expect(CameraLensCatalog.lenses(for: "vendor.camera.unknown", name: "不是双镜头").isEmpty)
+        #expect(CameraLensCatalog.lenses(for: "vendor.camera.unknown", name: "not dual").isEmpty)
     }
 
     @Test("Camera synthesis attaches the catalog to a known camera only")

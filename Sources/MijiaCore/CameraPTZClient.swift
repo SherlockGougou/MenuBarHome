@@ -22,6 +22,12 @@ public struct CameraPTZStopResult: Equatable, Sendable {
     /// The bridge accepted the request but the write to the camera failed.
     public var errorReason: String?
 
+    /// A later retry may clear a failed write only when this stop actually sent `-1001`.
+    /// A missing `stopError` with `sent == false` is how an old session reports a no-op.
+    public var clearsFailedWrite: Bool {
+        errorReason == nil && sent
+    }
+
     public init(
         sent: Bool,
         confirmed: Bool = false,

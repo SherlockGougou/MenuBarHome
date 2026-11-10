@@ -86,7 +86,7 @@ final class CameraLivePlayback {
         task = nil
         player.stop()
         hasFrame = false
-        failure = detail
+        failure = CameraPlaybackTerminalFailure.reason(detail: detail)
         onFailure?(detail)
     }
 }

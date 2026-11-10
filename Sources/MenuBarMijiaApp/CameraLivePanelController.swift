@@ -33,12 +33,24 @@ private final class WarmCameraPlayback {
     let playback: CameraLivePlayback
     let deviceID: String
     let lensID: String
+    let identity: CameraWarmIdentity
     var expiryTask: Task<Void, Never>?
 
-    init(playback: CameraLivePlayback, deviceID: String, lensID: String) {
+    init(playback: CameraLivePlayback, deviceID: String, lensID: String, identity: CameraWarmIdentity) {
         self.playback = playback
         self.deviceID = deviceID
         self.lensID = lensID
+        self.identity = identity
+    }
+}
+
+extension CameraWindowFrame {
+    init(_ rect: NSRect) {
+        self.init(x: rect.origin.x, y: rect.origin.y, width: rect.size.width, height: rect.size.height)
+    }
+
+    var nsRect: NSRect {
+        NSRect(x: x, y: y, width: width, height: height)
     }
 }
 
@@ -290,7 +302,8 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
                 warmActivePlayback(
                     playback,
                     deviceID: previousDeviceId,
-                    lensID: previousLensID ?? "main"
+                    lensID: previousLensID ?? "main",
+                    identity: warmIdentity(for: previousDeviceId, entityID: activeCameraEntityID)
                 )
             } else {
                 stopStreamTasks()
@@ -333,7 +346,8 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         }
         if !canReuseHotStream {
             if let warm = reservedWarm {
-                if warm.playback.failure == nil {
+                let currentIdentity = warmIdentity(for: device.id, entityID: Self.cameraEntityID(for: device))
+                if warm.identity.matches(currentIdentity), warm.playback.failure == nil {
                     tearDownPictureInPicture()
                     activePlayback = warm.playback
                     streamSource = warm.playback.source
@@ -361,9 +375,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         doorbellDismissTask?.cancel()
         doorbellDismissTask = nil
         setURLFieldActive(false)
-        if !isDoorbellPlacement, let frame = isMaximized ? frameBeforeMaximize : panelWindow?.frame {
-            UserDefaults.standard.set(NSStringFromRect(frame), forKey: Self.frameStorageKey)
-        }
+        storePanelFrame()
         isMaximized = false
         frameBeforeMaximize = nil
         isDoorbellPlacement = false
@@ -387,9 +399,13 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
             var deviceIDs = Set(activePlaybackIDs)
             if let closingDeviceId { deviceIDs.insert(closingDeviceId) }
             for deviceID in deviceIDs {
-                guard !Task.isCancelled,
-                      let self,
-                      self.closeReleaseGeneration == releaseGeneration else { return }
+                guard let self else { return }
+                let generationMatches = self.closeReleaseGeneration == releaseGeneration
+                guard CameraCloseRelease.shouldStop(
+                    deviceID: deviceID,
+                    activeDeviceID: self.activeDeviceId,
+                    generationMatches: generationMatches
+                ) else { continue }
                 await store.stopCameraStream(for: deviceID)
             }
             self?.closeReleaseTask = nil
@@ -417,7 +433,31 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         isLoadingStream = false
     }
 
-    private func warmActivePlayback(_ playback: CameraLivePlayback, deviceID: String, lensID: String) {
+    private func warmIdentity(for deviceID: String, entityID: String?) -> CameraWarmIdentity {
+        CameraWarmIdentity(
+            entityID: entityID,
+            backend: store?.deviceBackend(for: deviceID) ?? .demo,
+            pinnedBackend: store?.pinnedSource(for: deviceID)
+        )
+    }
+
+    func storePanelFrame() {
+        guard !isDoorbellPlacement, let panel = panelWindow else { return }
+        let frame = CameraWindowFrames.frameToRemember(
+            isMaximized: isMaximized,
+            saved: frameBeforeMaximize.map { CameraWindowFrame($0) },
+            current: CameraWindowFrame(panel.frame)
+        )
+        guard let frame else { return }
+        UserDefaults.standard.set(NSStringFromRect(frame.nsRect), forKey: Self.frameStorageKey)
+    }
+
+    private func warmActivePlayback(
+        _ playback: CameraLivePlayback,
+        deviceID: String,
+        lensID: String,
+        identity: CameraWarmIdentity
+    ) {
         tearDownPictureInPicture()
         activePlayback = nil
         videoPlayer = nil
@@ -427,7 +467,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         errorMessage = nil
         clearPTZ()
 
-        let warm = WarmCameraPlayback(playback: playback, deviceID: deviceID, lensID: lensID)
+        let warm = WarmCameraPlayback(playback: playback, deviceID: deviceID, lensID: lensID, identity: identity)
         warmPlaybacks.append(warm)
         while warmPlaybacks.count > Self.maxWarmPlaybacks {
             releaseWarmPlayback(warmPlaybacks.removeFirst())
@@ -490,9 +530,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
                 self.doorbellDismissTask = nil
                 self.doorbellOwnsClose = false
                 self.setURLFieldActive(false)
-                if !self.isDoorbellPlacement, let frame = self.panelWindow?.frame {
-                    UserDefaults.standard.set(NSStringFromRect(frame), forKey: Self.frameStorageKey)
-                }
+                self.storePanelFrame()
                 self.panelWindow?.orderOut(nil)
             }
         }
@@ -543,15 +581,24 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
     }
 
     public func toggleExpandedSize() {
+        guard let panel = panelWindow else {
+            isMaximized = false
+            frameBeforeMaximize = nil
+            isExpandedSize.toggle()
+            return
+        }
+        let anchor = CameraWindowFrames.anchorBeforeSizeToggle(
+            isMaximized: isMaximized,
+            saved: frameBeforeMaximize.map { CameraWindowFrame($0) },
+            current: CameraWindowFrame(panel.frame)
+        )
         isMaximized = false
         frameBeforeMaximize = nil
         isExpandedSize.toggle()
-        guard let panel = panelWindow else { return }
         let targetSize = isExpandedSize ? Self.expandedSize : Self.compactSize
-        let current = panel.frame
         let newOrigin = NSPoint(
-            x: current.maxX - targetSize.width,
-            y: current.maxY - targetSize.height
+            x: anchor.x + anchor.width - targetSize.width,
+            y: anchor.y + anchor.height - targetSize.height
         )
         let screenFrame = (panel.screen ?? NSScreen.main)?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1440, height: 900)

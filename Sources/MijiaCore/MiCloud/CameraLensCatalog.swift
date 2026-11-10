@@ -16,12 +16,53 @@ public enum CameraLensCatalog {
 
     public static func lenses(for model: String, name: String = "") -> [CameraLens] {
         let normalized = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let namedDual = name.contains("双摄") || name.contains("双镜头")
-            || name.lowercased().contains("dual")
-        guard secondLensModels.contains(normalized) || namedDual else { return [] }
+        guard secondLensModels.contains(normalized) || nameSelectsSecondLens(name) else { return [] }
         return [
             CameraLens(role: .main, channel: 0),
             CameraLens(role: .secondary, channel: 1),
         ]
+    }
+
+    /// A dual-lens name is a whole word or a known phrase. `Individual` contains the
+    /// letters of "dual", and `不是双摄` contains `双摄`, but neither camera has a second lens.
+    static func nameSelectsSecondLens(_ name: String) -> Bool {
+        containsAffirmedPhrase(name, phrase: "双镜头")
+            || containsAffirmedPhrase(name, phrase: "双摄")
+            || containsAffirmedWord(name, word: "dual")
+    }
+
+    private static let negationMarkers = ["不是", "没有", "不要", "并非", "非", "无", "not ", "not-", "non-", "non ", "no ", "n't "]
+
+    private static func containsAffirmedPhrase(_ name: String, phrase: String) -> Bool {
+        var rest = Substring(name)
+        while let range = rest.range(of: phrase) {
+            if !isNegated(rest[..<range.lowerBound]) { return true }
+            rest = rest[range.upperBound...]
+        }
+        return false
+    }
+
+    private static func containsAffirmedWord(_ name: String, word: String) -> Bool {
+        let haystack = name.lowercased()
+        let needle = word.lowercased()
+        var search = haystack.startIndex
+        while let range = haystack.range(of: needle, range: search..<haystack.endIndex) {
+            let beforeOK = range.lowerBound == haystack.startIndex
+                || !isAsciiWord(haystack[haystack.index(before: range.lowerBound)])
+            let afterOK = range.upperBound == haystack.endIndex
+                || !isAsciiWord(haystack[range.upperBound])
+            if beforeOK, afterOK, !isNegated(haystack[..<range.lowerBound]) { return true }
+            search = range.upperBound
+        }
+        return false
+    }
+
+    private static func isNegated(_ prefix: Substring) -> Bool {
+        let text = prefix.lowercased()
+        return negationMarkers.contains { text.hasSuffix($0) }
+    }
+
+    private static func isAsciiWord(_ character: Character) -> Bool {
+        character.isASCII && (character.isLetter || character.isNumber)
     }
 }

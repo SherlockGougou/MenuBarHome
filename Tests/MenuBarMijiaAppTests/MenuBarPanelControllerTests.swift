@@ -2029,6 +2029,17 @@ struct MenuBarPanelControllerTests {
         cameraController.toggleMaximized()
         #expect(!cameraController.isMaximized)
         #expect(panel.frame == original)
+
+        cameraController.toggleMaximized()
+        cameraController.storePanelFrame()
+        let stored = UserDefaults.standard.string(forKey: "camera_live_panel_frame_v1")
+        #expect(stored == NSStringFromRect(original))
+
+        cameraController.toggleExpandedSize()
+        #expect(!cameraController.isMaximized)
+        #expect(abs(panel.frame.maxX - original.maxX) < 1)
+        #expect(abs(panel.frame.maxY - original.maxY) < 1)
+        #expect(panel.frame.size != screen.visibleFrame.size)
     }
 
     @Test("Closing the camera mini-window hides it at once and releases the stream")

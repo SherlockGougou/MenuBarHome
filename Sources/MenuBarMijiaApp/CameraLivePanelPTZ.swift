@@ -206,7 +206,7 @@ extension CameraLivePanelController {
         // session was opened by this attempt, so it is still the one that needs stopping.
         do {
             let second = try await client.stop(token: attempt.token)
-            if second.errorReason == nil {
+            if second.clearsFailedWrite {
                 finishSuccessfulPTZStop(second, attempt: attempt, notify: notify)
                 return
             }
@@ -279,7 +279,7 @@ extension CameraLivePanelController {
             defer { self?.ptzManualStopInFlight = false }
             for attempt in attempts {
                 let result = try? await attempt.client.stop(token: attempt.token)
-                guard let self, let result, result.errorReason == nil else { continue }
+                guard let self, let result, result.clearsFailedWrite else { continue }
                 self.resolveUnresolvedStop(attempt)
             }
         }

@@ -31,6 +31,9 @@ public actor MiCloudProvider: HomeProvider {
     /// A rejection is reported once; later failures must not re-open the re-auth prompt.
     private var didReportSessionExpired = false
     private var pendingCameraReleases: [String: Task<Void, Never>] = [:]
+    /// The hub DID and camera subdid used the last time this camera's bridge started.
+    /// Teardown keeps that pair after the hub later looks offline.
+    private var cameraBridgeBindings: [String: (did: String, subdid: String?)] = [:]
 
     private var devices: [MiDeviceRecord] = []
     private var rooms: [MiRoom] = []
@@ -807,6 +810,7 @@ public actor MiCloudProvider: HomeProvider {
                             await stopCameraStream(for: device)
                             throw CancellationError()
                         }
+                        cameraBridgeBindings[did] = (did: bridgeDid, subdid: subdid)
                         let capability = CameraPTZCapability.resolve(
                             model: bridgeRecord.model,
                             vendor: vendor.vendorName
@@ -861,9 +865,15 @@ public actor MiCloudProvider: HomeProvider {
     public func stopCameraStream(for device: SmartDevice) async {
         let record = devices.first(where: { $0.did == device.id }) ?? devices.first(where: { $0.miotDid == device.id })
         let did = record?.miotDid ?? device.id
+        let saved = cameraBridgeBindings.removeValue(forKey: did)
         let hub = record.flatMap { Self.hubRecord(for: $0, devices: devices, rooms: rooms) }
-        let bridgeDid = hub?.miotDid ?? did
-        let subdid = hub == nil ? nil : record?.did
+        let bridgeDid = saved?.did ?? hub?.miotDid ?? did
+        let subdid: String?
+        if let saved {
+            subdid = saved.subdid
+        } else {
+            subdid = hub == nil ? nil : record?.did
+        }
         let bridge = cameraBridge
         let apiClient = api
         let releaseDelay = cameraSessionReleaseDelay
@@ -898,16 +908,28 @@ public actor MiCloudProvider: HomeProvider {
         rooms: [MiRoom]
     ) -> MiDeviceRecord? {
         guard let hubModel = CameraHubCatalog.hubModel(for: record.model) else { return nil }
-        let candidates = devices.filter {
-            $0.model.lowercased().hasPrefix(hubModel) && $0.isOnline
+        let hubs = devices.filter { $0.model.lowercased().hasPrefix(hubModel) }
+        guard !hubs.isEmpty else { return nil }
+        let cameraRoom = rooms.first { $0.dids.contains(record.did) }
+
+        let scoped: [MiDeviceRecord]
+        if let cameraRoom, !cameraRoom.homeId.isEmpty {
+            let homeDids = Set(rooms.filter { $0.homeId == cameraRoom.homeId }.flatMap(\.dids))
+            scoped = hubs.filter { homeDids.contains($0.did) }
+        } else if hubs.count == 1 {
+            scoped = hubs
+        } else if let cameraRoom {
+            scoped = hubs.filter { cameraRoom.dids.contains($0.did) }
+        } else {
+            scoped = []
         }
-        guard !candidates.isEmpty else { return nil }
-        let roomDids = rooms.first { $0.dids.contains(record.did) }?.dids
-        if let roomDids,
-           let sameRoom = candidates.first(where: { roomDids.contains($0.did) }) {
+
+        let online = scoped.filter(\.isOnline)
+        if let cameraRoom, let sameRoom = online.first(where: { cameraRoom.dids.contains($0.did) }) {
             return sameRoom
         }
-        return candidates.first
+        guard scoped.count == 1 else { return nil }
+        return online.first
     }
 
     public static func extractStreamURL(from value: JSONValue) -> URL? {
