@@ -1145,6 +1145,28 @@ enum CameraVideoRotation {
         }
         return min(size.width / size.height, size.height / size.width)
     }
+
+    /// Maps a drag point from the rotated picture back to the unrotated sensor coordinates.
+    /// The drag surface is not inside the rotated media, so PTZ commands need this inverse.
+    static func inverseRotate(_ point: CGPoint, in size: CGSize, degrees: Int) -> CGPoint {
+        let normalized = ((degrees % 360) + 360) % 360
+        let centerX = size.width / 2
+        let centerY = size.height / 2
+        let dx = point.x - centerX
+        let dy = point.y - centerY
+        let rotated: CGPoint
+        switch normalized {
+        case 90:
+            rotated = CGPoint(x: dy, y: -dx)
+        case 180:
+            rotated = CGPoint(x: -dx, y: -dy)
+        case 270:
+            rotated = CGPoint(x: -dy, y: dx)
+        default:
+            rotated = CGPoint(x: dx, y: dy)
+        }
+        return CGPoint(x: centerX + rotated.x, y: centerY + rotated.y)
+    }
 }
 
 /// What the live HUD can say about sound for the stream on screen. Only an HLS stream can carry
@@ -1307,6 +1329,7 @@ struct CameraLivePanelView: View {
                 viewportContent
                 if controller.isPTZEnabled {
                     CameraPTZDragSurface(
+                        rotationDegrees: videoRotationDegrees,
                         onBegan: { controller.ptzDragBegan(at: $0) },
                         onMoved: { controller.ptzDragMoved(to: $0) },
                         onEnded: { controller.ptzDragEnded() },

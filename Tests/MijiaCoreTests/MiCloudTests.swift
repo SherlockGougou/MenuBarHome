@@ -1523,6 +1523,30 @@ struct MiCloudProviderTests {
         #expect(MiCloudProvider.hubRecord(for: camera, devices: [hubLiving, hubKids, camera], rooms: rooms)?.did == "hub-kids")
     }
 
+    @Test("Two online hubs in the camera's room are ambiguous")
+    func hubRecordRejectsTwoHubsInOneRoom() {
+        let hubA = MiDeviceRecord(did: "hub-a", name: "室内机 A", model: "mxiang.camera.mwc10", isOnline: true)
+        let hubB = MiDeviceRecord(did: "hub-b", name: "室内机 B", model: "mxiang.camera.mwc10", isOnline: true)
+        let camera = MiDeviceRecord(did: "cam-a", name: "摄像机", model: "mxiang.camera.mwc11", isOnline: true)
+        let rooms = [
+            MiRoom(id: "shared", name: "共享房间", dids: ["hub-a", "hub-b", "cam-a"], homeId: "home", homeName: "家"),
+        ]
+
+        #expect(MiCloudProvider.hubRecord(
+            for: camera,
+            devices: [hubA, hubB, camera],
+            rooms: rooms
+        ) == nil)
+
+        var offlineB = hubB
+        offlineB.isOnline = false
+        #expect(MiCloudProvider.hubRecord(
+            for: camera,
+            devices: [hubA, offlineB, camera],
+            rooms: rooms
+        )?.did == "hub-a")
+    }
+
     @Test("Two mwc11 cameras on one online mwc10 keep the second relay port")
     func twoBatteryCamerasKeepTheHubRelay() async throws {
         let hub = MiDeviceRecord(did: "hub123", name: "室内机", model: "mxiang.camera.mwc10", isOnline: true, localIp: "192.168.50.60")

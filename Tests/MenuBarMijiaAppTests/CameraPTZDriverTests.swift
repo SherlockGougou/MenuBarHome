@@ -778,6 +778,49 @@ struct CameraPTZDriverTests {
         #expect(controller.ptzUnresolvedStops.isEmpty)
     }
 
+    @Test("A successful stop on the same camera resolves an older failed stop")
+    func successfulStopResolvesOlderAttemptForTheSameCamera() async throws {
+        let controller = CameraLivePanelController.shared
+        let failed = CameraPTZStopResult(
+            sent: false,
+            confirmed: false,
+            mode: .continuous,
+            errorReason: "write_failed"
+        )
+        let succeeded = CameraPTZStopResult(sent: true, confirmed: false, mode: .continuous)
+
+        let oldClient = FakePTZClient()
+        await oldClient.setStopResult(failed)
+        configure(controller, deviceId: "cam-a", client: oldClient)
+        let oldGate = PTZRetryGate()
+        controller.ptzStopRetryHold = { await oldGate.wait() }
+        defer {
+            oldGate.release()
+            controller.ptzStopRetryHold = nil
+            controller.configurePTZPreview(deviceId: nil, binding: nil, stream: nil, notice: nil, ready: false)
+        }
+
+        let oldToken = CameraPTZSessionToken(epoch: "e1", session: 4)
+        try await failStopTwice(controller, client: oldClient, token: oldToken, deviceId: "cam-a", gate: oldGate)
+        #expect(controller.ptzUnresolvedStops.count == 1)
+        #expect(controller.offersPTZStopRetry)
+
+        let newClient = FakePTZClient()
+        await newClient.setStopResult(succeeded)
+        switchCamera(controller, to: "cam-a", client: newClient)
+        controller.ptzStopRetryHold = nil
+        controller.ptzToken = CameraPTZSessionToken(epoch: "e1", session: 5)
+        controller.ptzDeviceId = "cam-a"
+        controller.finishPTZMove(notify: false)
+        _ = try #require(await newClient.waitForStops(), "the newer stop was never written")
+        for _ in 0..<5000 where !controller.ptzUnresolvedStops.isEmpty {
+            await Task.yield()
+        }
+        #expect(controller.ptzUnresolvedStops.isEmpty, "a successful stop left the older warning behind")
+        #expect(controller.offersPTZStopRetry == false)
+        #expect(controller.ptzNotice == nil)
+    }
+
     @Test("Reopening the panel during a retry batch does not start an overlapping batch")
     func reopeningDoesNotStartOverlappingRetryBatches() async throws {
         let controller = CameraLivePanelController.shared

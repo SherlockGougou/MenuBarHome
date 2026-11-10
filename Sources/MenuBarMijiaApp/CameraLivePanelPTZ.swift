@@ -228,7 +228,7 @@ extension CameraLivePanelController {
         attempt: CameraPTZStopAttempt,
         notify: Bool
     ) {
-        resolveUnresolvedStop(attempt)
+        resolveUnresolvedStops(for: attempt)
         guard stillOwns(attempt) else { return }
         reportStopThatWasNotSent(result, notify: notify)
     }
@@ -241,11 +241,11 @@ extension CameraLivePanelController {
         ptzUnresolvedStops.append(attempt)
     }
 
-    /// A stop resolves only the attempt it belongs to. The warning stays while any attempt is
-    /// still unresolved, and a stop for a session that is not listed changes nothing.
-    func resolveUnresolvedStop(_ attempt: CameraPTZStopAttempt) {
-        guard ptzUnresolvedStops.contains(attempt) else { return }
-        ptzUnresolvedStops.removeAll { $0 == attempt }
+    /// A successful stop on one motor settles every older failure for the same camera. The
+    /// bridge keeps only its latest session, so an older token can no longer be retried; leaving
+    /// its warning up would make “Stop again” permanently ineffective.
+    func resolveUnresolvedStops(for attempt: CameraPTZStopAttempt) {
+        ptzUnresolvedStops.removeAll { $0.deviceId == attempt.deviceId }
         if ptzUnresolvedStops.isEmpty {
             clearStopWriteFailureNotice()
         }
@@ -280,7 +280,7 @@ extension CameraLivePanelController {
             for attempt in attempts {
                 let result = try? await attempt.client.stop(token: attempt.token)
                 guard let self, let result, result.clearsFailedWrite else { continue }
-                self.resolveUnresolvedStop(attempt)
+                self.resolveUnresolvedStops(for: attempt)
             }
         }
         ptzStopTask = task

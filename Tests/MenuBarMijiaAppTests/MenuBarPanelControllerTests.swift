@@ -1975,6 +1975,16 @@ struct MenuBarPanelControllerTests {
         #expect(abs(quarterTurn - 420.0 / 640.0) < 0.0001)
     }
 
+    @Test("PTZ drag coordinates follow the rotated picture")
+    func ptzDragCoordinatesFollowRotation() {
+        let size = CGSize(width: 200, height: 100)
+        let rightOfCenter = CGPoint(x: 150, y: 50)
+        #expect(CameraVideoRotation.inverseRotate(rightOfCenter, in: size, degrees: 0) == rightOfCenter)
+        #expect(CameraVideoRotation.inverseRotate(rightOfCenter, in: size, degrees: 90) == CGPoint(x: 100, y: 0))
+        #expect(CameraVideoRotation.inverseRotate(rightOfCenter, in: size, degrees: 180) == CGPoint(x: 50, y: 50))
+        #expect(CameraVideoRotation.inverseRotate(rightOfCenter, in: size, degrees: 270) == CGPoint(x: 100, y: 100))
+    }
+
     @Test("The video-only HUD explains the missing audio track")
     func cameraVideoOnlyHUDExplainsAudio() async throws {
         _ = NSApplication.shared
