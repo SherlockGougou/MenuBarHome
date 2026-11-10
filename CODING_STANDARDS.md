@@ -2,6 +2,8 @@
 
 Reviewed by `/code-review` (Standards axis). Mechanical rules (secret scanning, `kVK_*` key constants, `UNUserNotificationCenter` `.app` bundle guard, and `swift test`) are enforced deterministically by `scripts/check.sh`. The rules below cover architectural and domain judgement calls.
 
+A review citation names the deciding symbol as `path:symbol` and quotes those lines. `HomeStore+ControlWrite.swift:lockOptimistic` is one.
+
 ## 1. Entity Registry Exclusions Block State Fallbacks
 
 When synthesizing Home Assistant entities in `Sources/MijiaCore/DeviceSynthesizer.swift` with a primary pass over `snapshot.entityRegistry` followed by a fallback pass over `snapshot.states`:
@@ -34,6 +36,10 @@ In `ControlCenterPanel` when `isCompactGridMode` is active:
 
 - Keep `MijiaCore` free of `AppKit` / `SwiftUI` imports so all synthesis, optimistic locking, and store state remain fast-testable via `MockHomeProvider`.
 - Align type and property names with [`GLOSSARY.md`](GLOSSARY.md) and [`docs/adr/0001-ha-as-single-source-of-truth.md`](docs/adr/0001-ha-as-single-source-of-truth.md).
+- A climate card is a heater when its model contains `heater` or `blanket`, or its name contains 电暖, 暖气, 取暖, or 暖风. A 热水器 stays `climate` only when the model misses both. Owner: `deviceCategory.ts:isHeaterDevice`, `CommandIntent.swift:IntentDeviceCategory`. Partly pinned by `windows/tests/facetPolicy.test.ts` ("uses the four macOS heater name hints and the same model checks") for the four words and the `heater` / `blanket` model. That test never builds a 热水器.
+- Switching to 自定义 must not save the previous provider's address with an empty key. Owner: `AssistantCommandBar.swift:AssistantSettingsDraft`. Pinned by `SettingsPlainLanguageTests.customPresetSwitchKeepsSavedKey`.
+- Before deleting a stored `HomeStore` property, search every `extension HomeStore`, including files that are not named `HomeStore+`.
+- A decision reads the value it changes, not a wrapping container. Owner: `ManualControlPolicy.facetRequiresConfirmation` (`facet.value`), `StatusItemEventDecision.decide`, `PanelKeyRouter.beforeSearch`, `PanelFoldMeasure.Reading.cardTop`. Pinned by `FacetSafetyTests.waterHeaterTemperatureUsesFacetOrigin` and `PanelFoldLayoutTests.firstDeviceCardIsAboveTheFold`.
 
 ## 6. Cross-Platform Golden Corpora & AI Provider Parity
 
@@ -63,6 +69,7 @@ When modifying `ScheduledCommand` or `HomeStore+Assistant.swift`:
 ## 8. macOS 14+ Adaptive Glass Boundary
 
 - Isolate macOS 26 `.glassEffect(` and `GlassEffectContainer` calls inside `Sources/MenuBarMijiaApp/ThemeAndMotion.swift` (`View.adaptiveGlass` and `AdaptiveGlassContainer`), guarded by `#available(macOS 26.0, *)` with Material fallback for macOS 14 and 15. Enforced mechanically by `scripts/check.sh`.
+- Hide the glass toggle's own label when the row already has a title. macOS 14 has no `labelsVisibility`, so that hide is `glassLabelHidden`. A toggle whose label is its only title stays visible. Owner: `ThemeAndMotion.swift:GlassSwitchToggleStyle.showsLabel`. Pinned by `SettingsPlainLanguageTests.glassSwitchLabelDecision`.
 
 ## 9. Tests Must Not Race Product Timers
 
@@ -74,6 +81,14 @@ When a test asserts on state that a production timer can change (undo banner exp
 A wall-clock sleep before the assertion is the failure mode: on a loaded CI runner the sleep stretches past the timer's expiry, so the assertion fails nondeterministically while passing locally. This shipped once: `failedQuickActionRecordsNothing` spun on `executedCommands` (empty on failures) for 18 s in CI, past the 10 s banner expiry.
 
 The same rule covers a test that needs to observe an intermediate state. Hold the seam open and release it from the test (`setGetPropsHook` fed by an `AsyncStream`, `GatedUndoProvider.release()`, `readBackEchoHold`) instead of sleeping for the state to appear; a sleep long enough to see the state on this machine is a coin flip on a loaded runner. See `initialSnapshotWaitsForEveryAccount` and `wakeFromSleepWaitsForAllAccountsBeforeClosingAwayGap` in `MiAccountsProviderTests` for the gated form.
+
+- A toast assertion that must see the text sets `HomeStore.toastAutoDismissInterval` to nil first. Owner: `HomeStore.toastDismissInterval(for:)`. Pinned by `PanelHealthTests.toastLifetimes`.
+- A value read after an `await` has a test for cancel, a second waiter, or a takeover during the wait. Pinned by `ScheduledCommandScopeTests.dismissDuringSnapshotWaitSendsNothing`, `concurrentMissedRunsExecuteOnce`, and `BulkWriteRollbackTests.undoWaitSkipsDeviceANewerBatchTook`.
+- "Still in flight" is a counter the path increments (`ScheduledCommandScopeTests.SleepGate.waiting`). A fixed `Task.yield` count is not that counter.
+- A repeated `hdiutil` attach takes `UpdateCheckerTests.HdiutilGate` first. Partly pinned by `liveDriverUnpacksAndVerifiesSignedBundles`: it takes the gate. It does not assert that a second attach waits.
+- New tests that need a language use `L10n.$overrideLanguage`. `L10n.currentLanguage` is process-wide. `CameraWindowChromeTests` and `SettingsPlainLanguageTests` still assign it and are not `@Suite(.serialized)`.
+- After `startListening()`, call `waitForTestSnapshot()` before treating `devices` as the new home. An all-LG plan is the exception in §7. Pinned by `ScheduledCommandScopeTests.refusesStaleDeviceListAfterStartListening` and `lgOnlyTimerSkipsSnapshotGuard`.
+- A PTZ stop test counts motor calls. Owner: `FakePTZClient.recordedStops`. Pinned by `CameraPTZDriverTests.stopWriteFailureRetriesOnceThenTheButtonSendsStopAgain`.
 
 ## 10. Overlay Geometry Has One Owner
 
@@ -103,10 +118,38 @@ The snapshot is the check that the layout holds: the plaintext-consent banner (#
 
 State that waits on the user or a timer (a consent prompt, an auto-dismiss timer, a window a ring opened) has an owner and an end. For each such field, check every path that can supersede it:
 
-- **Backend switch.** Entering demo mode or rebuilding the provider clears it, and a late callback from the replaced provider is ignored. #276 shipped a consent banner whose 仍然连接 rebuilt the live backends while the app said demo.
+- **Backend switch.** A persistent toast ends when `invalidateUndoContext` runs. `switchBackend` calls it. `rebuildLiveProvider` does not, so `allowHAPlaintext` leaves the toast up. `updateConnection` calls `invalidateUndoContext` even when the Home Assistant URL is unchanged. Owner: `invalidateUndoContext`. Pinned by `PanelHealthTests.switchingBackendClearsExpiredToast` for the switch to demo. The same-home rebuild has no pinning test. #276 shipped a consent banner whose 仍然连接 rebuilt the live backends while the app said demo.
 - **User takeover.** A window or session the user opened, kept or moved into picture-in-picture belongs to the user; automation never moves, switches or closes it. #308 needed this three times: a ring hijacked an open camera view, a later ring re-armed auto-close after picture-in-picture, and a restore was closed by an old timer.
 - **Repeat and stale events.** A repeated event renews what it owns or does nothing; an event about an older head, address or timestamp is ignored.
 
-Name the clearing site for each new field in the diff; a field set in one place and cleared nowhere is the defect.
+Name the clearing site for each new field in the diff. A field set in one place and cleared nowhere is the defect.
+
+An ordinary toast may cover the expired-session prompt. The prompt returns when that toast ends only while the session still blocks. A second persistent toast is ignored only while the suspension is active and the session still blocks. When the session no longer blocks, `showToast` clears the suspension and shows the new persistent toast. `invalidateUndoContext` drops the suspension and the persistent toast. `rebuildLiveProvider` does not call it. The panel hides the scan toast when the blocked notice already repeats it. Owners: `HomeStore.showToast`, `restoreSuspendedSessionToast`, `invalidateUndoContext`, `ControlCenterPanel.visibleToast`. Pinned by `PanelHealthTests.ordinaryErrorSuspendsSessionToast`, `secondBlockedWriteDoesNotStack`, `recoveryWhileSuspendedRestoresNothing`, and `contextChangeWhileSuspendedRestoresNothing`. The clear-and-show path after recovery has no separate test.
+
+## 14. Optimistic Lock Lifecycle
+
+- `beginOptimisticWrite` locks only when `lock` is non-nil. A nil lock may change the row and leaves the existing lock in charge. Owner: `HomeStore+ControlWrite.swift:beginOptimisticWrite`.
+- A primary toggle's lock is taken by `confirmToggleReadBack` after the send. A cover is locked before the send and locked again after success, which bumps the revision. Owner: `HomeStore+Controls.swift:togglePrimary`. Partly pinned by `CoverCommandOriginTests.inFlightSnapshotCannotDropCommandedTravel` for the cover. The non-cover lock has no test there.
+- `optimisticLockRevision` increases only in `lockOptimistic` and on `backendChanged`. Any other adoption of a reported row clears the lock and leaves the revision, so the batch still owns the send. Owner: `lockOptimistic`, `handleProviderEvent`. No dedicated revision test.
+- A locked row stays on screen only while the snapshot still contains it, a local row exists, the lock is unexpired, and read-back does not need that snapshot. An omitted id leaves `devices`, unless it is the current `latestLGDevice`. An in-flight read-back may replace a locked non-cover. A cover in the snapshot stays until its travel is confirmed or the lock expires. Owner: `HomeStore+Backend.swift:handleProviderEvent`. Partly pinned by `CoverCommandOriginTests.inFlightSnapshotCannotDropCommandedTravel` for the cover. The non-cover lock has no test there.
+- Adopting a reported row clears the lock. An unexpired lock keeps the on-screen LG row, while `applyLGDeviceUpdate` has already recorded `latestLGDevice`. A disabled, demo, or unconfigured TV removes the row. Owner: `applyLGDeviceUpdate`. Pinned by `BulkWriteRollbackTests.equalLGReportTakesTheRow` for the replace after the lock expires.
+- A batch undo of a refusal needs both the lock entry and `ownsRow`. An undo failure needs `ownsRow` only. A failed cover restores a prior lock only when it saved one, and restores the travel origin only with that lock. Owner: `revertRefusedBatchWrites`, `revert`, `togglePrimary`. Pinned by `BulkWriteRollbackTests.expiredLockSkipsTheRevert` and `expiredLockWithoutSnapshotStillReverts`.
+- While undo waits for the in-flight batch, the lock extends to `HomeStore.undoWaitLockCeiling` (120 seconds) without a new revision, then returns to 3 seconds for rows the undo still owns. Owner: `undoTurnAllOff`. Partly pinned by `BulkWriteRollbackTests.undoWaitLockIsBoundedAndRelaxed` for the 120 second ceiling and the return to 3 seconds. It does not assert the revision.
+
+## 15. Bulk Write Results
+
+`BulkWriteOutcome` is the verdict `executeQuickAction` and `turnAllOff` return.
+
+- A device the batch still owns, and that accepted a command, stays on screen and in the undo banner. A device a newer write took leaves the banner on that newer row, even after an earlier accept. A refusal rolls back only while the batch still owns the row and the lock entry remains. Owner: `HomeStore+Undo.swift:executeQuickAction`, `revert`. Pinned by `BulkWriteRollbackTests.partlyAppliedDeviceKeepsItsRowAndBanner` and `olderBatchSkipsTakenDevice`.
+- A Mi-session refusal is `.refusedByMiSession`. Any other incomplete batch, including a takeover or a batch that was stopped, is `.partial`. A stopped batch does not roll back over the undo. Owner: `executeQuickAction`, `turnAllOff`. Pinned by `PanelHealthTests.takenOverBatchReportsPartial` and `BulkWriteRollbackTests.failureAfterUndoStaysSilent`.
+- An external quick action or 全关 reports `BulkWriteOutcome`, not whatever toast is on screen. Undo reports the toast. Owner: `RaycastSnapshot.swift:executeBuiltInURLScene`. Partly pinned by `PanelHealthTests.staleExpiryToastDoesNotFailLGOnlyAllOff` for 全关. Undo reading `toastNotice` has no test there.
+- An expired Mi session must not block a command a live LG client serves. A batch that cannot send refuses before showing rows. Owner: `HomeStore+ControlWrite.swift:executeDeviceCommand`. Pinned by `PanelHealthTests.mixedLGAAndMiAllOffSendsLG`.
+
+## 16. Windows Panel Interaction
+
+- A background refresh must not rebuild the panel during a gesture. Use `MenuMijiaWindowsApp.queueBackgroundRender`, which defers the rebuild until the gesture ends. A proactive result is the exception: it renders only when `hasBlockingPanelInteraction()` is false, and during a gesture the paint is dropped rather than deferred. Do not send that result through `queueBackgroundRender`. Owner: `windows/src/ui/proactive.ts`. The deferral is pinned by `windows/tests/ui.test.ts` ("queues the expired row removal while a panel gesture is active"). The proactive drop has no pinning test.
+- `startTimerLoop` may call `render` while scheduled commands are queued, without that gesture check. Owner: `appLifecycle.ts:startTimerLoop`. No pinning test.
+- A destructive hold must not finish while the window is unfocused. Owner: `app.ts:bindAllOffControl`. Pinned by `windows/tests/ui.test.ts` ("does not run All Off when the window is unfocused as the hold completes").
+- Whether a card offers a drawer is `hasDetailDrawer`, for both the chevron and a non-camera body click. A camera body opens the live view without that check. The chevron's click does not ask again. Owner: `models.ts:hasDetailDrawer`. Pinned by `windows/tests/core.test.ts` ("hasDetailDrawer mirrors the macOS card table and never opens an empty drawer").
 
 
