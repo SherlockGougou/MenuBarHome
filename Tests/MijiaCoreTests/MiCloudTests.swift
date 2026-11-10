@@ -1524,26 +1524,26 @@ struct MiCloudProviderTests {
         let keyA = XiaomiCameraBridge.streamKey(cleanDid: cleanHub, subdid: camA.did)
         let keyB = XiaomiCameraBridge.streamKey(cleanDid: cleanHub, subdid: camB.did)
         let bridge = XiaomiCameraBridge()
-        let allocator = RelayPortAllocator(ports: [4101, 4102])
-        let portA = try await bridge.beginSharedRelay(cleanDid: cleanHub, streamKey: keyA) {
+        let allocator = RelayPortAllocator(ports: [4101, 4102, 4103])
+        let portA = try await bridge.beginSharedRelay(relayKey: keyA) {
             allocator.next()
         }
-        let portB = try await bridge.beginSharedRelay(cleanDid: cleanHub, streamKey: keyB) {
+        let portB = try await bridge.beginSharedRelay(relayKey: keyB) {
             allocator.next()
         }
         #expect(portA == 4101)
-        #expect(portB == 4101)
-        #expect(allocator.issued == [4101])
-        await bridge.endSharedRelay(cleanDid: cleanHub, streamKey: keyA)
-        #expect(await bridge.relayPort(for: cleanHub) == 4101)
+        #expect(portB == 4102)
+        await bridge.endSharedRelay(relayKey: keyA)
+        #expect(await bridge.relayPort(for: keyA) == nil)
+        #expect(await bridge.relayPort(for: keyB) == 4102)
 
-        await bridge.endSharedRelay(cleanDid: cleanHub, streamKey: keyB)
-        #expect(await bridge.relayPort(for: cleanHub) == nil)
-        let portAgain = try await bridge.beginSharedRelay(cleanDid: cleanHub, streamKey: keyB) {
+        await bridge.endSharedRelay(relayKey: keyB)
+        #expect(await bridge.relayPort(for: keyB) == nil)
+        let portAgain = try await bridge.beginSharedRelay(relayKey: keyB) {
             allocator.next()
         }
-        #expect(portAgain == 4102)
-        #expect(allocator.issued == [4101, 4102])
+        #expect(portAgain == 4103)
+        #expect(allocator.issued == [4101, 4102, 4103])
     }
 
     @Test("Stopping a battery camera keeps the hub binding after the hub goes offline")

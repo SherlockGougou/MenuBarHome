@@ -127,31 +127,22 @@ struct Go2RTCOwnershipProbe: Equatable, Sendable {
     var binaryChanged: Bool = false
 }
 
-/// One UDP relay keyed by hub DID, held by each camera stream that still needs it.
+/// One UDP relay per camera session. The relay thread remembers a single go2rtc address,
+/// so two cameras on one hub cannot share a port. Stopping one session leaves the other.
 struct HubRelaySessions {
     private var ports: [String: UInt16] = [:]
-    private var holders: [String: Set<String>] = [:]
 
-    func port(for cleanDid: String) -> UInt16? {
-        ports[cleanDid]
+    func port(for relayKey: String) -> UInt16? {
+        ports[relayKey]
     }
 
-    mutating func retain(cleanDid: String, streamKey: String, port: UInt16) {
-        ports[cleanDid] = port
-        holders[cleanDid, default: []].insert(streamKey)
+    mutating func retain(relayKey: String, port: UInt16) {
+        ports[relayKey] = port
     }
 
-    /// The port to close when `streamKey` was the last holder. Nil leaves the relay running,
-    /// including when this stream was not a holder.
-    mutating func release(cleanDid: String, streamKey: String) -> UInt16? {
-        guard var held = holders[cleanDid] else { return nil }
-        guard held.remove(streamKey) != nil else { return nil }
-        if held.isEmpty {
-            holders.removeValue(forKey: cleanDid)
-            return ports.removeValue(forKey: cleanDid)
-        }
-        holders[cleanDid] = held
-        return nil
+    /// The port to close for this session, or nil when it had no relay.
+    mutating func release(relayKey: String) -> UInt16? {
+        ports.removeValue(forKey: relayKey)
     }
 }
 
@@ -161,8 +152,7 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
 
     private let logger = Logger(subsystem: "com.jryang1997.MenuBarMijia", category: "XiaomiCameraBridge")
     private var relays: [String: RelayHandle] = [:]
-    /// Stream keys that still need the relay for one hub DID. Stopping one camera
-    /// leaves the relay up while a sibling stream is in this set.
+    /// Relay ports keyed by camera stream, not by hub DID.
     private var relaySessions = HubRelaySessions()
     private var go2rtcProcess: Process?
     private var activeOwner: Go2RTCOwnerRecord?
@@ -215,13 +205,13 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         let session = Self.makeLocalHTTPClient()
         defer { session.invalidateAndCancel() }
 
-        // A lens switch deletes this camera's previous channel names. The relay stays
-        // while any other camera on the same hub still has a stream.
+        // A lens switch replaces this camera's streams. A second camera on the same hub
+        // gets its own relay, because the relay thread keeps one go2rtc address.
         await stopBridgeInternal(http: session, names: Self.allStreamNames(cleanDid: streamKey))
 
-        let relayPort = try beginSharedRelay(cleanDid: cleanDid, streamKey: streamKey) {
+        let relayPort = try beginSharedRelay(relayKey: streamKey) {
             try ensureRelayPort(
-                cleanDid: cleanDid,
+                cleanDid: streamKey,
                 camIP: ipv4,
                 commandChannelDrained: ptzEndpointAvailable
             )
@@ -262,7 +252,7 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         let http = Self.makeLocalHTTPClient(timeout: 3.0)
         defer { http.invalidateAndCancel() }
         await stopBridgeInternal(http: http, names: Self.allStreamNames(cleanDid: streamKey))
-        endSharedRelay(cleanDid: cleanDid, streamKey: streamKey)
+        endSharedRelay(relayKey: streamKey)
     }
 
     static func streamKey(cleanDid: String, subdid: String?) -> String {
@@ -325,38 +315,32 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         }
     }
 
-    /// Registers `streamKey` on the hub relay. A sibling that already holds the relay
-    /// keeps its port. The allocator runs only when no stream remains.
+    /// Replaces this camera's relay and leaves every other camera's relay alone.
     func beginSharedRelay(
-        cleanDid: String,
-        streamKey: String,
+        relayKey: String,
         allocate: () throws -> UInt16
     ) throws -> UInt16 {
-        if relaySessions.release(cleanDid: cleanDid, streamKey: streamKey) != nil {
-            relays.removeValue(forKey: cleanDid)?.stopBox.stop()
+        if relaySessions.release(relayKey: relayKey) != nil {
+            relays.removeValue(forKey: relayKey)?.stopBox.stop()
             if relays.isEmpty {
                 Self.scrubPersistedStreamsFromConfig()
             }
         }
-        if let port = relaySessions.port(for: cleanDid) {
-            relaySessions.retain(cleanDid: cleanDid, streamKey: streamKey, port: port)
-            return port
-        }
         let port = try allocate()
-        relaySessions.retain(cleanDid: cleanDid, streamKey: streamKey, port: port)
+        relaySessions.retain(relayKey: relayKey, port: port)
         return port
     }
 
-    func endSharedRelay(cleanDid: String, streamKey: String) {
-        guard relaySessions.release(cleanDid: cleanDid, streamKey: streamKey) != nil else { return }
-        relays.removeValue(forKey: cleanDid)?.stopBox.stop()
+    func endSharedRelay(relayKey: String) {
+        guard relaySessions.release(relayKey: relayKey) != nil else { return }
+        relays.removeValue(forKey: relayKey)?.stopBox.stop()
         if relays.isEmpty {
             Self.scrubPersistedStreamsFromConfig()
         }
     }
 
-    func relayPort(for cleanDid: String) -> UInt16? {
-        relaySessions.port(for: cleanDid)
+    func relayPort(for relayKey: String) -> UInt16? {
+        relaySessions.port(for: relayKey)
     }
 
     private static func scrubPersistedStreamsFromConfig() {
