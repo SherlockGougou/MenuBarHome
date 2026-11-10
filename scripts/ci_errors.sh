@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Print only the failure lines of a GitHub Actions run, one screenful instead of the full log.
+# Print the failure lines of a GitHub Actions run, plus check-run annotations.
 #
 # Usage: bash scripts/ci_errors.sh <run-id>
 # Needs `gh` logged in to the repository.
@@ -11,20 +11,154 @@ if [ "$#" -ne 1 ]; then
 fi
 run="$1"
 
-log="$(mktemp "${TMPDIR:-/tmp}/ci-errors.XXXXXX")"
-trap 'rm -f "$log"' EXIT
-gh run view "$run" --log-failed >"$log" || true
-
-if [ ! -s "$log" ]; then
-    echo "没有失败日志：$run（可能仍在运行、已成功，或 run id 不存在）"
-    exit 1
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/ci-errors.XXXXXX")"
+trap 'rm -rf "$tmp"' EXIT
+gh repo view --json nameWithOwner >"$tmp/repo.json"
+gh run view "$run" --json jobs,event,headBranch,headSha,createdAt,databaseId,workflowName >"$tmp/run.json"
+gh run view "$run" --log-failed >"$tmp/log.txt" || true
+branch="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("headBranch") or "")' "$tmp/run.json")"
+workflow="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("workflowName") or "")' "$tmp/run.json")"
+if [ -n "$branch" ]; then
+    if [ -n "$workflow" ]; then
+        gh run list --branch "$branch" --workflow "$workflow" --limit 30 --json databaseId,createdAt,headSha,event,headBranch >"$tmp/runs.json" || printf '[]\n' >"$tmp/runs.json"
+    else
+        gh run list --branch "$branch" --limit 30 --json databaseId,createdAt,headSha,event,headBranch >"$tmp/runs.json" || printf '[]\n' >"$tmp/runs.json"
+    fi
+else
+    printf '[]\n' >"$tmp/runs.json"
 fi
 
-echo "=== 失败的 job"
-awk -F'\t' 'NF && !seen[$1]++ {print $1}' "$log"
-echo "=== 错误与失败用例"
-sed -E 's/^[^\t]*\t[^\t]*\t[0-9T:.Z-]+ ?//' "$log" |
-    sed -E 's/\x1b\[[0-9;]*m//g' |
-    grep -E 'error:|✘ (Test|Suite)|Test run with .* failed|##\[error\]' |
-    awk '!seen[$0]++' |
-    head -60
+python3 -I - "$run" "$tmp/repo.json" "$tmp/run.json" "$tmp/log.txt" "$tmp/runs.json" <<'PY'
+import json
+import re
+import subprocess
+import sys
+
+run, repo_path, run_path, log_path, runs_path = sys.argv[1:6]
+repo = json.load(open(repo_path, encoding="utf-8"))["nameWithOwner"]
+run_doc = json.load(open(run_path, encoding="utf-8"))
+jobs = run_doc["jobs"]
+runs = json.load(open(runs_path, encoding="utf-8"))
+log = open(log_path, encoding="utf-8", errors="replace").read()
+
+QUIET = {"success", "skipped", "", None}
+prefix = re.compile(r"^[^\t]*\t[^\t]*\t[0-9T:.Z-]+ ?")
+error_line = re.compile(r"error:|✘ (Test|Suite)|Test run with .* failed|##\[error\]")
+ansi = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def one_line(text):
+    return " ".join((text or "").split())
+
+
+def flatten_pages(payload):
+    if not isinstance(payload, list):
+        return []
+    items = []
+    for page in payload:
+        if isinstance(page, list):
+            items.extend(entry for entry in page if isinstance(entry, dict))
+        elif isinstance(page, dict):
+            items.append(page)
+    return items
+
+
+def fetch_annotations(job_id):
+    url = f"repos/{repo}/check-runs/{job_id}/annotations?per_page=100"
+    proc = subprocess.run(
+        ["gh", "api", "--paginate", "--slurp", url],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "annotation request failed").strip()
+        return [{"annotation_level": "failure", "message": one_line(detail) or "annotation request failed"}]
+    if not proc.stdout.strip():
+        return []
+    return flatten_pages(json.loads(proc.stdout))
+
+
+def has_newer_run(meta, candidates):
+    created = meta.get("createdAt") or ""
+    if not created or not isinstance(candidates, list):
+        return False
+    branch = meta.get("headBranch") or ""
+    sha = meta.get("headSha") or ""
+    me = meta.get("databaseId")
+    for other in candidates:
+        if not isinstance(other, dict) or other.get("databaseId") == me:
+            continue
+        if (other.get("createdAt") or "") <= created:
+            continue
+        # main groups concurrency by commit, so the next commit does not cancel this run.
+        if branch == "main" and other.get("headSha") != sha:
+            continue
+        return True
+    return False
+
+
+newer = has_newer_run(run_doc, runs)
+superseded = []
+infra = []
+annotations = []
+for job in jobs:
+    conclusion = job.get("conclusion")
+    job_anns = []
+    if conclusion not in QUIET:
+        job_anns = fetch_annotations(job.get("databaseId"))
+        for ann in job_anns:
+            annotations.append(
+                (
+                    job.get("name") or "",
+                    ann.get("annotation_level") or "",
+                    one_line(ann.get("message")),
+                )
+            )
+    if conclusion == "cancelled" and not (job.get("steps") or []):
+        text = " ".join((ann.get("message") or "") for ann in job_anns).lower()
+        name = job.get("name") or str(job.get("databaseId"))
+        if newer or "higher priority waiting request" in text:
+            superseded.append(name)
+        else:
+            infra.append(name)
+
+sections = []
+if superseded:
+    sections.append("=== cancelled (superseded)")
+    sections.extend(superseded)
+if infra:
+    sections.append("=== 取消且 steps=0（runner 未分配，基础设施，不是代码）")
+    sections.extend(infra)
+if annotations:
+    sections.append("=== annotations")
+    sections.extend(f"{name}\t{level}\t{message}" for name, level, message in annotations)
+
+if log.strip():
+    seen_jobs = []
+    known = set()
+    errors = []
+    known_errors = set()
+    for line in log.splitlines():
+        if not line:
+            continue
+        job_name = line.split("\t", 1)[0]
+        if job_name not in known:
+            known.add(job_name)
+            seen_jobs.append(job_name)
+        body = ansi.sub("", prefix.sub("", line, count=1))
+        if error_line.search(body) and body not in known_errors:
+            known_errors.add(body)
+            errors.append(body)
+    sections.append("=== 失败的 job")
+    sections.extend(seen_jobs)
+    sections.append("=== 错误与失败用例")
+    sections.extend(errors[:60])
+
+if sections:
+    print("\n".join(sections))
+    sys.exit(0)
+
+print(f"没有失败日志：{run}（可能仍在运行、已成功，或 run id 不存在）")
+sys.exit(1)
+PY
